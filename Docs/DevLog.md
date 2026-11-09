@@ -1,0 +1,102 @@
+# Wort 开发记录
+
+最后更新：2026-11-09 · 分支 `claude/focused-galileo-rr85m8` · 最新提交见 `git log`
+
+GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
+
+## 当前状态
+
+| 阶段 | 内容 | 状态 |
+| --- | --- | --- |
+| 第 1 步 | 盘点 topdowntemp，定目录结构 | 完成 |
+| 第 2 步 | 项目骨架、.gitignore / .gitattributes（LFS）、`Docs/LocalSetup.md` | 完成 |
+| 第 3 步 | GDD 16 节 8×8 chunk 地形实验：纯 C# 生成核心 + 云端预览 + Unity 接入 | 完成，本地测试通过 |
+
+本地验证结果（2026-11-09）：Unity 里 checksum 与云端预览一致，EditMode 测试通过，“基本顺利且符合预期”。
+
+## 目录
+
+```
+Assets/Wort/
+├─ Art/Characters/Chibi/      人物（来自 topdowntemp，GUID 未变）
+├─ Input/                     InputSystem_Actions
+├─ Rendering/                 URP 资产；Shaders/VerticalTiltShift（Renderer Feature 默认关闭）
+├─ Scenes/                    TerrainLab.unity（菜单生成，暂未入仓）
+├─ Scripts/Generation/        Wort.Generation：纯 C# 地形生成
+├─ Scripts/Runtime/           Wort.Runtime：Camera / Presentation / Player / Rendering / Terrain
+├─ Scripts/Editor/            Wort.Editor：Wort/Create Terrain Lab Scene 菜单、TerrainLab Inspector
+└─ Tests/EditMode/            确定性测试
+Tools/TerrainPreview/         云端预览（.NET 8，直接编译 Generation 源码）
+```
+
+## 云端预览用法
+
+```bash
+apt-get update && apt-get install -y dotnet-sdk-8.0
+cd Tools/TerrainPreview
+dotnet build -c Release
+dotnet bin/Release/net8.0/TerrainPreview.dll --seed 20261109 --out out
+```
+
+输出（`out/` 已被 .gitignore 忽略）：
+- `biome.png`、`height.png`：俯视。高度图里黑线 = 高差 ≥ 2 的崖；橙 = 坡道；浅色 = 斜坡；
+  品红斜纹 = 悬崖背面遮挡带；青色 = 冲沟；灰白 = 孤峰 / 碎石；红点 = 河流落差点；红白圆 = 出生点；网格 = 64m chunk。
+- `shear_overview.png`：整区错切视角，2 px/m。
+- `shear_mountain_zoom.png`：山地局部，5 px/m。
+- `shear_1..4_*.png`：1080p 相机视野（orthoSize 9.5，shear 1），红框 = 1×1.5 格人物参照。
+- 控制台输出各项统计和 `checksum`。
+
+预览专用的视觉辅助（Unity 里没有）：深度突变处描暗边、顶面按高度略提亮。
+
+## 当前 checksum（改算法后要同步更新测试和 LocalSetup）
+
+| 种子 | checksum |
+| --- | --- |
+| 20261109（默认） | `0xEE3CECBB` |
+| 7 | `0x3DD96B8A` |
+
+## 地形生成管线（`RegionGenerator.Run`）
+
+1. Biome 布局：程序自由发挥（北山地 → 针叶林 → 混交林；中南人类区；西南沼泽）。
+   山地边界 = 山地分数 > 0：两层域扭曲 + 中频 + 南北向指状噪声做山嘴 / 山湾；按 4m 块量化 + 随机抖动。
+2. Biome 权重：3 次盒式模糊（半径 16），过渡带约 40m。
+3. 宏观高度：Biome 参数混合 + 域扭曲低频 / 中频噪声（山里压低 70%）。
+   山前：陡段整崖 4–8 层；其余段先 2–3 级 1 层台阶（每级 5–8m 宽）再接剩余崖高。
+   冲沟：5–7 条，从山体内部沿下坡追踪，出山后再延伸约 14m，宽 4–8m；冲沟里山体抬升只留 35%、清除台地。
+4. 微起伏：按 Biome 混合幅度（0–1 层 ≈ 0.6，0–2 层 ≈ 1.2）。
+5. 台地：每级独立块状噪声，覆盖率随位置缓慢变化；Close(2) → 4m 块量化 → Open(4) → 嵌套内缩 3m → 去小块。
+   残丘：山外 7–80m，2 层，越远越稀。
+6. 量化与清理（去单格凸起 / 小坑）。
+7. 高台（4–5 层）；孤峰（4–7 个，山脊 / 最高处且靠崖边，直径 4–8m，高 6–10 层，外缘低 1–2 层，脚下 1 层碎石台阶）。
+8. 水系：池塘 / 浅洼（水面比岸低 1 层）、人类区一个湖、一条从山里冲沟流出的河（沿低频噪声零线弯曲，水面单调不升，标记落差点）。
+9. 悬崖背面遮挡带：抹平 1 层起伏，不放斜坡和坡道。
+10. 连通性：小封闭区填平，大的在笔直崖边放 2–3 格宽坡道（不朝北）；再按 Biome“每块台地的坡道”数补足。
+11. 斜坡（GDD 6.3【已定】：1 层高差默认是台阶）：目标 2.5% 地表格（`SlopeTargetRatio`），
+    成段 2–6 格同向，优先水边 / 通行路线 / 谷底 / 长而缓的起伏带；**自然地形不允许连续两格斜坡**（坡道口除外）。
+
+阶段 B：`RegionVoxels` 体素化（整格 + 4 向斜坡，地下到 −16 层），`ChunkMesher` 出网格（按材质分子网格，Unity 绕序）。
+
+## 已做的决定（含对【暂定】数值的理解）
+
+- 对 GDD 6.3 起伏参数表的数值化见 `Biome.cs`；叠层“偶尔”= 1.35 级。
+- 山前“降成 2–3 级台阶”理解为：先 2–3 级 1 层台阶，再接剩余崖高（负责人未否定，可再确认）。
+- 所有池塘水面比岸低 1 层；8×8 区域没有海岸，河流流到南边界结束。
+- 斜坡比例起始值 2.5%，负责人看图后可直接改。
+- Unity：生成物 `HideFlags.DontSave` 不进场景；运行时建纯色 URP Lit 材质；水面无碰撞；
+  角色跳跃高度 1.25（保证能跳上 1m）；CharacterController 坡度上限 50°；相机高 80m。
+- Packages 已精简（去掉 ai.assistant / ai.inference / pipeline / collab-proxy / multiplayer.center / visualscripting）。
+- 云端环境：个人环境 “WORT1.0” 放行了 GitHub LFS 主机（lfs.github.com 等），否则推不了 .fbx/.jpeg。
+
+## 未决问题 / 可调项
+
+- 4m 块量化让斜向边界呈 4 格一阶的锯齿；嫌方可改 3m。
+- 森林里有几条 1 层等高线与山前大致平行（宏观高度过渡造成），是否打散待定。
+- 残丘偏方；山里仍有少量走不到的格子（约 150 格）。
+- GDD 第 16 节“不包含”的内容（随机区域、环境场、植物、半墙、正式美术、完整 chunk 编辑工具）都还没做。
+- GDD 第 14 节的待讨论问题（高度裁切过渡、遮挡虚化、雪山呈现、VisualCameraTilt / TiltShift 是否沿用等）。
+
+## 下一步候选（等负责人决定）
+
+- GDD 6.2：环境层（湿度、地表分区、土壤、扰动）与植物层。
+- 第 7 节：高度裁切、遮挡虚化原型。
+- chunk 数据格式与编辑工具（6.3 工具链需求）。
