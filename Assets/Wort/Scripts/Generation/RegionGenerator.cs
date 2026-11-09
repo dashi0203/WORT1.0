@@ -246,9 +246,11 @@ namespace Wort.Generation
                     if (steep.Sample(gx, gz) > 0.02) l = hc;
                     else
                     {
-                        int sh = stepH.Sample(gx, gz) > 0 ? 3 : 2;
-                        double sw = 9 + 4 * Clamp01(stepW.Sample(gx, gz) + 0.5);
-                        l = Math.Min(hc, sh * (1 + (int)Math.Floor(dq / sw)));
+                        // 不陡的段落：先 2–3 级 1 层台阶（可直接跳上），走完台阶再接剩下的崖
+                        int steps = stepH.Sample(gx, gz) > 0 ? 3 : 2;
+                        double sw = 5 + 3 * Clamp01(stepW.Sample(gx, gz) + 0.5); // 每级 5–8m 宽
+                        int k = 1 + (int)Math.Floor(dq / sw);
+                        l = k <= steps ? Math.Min(k, hc) : hc;
                     }
                     // 山体内部的高度交给各级台地（独立噪声），不再按到山缘的距离连续抬升，避免等高线与山缘平行
                     if (gully[i]) l = (int)(l * 0.35);
@@ -1060,18 +1062,29 @@ namespace Wort.Generation
         }
 
         // ------------------------------------------------------------------
-        // 地表过渡：只有一个方向高 1 层时放斜坡（悬崖背面那一条不放）
+        // 地表过渡（GDD 6.3【已定】）：1 层高差默认是台阶（可直接跳上），
+        // 只有少量斜坡让起伏更自然。斜坡成段连续（≥ 2 格宽、同向），
+        // 优先放在长而缓的起伏带、谷底和水边、天然通行路线上。
         // ------------------------------------------------------------------
+        const double SlopeTargetRatio = 0.025; // 斜坡格占地表格的目标比例（2–4% 的起点）
+        const int SlopeRunMax = 6;
+
         void AssignSlopes()
         {
+            int n = W * H;
             var hidden = ComputeHidden();
-            int count = 0;
+
+            // 1. 候选：只有一个方向高 1 层，背后不更高，不在悬崖背面 / 水里 / 特殊地物上
+            var dir = new sbyte[n];
+            int surface = 0;
             for (int z = 0; z < H; z++)
                 for (int x = 0; x < W; x++)
                 {
                     int i = z * W + x;
+                    dir[i] = -1;
+                    if (!map.HasWater(i)) surface++;
                     if (map.Slope[i] >= 0 || map.HasWater(i) || hidden[i]) continue;
-                    if ((map.Flags[i] & (CellFlags.Mesa | CellFlags.Spire)) != 0) continue;
+                    if ((map.Flags[i] & ~SoftFlags) != 0) continue;
                     int h = map.Height[i];
                     int upDir = -1, ups = 0;
                     bool bad = false;
@@ -1085,12 +1098,113 @@ namespace Wort.Generation
                         else if (nh > h + 1) bad = true;
                     }
                     if (bad || ups != 1) continue;
+                    int uj = (z + Grid.DZ4[upDir]) * W + x + Grid.DX4[upDir];
+                    if ((map.Flags[uj] & (CellFlags.Scree | CellFlags.Spire | CellFlags.Mesa)) != 0) continue; // 碎石台阶保持台阶
                     int bx = x - Grid.DX4[upDir], bz = z - Grid.DZ4[upDir];
                     if (map.InBounds(bx, bz) && map.Height[bz * W + bx] > h) continue;
-                    map.Slope[i] = (sbyte)upDir;
-                    count++;
+                    dir[i] = (sbyte)upDir;
                 }
-            map.Stats["slopes"] = count;
+
+            // 2. 偏好分：水边 / 谷底 / 长而缓的起伏带 / 天然通行路线
+            var water = new bool[n];
+            for (int i = 0; i < n; i++) water[i] = !map.HasWater(i);
+            var waterDist = Grid.DistanceInside(water, W, H);
+            var hf = new float[n];
+            for (int i = 0; i < n; i++) hf[i] = map.Height[i];
+            var mean = Grid.BoxBlur(Grid.BoxBlur(hf, W, H, 12), W, H, 12);
+            var range = LocalRange(8);
+            var trail = Noise("slope.trail", 90, 2);
+            uint sh = Hash.Derive(seed, "slope.pick");
+            var score = new double[n];
+            for (int z = 0; z < H; z++)
+                for (int x = 0; x < W; x++)
+                {
+                    int i = z * W + x;
+                    if (dir[i] < 0) continue;
+                    double nearWater = Clamp01(1 - waterDist[i] / 10.0);
+                    double valley = Clamp01((mean[i] - map.Height[i]) / 2.0);
+                    double gentle = range[i] <= 2 ? 1 : (range[i] <= 3 ? 0.4 : 0);
+                    double route = Clamp01(1 - Math.Abs(trail.Sample(WX(x), WZ(z))) / 0.08);
+                    score[i] = 1.2 * nearWater + 0.8 * valley + 0.6 * gentle + 1.0 * route + 0.25 * Hash.Unit(Hash.Of(x, z, sh));
+                }
+
+            // 3. 组段：沿台阶边（垂直于上坡方向）连续、同高、同向的候选，切成 2–6 格一段
+            var runs = new List<(double score, int start, int d, int len)>();
+            for (int z = 0; z < H; z++)
+                for (int x = 0; x < W; x++)
+                {
+                    int i = z * W + x;
+                    int d = dir[i];
+                    if (d < 0) continue;
+                    int px = Grid.DX4[(d + 1) & 3], pz = Grid.DZ4[(d + 1) & 3];
+                    int qx = x - px, qz = z - pz;
+                    if (map.InBounds(qx, qz) && SameRun(dir, qz * W + qx, i)) continue; // 不是段首
+                    int len = 1;
+                    while (true)
+                    {
+                        int cx = x + px * len, cz = z + pz * len;
+                        if (!map.InBounds(cx, cz) || !SameRun(dir, cz * W + cx, i)) break;
+                        len++;
+                    }
+                    for (int o = 0; o < len;)
+                    {
+                        int piece = Math.Min(SlopeRunMax, len - o);
+                        if (len - o - piece == 1) piece--;           // 不留单格尾巴
+                        if (piece < 2) break;
+                        double sc = 0;
+                        for (int k = 0; k < piece; k++) sc += score[(z + pz * (o + k)) * W + x + px * (o + k)];
+                        runs.Add((sc / piece, (z + pz * o) * W + x + px * o, d, piece));
+                        o += piece;
+                    }
+                }
+            runs.Sort((a, b) => b.score.CompareTo(a.score));
+
+            // 4. 按分数从高到低放，直到达到目标比例
+            int target = (int)(surface * SlopeTargetRatio);
+            int placed = 0;
+            foreach (var r in runs)
+            {
+                if (placed >= target) break;
+                int px = Grid.DX4[(r.d + 1) & 3], pz = Grid.DZ4[(r.d + 1) & 3];
+                int x0 = r.start % W, z0 = r.start / W;
+                for (int k = 0; k < r.len; k++)
+                {
+                    int c = (z0 + pz * k) * W + x0 + px * k;
+                    map.Slope[c] = (sbyte)r.d;
+                }
+                placed += r.len;
+            }
+            map.Stats["slopeRuns"] = runs.Count;
+            map.Stats["slopes"] = placed;
+        }
+
+        bool SameRun(sbyte[] dir, int a, int b) => dir[a] == dir[b] && map.Height[a] == map.Height[b];
+
+        /// <summary>半径 r 内的高差（最高 - 最低），用于判断“长而缓”。</summary>
+        int[] LocalRange(int r)
+        {
+            int n = W * H;
+            var lo = new int[n];
+            var hi = new int[n];
+            var tlo = new int[n];
+            var thi = new int[n];
+            for (int z = 0; z < H; z++)
+                for (int x = 0; x < W; x++)
+                {
+                    int a = int.MaxValue, b = int.MinValue;
+                    for (int k = Math.Max(0, x - r); k <= Math.Min(W - 1, x + r); k++) { int v = map.Height[z * W + k]; if (v < a) a = v; if (v > b) b = v; }
+                    tlo[z * W + x] = a; thi[z * W + x] = b;
+                }
+            for (int z = 0; z < H; z++)
+                for (int x = 0; x < W; x++)
+                {
+                    int a = int.MaxValue, b = int.MinValue;
+                    for (int k = Math.Max(0, z - r); k <= Math.Min(H - 1, z + r); k++) { int j = k * W + x; if (tlo[j] < a) a = tlo[j]; if (thi[j] > b) b = thi[j]; }
+                    lo[z * W + x] = a; hi[z * W + x] = b;
+                }
+            var range = new int[n];
+            for (int i = 0; i < n; i++) range[i] = hi[i] - lo[i];
+            return range;
         }
 
         void MarkHiddenAndEdges()
@@ -1145,6 +1259,19 @@ namespace Wort.Generation
             map.Stats["minHeight"] = min;
             map.Stats["maxHeight"] = max;
             map.Stats["ramps"] = map.Ramps.Count;
+            int surface = 0, slope = 0, rampCells = 0;
+            for (int i = 0; i < map.Height.Length; i++)
+            {
+                if (map.HasWater(i)) continue;
+                surface++;
+                if (map.Slope[i] < 0) continue;
+                if (map.Has(i, CellFlags.Ramp)) rampCells++; else slope++;
+            }
+            map.Stats["surfaceCells"] = surface;
+            map.Stats["slopeCells"] = slope;
+            map.Stats["rampSlopeCells"] = rampCells;
+            map.Stats["slopePermille"] = (int)Math.Round(1000.0 * slope / Math.Max(1, surface));
+            map.Stats["allSlopePermille"] = (int)Math.Round(1000.0 * (slope + rampCells) / Math.Max(1, surface));
             map.Stats["drops"] = map.Drops.Count;
             int falls = 0;
             foreach (var d in map.Drops) if (d.Drop >= 2) falls++;
