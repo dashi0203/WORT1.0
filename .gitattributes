@@ -1,0 +1,52 @@
+# 默认：文本统一 LF
+* text=auto eol=lf
+
+# Unity YAML：按文本存储，合并时用 UnityYAMLMerge
+*.unity      text eol=lf merge=unityyamlmerge
+*.prefab     text eol=lf merge=unityyamlmerge
+*.asset      text eol=lf merge=unityyamlmerge
+*.mat        text eol=lf merge=unityyamlmerge
+*.anim       text eol=lf merge=unityyamlmerge
+*.controller text eol=lf merge=unityyamlmerge
+*.overrideController text eol=lf merge=unityyamlmerge
+*.physicMaterial text eol=lf merge=unityyamlmerge
+*.meta       text eol=lf merge=unityyamlmerge
+*.cs         text eol=lf diff=csharp
+*.shader     text eol=lf
+*.hlsl       text eol=lf
+*.asmdef     text eol=lf
+*.inputactions text eol=lf
+
+# ---- Git LFS ----
+# 3D 模型
+*.fbx    filter=lfs diff=lfs merge=lfs -text
+*.FBX    filter=lfs diff=lfs merge=lfs -text
+*.obj    filter=lfs diff=lfs merge=lfs -text
+*.blend  filter=lfs diff=lfs merge=lfs -text
+*.glb    filter=lfs diff=lfs merge=lfs -text
+*.gltf   filter=lfs diff=lfs merge=lfs -text
+# 贴图
+*.png    filter=lfs diff=lfs merge=lfs -text
+*.jpg    filter=lfs diff=lfs merge=lfs -text
+*.jpeg   filter=lfs diff=lfs merge=lfs -text
+*.tga    filter=lfs diff=lfs merge=lfs -text
+*.tif    filter=lfs diff=lfs merge=lfs -text
+*.tiff   filter=lfs diff=lfs merge=lfs -text
+*.psd    filter=lfs diff=lfs merge=lfs -text
+*.exr    filter=lfs diff=lfs merge=lfs -text
+*.hdr    filter=lfs diff=lfs merge=lfs -text
+# 音频 / 视频
+*.wav    filter=lfs diff=lfs merge=lfs -text
+*.mp3    filter=lfs diff=lfs merge=lfs -text
+*.ogg    filter=lfs diff=lfs merge=lfs -text
+*.mp4    filter=lfs diff=lfs merge=lfs -text
+# 字体 / 压缩包 / 表格
+*.ttf    filter=lfs diff=lfs merge=lfs -text
+*.otf    filter=lfs diff=lfs merge=lfs -text
+*.zip    filter=lfs diff=lfs merge=lfs -text
+*.xlsx   filter=lfs diff=lfs merge=lfs -text
+# 二进制 chunk 数据（格式待定，预留）
+*.wortchunk filter=lfs diff=lfs merge=lfs -text
+
+# 文档里的预览图不进 LFS，方便在 GitHub 网页直接看
+Docs/**/*.png -filter -diff -merge binary
