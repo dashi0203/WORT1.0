@@ -178,6 +178,7 @@ namespace Wort.Generation
                     int h = Map.Height[i];
                     var biome = PickSurfaceBiome(i, s.OriginX + x + 0.5, s.OriginZ + z + 0.5, surfaceNoise);
                     var surface = VoxelPalette.Surface(biome);
+                    if (Map.Has(i, CellFlags.Scree)) surface = VoxelMaterial.Gravel;
                     bool water = Map.HasWater(i);
                     if (water) surface = Map.Has(i, CellFlags.River) ? VoxelMaterial.Gravel : VoxelMaterial.Mud;
                     bool rocky = biome == BiomeId.Mountain;

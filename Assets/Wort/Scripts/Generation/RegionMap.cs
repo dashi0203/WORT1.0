@@ -31,6 +31,9 @@ namespace Wort.Generation
         Hidden = 32,       // 悬崖背面被遮挡的一条（尽量少放资源）
         Unreachable = 64,  // 连通性修复后仍走不到
         CliffEdge = 128,   // 与相邻格高差 ≥ 2
+        Scree = 256,       // 孤峰脚下的碎石台阶
+        Outlier = 512,     // 山地外缘的残丘
+        Gully = 1024,      // 冲沟
     }
 
     public struct RampInfo

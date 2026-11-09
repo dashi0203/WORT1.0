@@ -24,6 +24,8 @@ namespace Wort.Generation
         const int RampSpacing = 24;
         const int MaxCliffForRamp = 8;
         const int HiddenScan = 24;
+        /// <summary>只作标记、不阻止其他处理的标记位。</summary>
+        const CellFlags SoftFlags = CellFlags.Gully;
 
         readonly RegionSettings s;
         readonly RegionMap map;
@@ -83,6 +85,7 @@ namespace Wort.Generation
         // ------------------------------------------------------------------
         void BuildBiomeLayout()
         {
+            int n = W * H;
             var warpX = Noise("layout.warpX", 120, 3);
             var warpZ = Noise("layout.warpZ", 120, 3);
             var line = Noise("layout.line", 150, 3);
@@ -93,25 +96,70 @@ namespace Wort.Generation
             double humanCx = W * (0.58 + 0.06 * J(1)), humanCz = H * (0.32 + 0.05 * J(2)), humanR = W * 0.27;
             double swampCx = W * (0.16 + 0.04 * J(3)), swampCz = H * (0.20 + 0.05 * J(4)), swampR = W * 0.19;
 
+            // 山地分数：> 0 为山地。两层域扭曲 + 中频 + 山嘴 / 山湾
+            var score = new double[n];
+            for (int z = 0; z < H; z++)
+                for (int x = 0; x < W; x++)
+                    score[z * W + x] = MountainScore(WX(x), WZ(z));
+
+            // 山地边界按 4m 块量化并随机抖动：崖边是 ≥ 4 格的直段，同时有 2–4m 尺度的起伏
+            var raw = new bool[n];
+            for (int i = 0; i < n; i++) raw[i] = score[i] > 0;
+            mountainMask = Grid.BlockQuantize(raw, W, H, 4, 1, 3, Hash.Derive(seed, "mtn.block"), 0.6);
+            mountainMask = Grid.RemoveSmall(mountainMask, W, H, 200);
+
             for (int z = 0; z < H; z++)
                 for (int x = 0; x < W; x++)
                 {
+                    int i = z * W + x;
                     double gx = WX(x), gz = WZ(z);
-                    // Fbm 的典型幅度约 ±0.4，系数取大一些才有明显的扭曲
                     double lx = x + warpX.Sample(gx, gz) * 150;
                     double lz = z + warpZ.Sample(gx, gz) * 110;
-                    double mountainLine = H * 0.76 + 80 * line.Sample(gx, 61.7);
-                    double coniferLine = mountainLine - (60 + 60 * line.Sample(gx + 900, 133.1));
+                    double coniferDepth = 60 + 30 * line.Sample(gx + 900, 133.1);
                     double b = blob.Sample(gx, gz);
                     BiomeId id;
-                    if (lz > mountainLine) id = BiomeId.Mountain;
-                    else if (lz > coniferLine) id = BiomeId.Conifer;
+                    if (mountainMask[i]) id = BiomeId.Mountain;
+                    else if (score[i] > -coniferDepth) id = BiomeId.Conifer;
                     else if (Dist(lx, lz, swampCx, swampCz) < swampR * (1 + 1.0 * b)) id = BiomeId.Swamp;
                     else if (Dist(lx, lz, humanCx, humanCz) < humanR * (1 + 0.9 * b)) id = BiomeId.Human;
                     else id = BiomeId.MixedForest;
-                    map.Biome[z * W + x] = (byte)id;
+                    map.Biome[i] = (byte)id;
                 }
         }
+
+        Fbm mw1x, mw1z, mw2x, mw2z, mMid, mLine, spurN, spurGate, bayN, bayGate;
+
+        /// <summary>
+        /// 山地分数（米）：正值在山里，负值在山外。
+        /// 两层域扭曲让边界不再是一条贯穿全图的平滑波浪线；
+        /// 南北向拉伸噪声的零线附近形成山嘴（伸进森林）和山湾（切进山里）。
+        /// </summary>
+        double MountainScore(double gx, double gz)
+        {
+            if (mw1x == null)
+            {
+                mw1x = Noise("mtn.warp1x", 170, 2); mw1z = Noise("mtn.warp1z", 170, 2);
+                mw2x = Noise("mtn.warp2x", 60, 2); mw2z = Noise("mtn.warp2z", 60, 2);
+                mMid = Noise("mtn.mid", 50, 3);
+                mLine = Noise("mtn.line", 220, 2);
+                spurN = Noise("mtn.spur", 120, 2); spurGate = Noise("mtn.spurGate", 160, 1);
+                bayN = Noise("mtn.bay", 140, 2); bayGate = Noise("mtn.bayGate", 170, 1);
+            }
+            double qx = gx + 100 * mw1x.Sample(gx, gz), qz = gz + 100 * mw1z.Sample(gx, gz);
+            double rx = qx + 40 * mw2x.Sample(qx, qz), rz = qz + 40 * mw2z.Sample(qx, qz);
+            double baseLine = s.OriginZ + H * 0.72 + 70 * mLine.Sample(rx, 61.7);
+            double v = rz - baseLine;
+            v += 30 * mMid.Sample(rx, rz);
+            double sg = Clamp01(spurGate.Sample(rx, rz) * 4 + 0.6);
+            double sp = 1 - Math.Abs(spurN.Sample(rx, rz * 0.3)) * 7;
+            if (sp > 0) v += 70 * sp * sp * sg;
+            double bg = Clamp01(bayGate.Sample(rx, rz) * 4 + 0.4);
+            double by = 1 - Math.Abs(bayN.Sample(rx + 517, rz * 0.3)) * 7;
+            if (by > 0) v -= 60 * by * by * bg;
+            return v;
+        }
+
+        static double Clamp01(double v) => v < 0 ? 0 : (v > 1 ? 1 : v);
 
         static double Dist(double ax, double az, double bx, double bz)
         {
@@ -156,33 +204,135 @@ namespace Wort.Generation
             macro = new double[n];
             lift = new int[n];
             var low = Noise("macro.low", 230, 2);
-            var band = Noise("macro.band", 90, 2);
+            var mid = Noise("macro.mid", 110, 2);
+            var wx = Noise("macro.warpX", 150, 2);
+            var wz = Noise("macro.warpZ", 150, 2);
             for (int z = 0; z < H; z++)
                 for (int x = 0; x < W; x++)
                 {
                     int i = z * W + x;
-                    macro[i] = Blend(i, p => p.MacroBase) + 1.3 * low.Sample(WX(x), WZ(z));
+                    double gx = WX(x), gz = WZ(z);
+                    double px = gx + 60 * wx.Sample(gx, gz), pz = gz + 60 * wz.Sample(gx, gz);
+                    double rough = map.Weights[(int)BiomeId.MixedForest][i] + map.Weights[(int)BiomeId.Conifer][i] + map.Weights[(int)BiomeId.Mountain][i];
+                    // 山里压低连续起伏，让台地主导山体形状（避免一圈圈 1 层等高线）
+                    double damp = 1 - 0.7 * map.Weights[(int)BiomeId.Mountain][i];
+                    macro[i] = Blend(i, p => p.MacroBase) + damp * (1.3 * low.Sample(px, pz) + 1.1 * mid.Sample(px, pz) * rough);
                 }
 
-            // 山地外缘：4–8 层的线状大悬崖带，越往里再抬升
-            var mountain = new bool[n];
-            for (int i = 0; i < n; i++) mountain[i] = map.Weights[(int)BiomeId.Mountain][i] >= 0.5f;
-            var depth = Grid.DistanceInside(mountain, W, H);
-            uint bh = Hash.Derive(seed, "macro.bandHeight");
-            int band1 = 5 + (int)(Hash.Unit(Hash.Of(bh, 1)) * 3);   // 5–7
-            int band2 = 4 + (int)(Hash.Unit(Hash.Of(bh, 2)) * 2);   // 4–5
-            int band3 = 3 + (int)(Hash.Unit(Hash.Of(bh, 3)) * 2);
+            mountainDepth = Grid.DistanceInside(mountainMask, W, H);
+            var outside = new bool[n];
+            for (int i = 0; i < n; i++) outside[i] = !mountainMask[i];
+            mountainOut = Grid.DistanceInside(outside, W, H);
+
+            BuildGullies();
+
+            // 山前：陡的地方成崖（4–8 层，沿边缘变化），其余降成 2–3 级台阶
+            var cliffH = Noise("mtn.cliffH", 90, 2);
+            var steep = Noise("mtn.steep", 120, 2);
+            var stepH = Noise("mtn.stepH", 150, 1);
+            var stepW = Noise("mtn.stepW", 100, 1);
+            const int B = 4;
             for (int z = 0; z < H; z++)
                 for (int x = 0; x < W; x++)
                 {
                     int i = z * W + x;
-                    if (!mountain[i]) continue;
-                    double nb = band.Sample(WX(x), WZ(z));
-                    int l = band1;
-                    if (depth[i] > 36 + 14 * nb) l += band2;
-                    if (depth[i] > 80 + 16 * nb) l += band3;
+                    if (!mountainMask[i]) continue;
+                    double gx = WX(x), gz = WZ(z);
+                    int hc = 4 + (int)Math.Floor(Clamp01(cliffH.Sample(gx, gz) * 1.6 + 0.5) * 4.999); // 4–8
+                    // 台阶的分界用 4m 块中心的深度，保证分界线也是直段
+                    int bx = Grid.Clamp((x / B) * B + B / 2, 0, W - 1), bz = Grid.Clamp((z / B) * B + B / 2, 0, H - 1);
+                    double dq = mountainDepth[bz * W + bx];
+                    int l;
+                    if (steep.Sample(gx, gz) > 0.02) l = hc;
+                    else
+                    {
+                        int sh = stepH.Sample(gx, gz) > 0 ? 3 : 2;
+                        double sw = 9 + 4 * Clamp01(stepW.Sample(gx, gz) + 0.5);
+                        l = Math.Min(hc, sh * (1 + (int)Math.Floor(dq / sw)));
+                    }
+                    // 山体内部的高度交给各级台地（独立噪声），不再按到山缘的距离连续抬升，避免等高线与山缘平行
+                    if (gully[i]) l = (int)(l * 0.35);
                     lift[i] = l;
                 }
+        }
+
+        bool[] mountainMask;
+        float[] mountainDepth, mountainOut;
+        bool[] gully;
+
+        /// <summary>
+        /// 冲沟：从山体内部顺坡（沿到山缘距离的下降方向）往下走的窄沟，
+        /// 切断山地台阶，并在山前切出缺口，出山后再延伸一小段。
+        /// </summary>
+        void BuildGullies()
+        {
+            int n = W * H;
+            uint gh = Hash.Derive(seed, "mtn.gully");
+            var meander = Noise("mtn.gullyMeander", 30, 2);
+            var cand = new List<(uint key, int i)>();
+            for (int z = 0; z < H; z++)
+                for (int x = 8; x < W - 8; x++)
+                {
+                    int i = z * W + x;
+                    if (mountainMask[i] && mountainDepth[i] >= 35 && mountainDepth[i] <= 110) cand.Add((Hash.Of(x, z, gh), i));
+                }
+            cand.Sort((a, b) => a.key.CompareTo(b.key));
+            int want = 5 + (int)(Hash.Of(gh, 3) % 3); // 5–7 条
+            var starts = new List<int>();
+            foreach (var (_, i) in cand)
+            {
+                if (starts.Count >= want) break;
+                bool far = true;
+                foreach (int sIdx in starts) if (Math.Abs(sIdx % W - i % W) < 55) { far = false; break; }
+                if (far) starts.Add(i);
+            }
+
+            var g = new bool[n];
+            int[] DX8 = { 0, 1, 1, 1, 0, -1, -1, -1 }, DZ8 = { 1, 1, 0, -1, -1, -1, 0, 1 };
+            foreach (int start in starts)
+            {
+                int cur = start, lastDir = 4, outside = 0;
+                for (int step = 0; step < 600; step++)
+                {
+                    int x = cur % W, z = cur / W;
+                    Paint(g, x, z, 2);
+                    if (!mountainMask[cur] && ++outside > 14) break;
+                    int best = -1, bestDir = lastDir; double bestCost = double.MaxValue;
+                    for (int d = 0; d < 8; d++)
+                    {
+                        int nx = x + DX8[d], nz = z + DZ8[d];
+                        if (!map.InBounds(nx, nz)) continue;
+                        int j = nz * W + nx;
+                        double cost;
+                        if (mountainMask[cur])
+                        {
+                            if (mountainDepth[j] >= mountainDepth[cur]) continue; // 只往下坡走
+                            cost = mountainDepth[j] + 2.5 * meander.Sample(WX(nx), WZ(nz)) * (d == lastDir ? 0.5 : 1);
+                        }
+                        else
+                        {
+                            if (Math.Abs(d - lastDir) > 1 && Math.Abs(d - lastDir) < 7) continue; // 出山后保持方向
+                            cost = -mountainOut[j] + (d == lastDir ? 0 : 0.6);
+                        }
+                        if (cost < bestCost) { bestCost = cost; best = j; bestDir = d; }
+                    }
+                    if (best < 0) break;
+                    cur = best; lastDir = bestDir;
+                }
+            }
+            g = Grid.BlockQuantize(g, W, H, 4, 2, 0, Hash.Derive(seed, "mtn.gullyBlock"), 0.3);
+            gully = Grid.RemoveSmall(g, W, H, 60);
+            int c = 0;
+            for (int i = 0; i < n; i++) if (gully[i]) { map.Flags[i] |= CellFlags.Gully; c++; }
+            map.Stats["gullies"] = starts.Count;
+            map.Stats["gullyCells"] = c;
+        }
+
+        void Paint(bool[] m, int x, int z, int r)
+        {
+            for (int dz = -r; dz <= r; dz++)
+                for (int dx = -r; dx <= r; dx++)
+                    if (map.InBounds(x + dx, z + dz)) m[(z + dz) * W + x + dx] = true;
         }
 
         // ------------------------------------------------------------------
@@ -209,41 +359,50 @@ namespace Wort.Generation
         void BuildTerraces()
         {
             int n = W * H;
-            var t = Noise("terrace.field", 100, 3);
-            var warpX = Noise("terrace.warpX", 55, 2);
-            var warpZ = Noise("terrace.warpZ", 55, 2);
-            Func<double, double, double> field = (gx, gz) =>
-                t.Sample(gx + 18 * warpX.Sample(gx, gz), gz + 18 * warpZ.Sample(gx, gz));
-            var q = new QuantileTable(field);
-            var stackNoise = Noise("terrace.stack", 150, 2);
-
-            var T = new double[n];
             var cov = new double[n];
             var stack = new double[n];
+            var stackNoise = Noise("terrace.stack", 150, 2);
             for (int z = 0; z < H; z++)
                 for (int x = 0; x < W; x++)
                 {
                     int i = z * W + x;
-                    double gx = WX(x), gz = WZ(z);
-                    T[i] = field(gx, gz);
                     cov[i] = Blend(i, p => p.TerraceCoverage);
-                    stack[i] = Blend(i, p => p.StackLevels) + 0.45 * stackNoise.Sample(gx, gz);
+                    stack[i] = Blend(i, p => p.StackLevels) + 0.45 * stackNoise.Sample(WX(x), WZ(z));
                 }
 
+            // 每一级用独立的块状噪声，阈值随位置缓慢变化 → 各级台阶线互不平行
             tiers = new bool[MaxTiers][];
             for (int k = 0; k < MaxTiers; k++)
             {
+                var t = Noise("terrace.field" + k, 100 - 12 * k, 3);
+                var wxn = Noise("terrace.warpX" + k, 55, 2);
+                var wzn = Noise("terrace.warpZ" + k, 55, 2);
+                var covVar = Noise("terrace.covVar" + k, 220, 2);
+                Func<double, double, double> field = (gx, gz) =>
+                    t.Sample(gx + 16 * wxn.Sample(gx, gz), gz + 16 * wzn.Sample(gx, gz));
+                var q = new QuantileTable(field);
+                bool[] inner = k > 0 ? Grid.Erode(tiers[k - 1], W, H, TierInset) : null;
                 var m = new bool[n];
-                for (int i = 0; i < n; i++)
-                    m[i] = T[i] > q.Quantile(1 - cov[i] * TierCoverageFactor[k]) && stack[i] >= k + 0.5;
-                if (k > 0)
-                {
-                    var inner = Grid.Erode(tiers[k - 1], W, H, TierInset);
-                    for (int i = 0; i < n; i++) m[i] &= inner[i];
-                }
-                m = Grid.Open(m, W, H, TerraceMinHalfWidth);
+                for (int z = 0; z < H; z++)
+                    for (int x = 0; x < W; x++)
+                    {
+                        int i = z * W + x;
+                        if (stack[i] < k + 0.5) continue;
+                        if (k > 0 && !inner[i]) continue;
+                        double gx = WX(x), gz = WZ(z);
+                        double v = covVar.Sample(gx, gz);
+                        double c = k == 0 ? cov[i] * (1 + 0.6 * v) : 0.42 + 0.25 * v; // 上一级里的条件覆盖率
+                        c = Math.Max(0.0, Math.Min(0.95, c));
+                        m[i] = field(gx, gz) > q.Quantile(1 - c);
+                    }
                 m = Grid.Close(m, W, H, TerraceGapClose);
-                if (k > 0) for (int i = 0; i < n; i++) m[i] &= tiers[k - 1][i];
+                m = Grid.BlockQuantize(m, W, H, 4, (k * 3 + 1) & 3, (k * 5 + 2) & 3, Hash.Derive(seed, "terrace.block" + k), 0.6);
+                m = Grid.Open(m, W, H, TerraceMinHalfWidth);
+                for (int i = 0; i < n; i++)
+                {
+                    if (k > 0) m[i] &= tiers[k - 1][i];
+                    if (gully[i]) m[i] = false;
+                }
                 m = Grid.RemoveSmall(m, W, H, TerraceMinArea);
                 tiers[k] = m;
             }
@@ -266,6 +425,43 @@ namespace Wort.Generation
                     terraceOffset[i] = Math.Min(off, cap);
                     map.Tier[i] = (byte)tier;
                 }
+
+            BuildOutliers();
+        }
+
+        /// <summary>残丘：山地外缘脱离主山体的小块 2 层台地，越往森林里越稀。</summary>
+        void BuildOutliers()
+        {
+            int n = W * H;
+            var hn = Noise("mtn.outlier", 26, 2);
+            var q = new QuantileTable((x, z) => hn.Sample(x, z));
+            const double Reach = 80;
+            var m = new bool[n];
+            for (int z = 0; z < H; z++)
+                for (int x = 0; x < W; x++)
+                {
+                    int i = z * W + x;
+                    double d = mountainOut[i];
+                    if (mountainMask[i] || d < 7 || d > Reach || map.Tier[i] > 0 || gully[i]) continue;
+                    double c = 0.55 * Math.Pow(1 - d / Reach, 1.5);
+                    if (hn.Sample(WX(x), WZ(z)) > q.Quantile(1 - c)) m[i] = true;
+                }
+            m = Grid.BlockQuantize(m, W, H, 4, 3, 1, Hash.Derive(seed, "mtn.outlierBlock"), 0.5);
+            m = Grid.Open(m, W, H, TerraceMinHalfWidth);
+            var lab = Grid.Label(W, H, i => m[i], (a, b) => true, out var sizes);
+            int count = 0;
+            var counted = new bool[sizes.Count];
+            for (int i = 0; i < n; i++)
+            {
+                if (lab[i] < 0) continue;
+                int sz = sizes[lab[i]];
+                if (sz < 64 || sz > 500 || mountainOut[i] < 5) continue;
+                terraceOffset[i] += 2;
+                if (map.Tier[i] == 0) map.Tier[i] = 1;
+                map.Flags[i] |= CellFlags.Outlier;
+                if (!counted[lab[i]]) { counted[lab[i]] = true; count++; }
+            }
+            map.Stats["outliers"] = count;
         }
 
         // ------------------------------------------------------------------
@@ -309,30 +505,106 @@ namespace Wort.Generation
         {
             int n = W * H;
             var mesaN = Noise("mesa", 34, 2);
-            var spireN = Noise("spire", 18, 2);
             var qm = new QuantileTable((x, z) => mesaN.Sample(x, z));
-            var qs = new QuantileTable((x, z) => spireN.Sample(x, z));
             var nearTier = Grid.Dilate(tiers[0], W, H, 8);
             double mesaThr = qm.Quantile(1 - 0.03);
-            double spireThr = qs.Quantile(1 - 0.012);
-
             var mesa = new bool[n];
-            var spire = new bool[n];
             for (int z = 0; z < H; z++)
                 for (int x = 0; x < W; x++)
                 {
                     int i = z * W + x;
-                    double gx = WX(x), gz = WZ(z);
-                    if (nearTier[i] && Blend(i, p => p.AllowMesa ? 1 : 0) >= 0.5 && mesaN.Sample(gx, gz) > mesaThr)
+                    if (gully[i] || (map.Flags[i] & ~SoftFlags) != 0) continue;
+                    if (nearTier[i] && Blend(i, p => p.AllowMesa ? 1 : 0) >= 0.5 && mesaN.Sample(WX(x), WZ(z)) > mesaThr)
                         mesa[i] = true;
-                    if (map.Weights[(int)BiomeId.Mountain][i] >= 0.7f && spireN.Sample(gx, gz) > spireThr)
-                        spire[i] = true;
                 }
             mesa = Grid.Open(mesa, W, H, 2);
-            int mesas = RaiseBlobs(mesa, 40, 300, CellFlags.Mesa, (ringMin, ringMax, inMax, k) => Math.Max(inMax, ringMin + 4 + (int)(k & 1)));
-            int spires = RaiseBlobs(spire, 12, 70, CellFlags.Spire, (ringMin, ringMax, inMax, k) => Math.Max(inMax, ringMax) + 6 + (int)(k % 3));
-            map.Stats["mesas"] = mesas;
-            map.Stats["spires"] = spires;
+            map.Stats["mesas"] = RaiseBlobs(mesa, 40, 300, CellFlags.Mesa, (ringMin, ringMax, inMax, k) => Math.Max(inMax, ringMin + 4 + (int)(k & 1)));
+            map.Stats["spires"] = PlaceSpires();
+        }
+
+        /// <summary>
+        /// 孤峰：数量少，落在山脊 / 最高一级台地上、靠近崖边。
+        /// 形状不规则、高度有差异，脚下一圈 1 层碎石台阶。
+        /// </summary>
+        int PlaceSpires()
+        {
+            uint sh = Hash.Derive(seed, "spire");
+            var cand = new List<(uint key, int i)>();
+            for (int z = 12; z < H - 12; z++)
+                for (int x = 12; x < W - 12; x++)
+                {
+                    int i = z * W + x;
+                    if (!mountainMask[i] || mountainDepth[i] < 14 || gully[i] || (map.Flags[i] & ~SoftFlags) != 0) continue;
+                    if (map.Weights[(int)BiomeId.Mountain][i] < 0.7f) continue;
+                    int h = map.Height[i];
+                    bool nearCliff = false, isTop = true;
+                    for (int dz = -10; dz <= 10 && isTop; dz++)
+                        for (int dx = -10; dx <= 10; dx++)
+                        {
+                            int j = (z + dz) * W + x + dx;
+                            int hj = map.Height[j];
+                            if (hj > h + 1) { isTop = false; break; }
+                            if (Math.Abs(dx) <= 5 && Math.Abs(dz) <= 5 && hj <= h - 2) nearCliff = true;
+                        }
+                    if (isTop && nearCliff) cand.Add((Hash.Of(x, z, sh), i));
+                }
+            cand.Sort((a, b) => a.key.CompareTo(b.key));
+            int want = 4 + (int)(Hash.Of(sh, 1) % 4); // 4–7 个
+            var placed = new List<int>();
+            var fine = Noise("spire.shape", 3.5, 1);
+            foreach (var (key, c) in cand)
+            {
+                if (placed.Count >= want) break;
+                int cx = c % W, cz = c / W;
+                bool far = true;
+                foreach (int p in placed)
+                    if (Math.Max(Math.Abs(p % W - cx), Math.Abs(p / W - cz)) < 48) { far = false; break; }
+                if (!far) continue;
+
+                int h0 = map.Height[c];
+                double r0 = 2.2 + 1.8 * Hash.Unit(Hash.Of(key, 7)); // 半径 2.2–4 → 直径约 4–8m
+                int top = h0 + 6 + (int)(Hash.Of(key, 9) % 5);       // 高 6–10 层
+                int ring = (int)Math.Ceiling(r0 * 1.3) + 2;
+                var body = new List<int>();
+                for (int dz = -ring; dz <= ring; dz++)
+                    for (int dx = -ring; dx <= ring; dx++)
+                    {
+                        int x = cx + dx, z = cz + dz;
+                        if (!map.InBounds(x, z)) continue;
+                        double d = Math.Sqrt(dx * dx + dz * dz);
+                        double r = r0 * (0.75 + 0.5 * (fine.Sample(WX(x), WZ(z)) + 0.5));
+                        if (d < r && map.Height[z * W + x] >= h0 - 1) body.Add(z * W + x);
+                    }
+                if (body.Count < 10) continue;
+                var inBody = new HashSet<int>(body);
+                foreach (int i in body)
+                {
+                    int x = i % W, z = i / W;
+                    double d = Math.Sqrt((x - cx) * (x - cx) + (z - cz) * (z - cz));
+                    // 外缘低 1–2 层，形成不规则的顶
+                    int drop = d > r0 * 0.75 ? 1 + (int)(Hash.Of(x, z, sh ^ 77U) & 1) : 0;
+                    map.Height[i] = top - drop;
+                    map.Flags[i] |= CellFlags.Spire;
+                }
+                // 碎石台阶：本体外一圈，只铺在与山顶同高的地面上
+                foreach (int i in body)
+                {
+                    int x = i % W, z = i / W;
+                    for (int dz = -2; dz <= 2; dz++)
+                        for (int dx = -2; dx <= 2; dx++)
+                        {
+                            int nx = x + dx, nz = z + dz;
+                            if (!map.InBounds(nx, nz)) continue;
+                            int j = nz * W + nx;
+                            if (inBody.Contains(j) || (map.Flags[j] & ~SoftFlags) != 0) continue;
+                            if (map.Height[j] != h0) continue;
+                            map.Height[j] = h0 + 1;
+                            map.Flags[j] |= CellFlags.Scree;
+                        }
+                }
+                placed.Add(c);
+            }
+            return placed.Count;
         }
 
         int RaiseBlobs(bool[] mask, int minArea, int maxArea, CellFlags flag, Func<int, int, int, uint, int> top)
@@ -390,7 +662,7 @@ namespace Wort.Generation
                 for (int x = 0; x < W; x++)
                 {
                     int i = z * W + x;
-                    if (map.Tier[i] > 0 || map.Flags[i] != CellFlags.None) continue;
+                    if (map.Tier[i] > 0 || (map.Flags[i] & ~SoftFlags) != 0) continue;
                     double gx = WX(x), gz = WZ(z);
                     double cov = Blend(i, p => p.PondCoverage);
                     if (cov > 0 && pondN.Sample(gx, gz) > qp.Quantile(1 - cov)) pond[i] = true;
@@ -441,20 +713,20 @@ namespace Wort.Generation
         void BuildRiver()
         {
             int n = W * H;
-            var mountain = new bool[n];
-            for (int i = 0; i < n; i++) mountain[i] = map.Weights[(int)BiomeId.Mountain][i] >= 0.5f;
-            var depth = Grid.DistanceInside(mountain, W, H);
+            var mountain = mountainMask;
+            var depth = mountainDepth;
 
-            // 源头：山地内 25–45m 深处，东西方向居中，按种子挑选
+            // 源头：山地内 25–60m 深处，东西方向居中，优先在冲沟里，按种子挑选
             uint rh = Hash.Derive(seed, "river.source");
             int source = -1; uint bestKey = uint.MaxValue;
             for (int z = 0; z < H; z++)
                 for (int x = W / 5; x < W * 4 / 5; x++)
                 {
                     int i = z * W + x;
-                    if (!mountain[i] || depth[i] < 25 || depth[i] > 45) continue;
-                    if (map.Flags[i] != CellFlags.None) continue;
-                    uint key = Hash.Of(x, z, rh);
+                    if (!mountain[i] || depth[i] < 25 || depth[i] > 60) continue;
+                    if ((map.Flags[i] & ~SoftFlags) != 0) continue;
+                    uint key = Hash.Of(x, z, rh) >> 1;
+                    if (!gully[i]) key |= 0x80000000U;
                     if (key < bestKey) { bestKey = key; source = i; }
                 }
             if (source < 0) { map.Stats["river"] = 0; return; }
@@ -510,8 +782,9 @@ namespace Wort.Generation
                 level = next;
                 map.RiverPath.Add(i);
                 int x = i % W, z = i / W;
-                for (int dz = -1; dz <= 1; dz++)
-                    for (int dx = -1; dx <= 1; dx++)
+                int br = mountain[i] ? 2 : 1; // 山里切得更宽，在山前形成缺口
+                for (int dz = -br; dz <= br; dz++)
+                    for (int dx = -br; dx <= br; dx++)
                     {
                         int nx = x + dx, nz = z + dz;
                         if (!map.InBounds(nx, nz)) continue;
@@ -558,7 +831,7 @@ namespace Wort.Generation
                     for (int x = 0; x < W; x++)
                     {
                         int i = z * W + x;
-                        if (!hidden[i] || map.HasWater(i) || map.Flags[i] != CellFlags.None) continue;
+                        if (!hidden[i] || map.HasWater(i) || (map.Flags[i] & ~SoftFlags) != 0) continue;
                         for (int d = 0; d < 4; d++)
                         {
                             int nx = x + Grid.DX4[d], nz = z + Grid.DZ4[d];
@@ -648,7 +921,7 @@ namespace Wort.Generation
             for (int i = 0; i < lab.Length; i++)
             {
                 if (lab[i] != c) continue;
-                if (map.HasWater(i) || map.Flags[i] != CellFlags.None) return false;
+                if (map.HasWater(i) || (map.Flags[i] & ~SoftFlags) != 0) return false;
                 cells.Add(i);
                 int x = i % W, z = i / W;
                 for (int d = 0; d < 4; d++)
@@ -727,7 +1000,7 @@ namespace Wort.Generation
                     int cx = x + px * j + dx * k, cz = z + pz * j + dz * k;
                     if (!map.InBounds(cx, cz)) return false;
                     int c = cz * W + cx;
-                    if (map.Height[c] != hl || map.HasWater(c) || map.Flags[c] != CellFlags.None) return false;
+                    if (map.Height[c] != hl || map.HasWater(c) || (map.Flags[c] & ~SoftFlags) != 0) return false;
                     if (hiddenCache[c]) return false;
                 }
             return true;
@@ -860,7 +1133,7 @@ namespace Wort.Generation
                 for (int x = 8; x < W - 8; x++)
                 {
                     int i = z * W + x;
-                    if (lab[i] != main || map.HasWater(i) || map.Slope[i] >= 0 || map.Flags[i] != CellFlags.None) continue;
+                    if (lab[i] != main || map.HasWater(i) || map.Slope[i] >= 0 || (map.Flags[i] & ~SoftFlags) != 0) continue;
                     double score = human[i] * 100 - Dist(x, z, W * 0.55, H * 0.35) * 0.05;
                     if (score > best) { best = score; map.SpawnX = x; map.SpawnZ = z; }
                 }

@@ -80,6 +80,38 @@ namespace Wort.Generation
             return dst;
         }
 
+        /// <summary>
+        /// 按 block×block 的块量化：块内 true 的比例超过（0.5 ± 随机抖动）则整块为 true。
+        /// 结果的边界都是块边，直段至少 block 格；抖动让边界在块尺度上不规则。
+        /// offX / offZ 平移块网格，避免不同图层的块边重合。
+        /// </summary>
+        public static bool[] BlockQuantize(bool[] m, int w, int h, int block, int offX, int offZ, uint seed, double jitter)
+        {
+            var dst = new bool[m.Length];
+            for (int bz = -1; bz * block - offZ < h; bz++)
+                for (int bx = -1; bx * block - offX < w; bx++)
+                {
+                    int x0 = bx * block - offX, z0 = bz * block - offZ;
+                    int count = 0, total = 0;
+                    for (int z = z0; z < z0 + block; z++)
+                        for (int x = x0; x < x0 + block; x++)
+                        {
+                            if (x < 0 || z < 0 || x >= w || z >= h) continue;
+                            total++;
+                            if (m[z * w + x]) count++;
+                        }
+                    if (total == 0) continue;
+                    double thr = 0.5 + (Hash.Unit(Hash.Of(bx, bz, seed)) - 0.5) * jitter;
+                    if (count == total) thr = 0; // 全满的块不翻
+                    bool on = count > 0 && count >= thr * total;
+                    if (!on) continue;
+                    for (int z = z0; z < z0 + block; z++)
+                        for (int x = x0; x < x0 + block; x++)
+                            if (x >= 0 && z >= 0 && x < w && z < h) dst[z * w + x] = true;
+                }
+            return dst;
+        }
+
         public static bool[] Open(bool[] m, int w, int h, int r) => Dilate(Erode(m, w, h, r), w, h, r);
         public static bool[] Close(bool[] m, int w, int h, int r) => Erode(Dilate(m, w, h, r), w, h, r);
 

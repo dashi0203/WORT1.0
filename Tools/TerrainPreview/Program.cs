@@ -50,6 +50,31 @@ namespace Wort.Tools
             var r = new ShearRenderer(map, meshes);
             r.Render(0, 0, map.W, map.H, 2.0, null).Save(Path.Combine(outDir, "shear_overview.png"));
 
+            // 山地局部放大：以最大的山嘴为中心，220m 宽，5 px/m
+            {
+                // 选冲沟、孤峰、崖边最多的 220m 窗口
+                int bestX = 0, bestScore = -1, minZ = map.H;
+                for (int x0c = 0; x0c <= map.W - 220; x0c += 16)
+                {
+                    int sc = 0;
+                    for (int z = 0; z < map.H; z++)
+                        for (int x = x0c; x < x0c + 220; x++)
+                        {
+                            int i = map.Index(x, z);
+                            if (map.Has(i, CellFlags.Spire)) sc += 4;
+                            if (map.Has(i, CellFlags.Gully)) sc += 1;
+                        }
+                    if (sc > bestScore) { bestScore = sc; bestX = x0c; }
+                }
+                for (int x = bestX; x < bestX + 220; x++)
+                    for (int z = 0; z < map.H; z++)
+                        if (map.Biome[map.Index(x, z)] == (byte)BiomeId.Mountain) { minZ = Math.Min(minZ, z); break; }
+                double x0 = bestX;
+                double z0 = Math.Max(0, minZ - 50);
+                r.Render(x0, z0, 220, Math.Min(map.H - z0, 200), 5.0, null).Save(Path.Combine(outDir, "shear_mountain_zoom.png"));
+                Console.WriteLine($"  mountain zoom x {x0}..{x0 + 220}, z {z0}..");
+            }
+
             // 1080p 相机视野：orthoSize 9.5 → 竖直 19m，1080px → 56.84 px/m
             double ppm = 1080 / 19.0;
             double viewW = 1920 / ppm, viewH = 19.0;
@@ -166,6 +191,9 @@ namespace Wort.Tools
                     if (map.HasWater(i)) col = map.Has(i, CellFlags.River) ? 0x2F6FB8u : 0x3F86B8u;
                     if (map.Has(i, CellFlags.Hidden)) col = Image.Mix(col, 0xD040D0, ((x + z) & 3) == 0 ? 0.65 : 0.2);
                     if (map.Has(i, CellFlags.Unreachable)) col = Image.Mix(col, 0xFF2020, 0.45);
+                    if (map.Has(i, CellFlags.Gully) && !map.HasWater(i)) col = Image.Mix(col, 0x30D0E0, 0.35);
+                    if (map.Has(i, CellFlags.Scree)) col = 0xC8C8C8u;
+                    if (map.Has(i, CellFlags.Spire)) col = 0xFFFFFFu;
                     if (map.Has(i, CellFlags.Ramp)) col = 0xFF9A1Fu;
                     Fill(img, x, z, map.H, col);
                     // 悬崖线：与南/东邻居高差 ≥ 2 画黑线
@@ -251,6 +279,7 @@ namespace Wort.Tools
             var depth = new float[w * h];
             for (int i = 0; i < depth.Length; i++) depth[i] = float.NegativeInfinity;
 
+            map.HeightRange(out int minY, out int maxY);
             foreach (var (mesh, ox, oz) in meshes)
             {
                 // 粗裁剪：chunk 不在视野内就跳过
@@ -268,7 +297,10 @@ namespace Wort.Tools
                         int a = idx[t], b = idx[t + 1], c = idx[t + 2];
                         double nx = n[a * 3], ny = n[a * 3 + 1], nz = n[a * 3 + 2];
                         double lambert = Math.Max(0, nx * LX + ny * LY + nz * LZ);
-                        uint col = Image.Scale(baseColor, 0.5 + 0.6 * lambert);
+                        double k = 0.5 + 0.6 * lambert;
+                        // 预览专用：顶面按高度略微提亮，便于分辨台地层级
+                        if (ny > 0.99) k *= 0.82 + 0.36 * Math.Clamp((p[a * 3 + 1] - minY) / (double)Math.Max(1, maxY - minY), 0, 1);
+                        uint col = Image.Scale(baseColor, k);
                         Raster(img, depth, u0, v0, ppm, h,
                             p[a * 3] + ox, p[a * 3 + 1], p[a * 3 + 2] + oz,
                             p[b * 3] + ox, p[b * 3 + 1], p[b * 3 + 2] + oz,
