@@ -27,6 +27,7 @@ crashlytics-buildid.txt
 .idea/
 .gradle/
 *.csproj
+!/Tools/**/*.csproj
 *.unityproj
 *.sln
 *.slnx
