@@ -108,6 +108,21 @@ namespace Wort.Generation
 
         public bool Has(int i, CellFlags f) => (Flags[i] & f) != 0;
 
+        /// <summary>
+        /// 结果校验和（FNV-1a，覆盖高度、水面、斜坡、标记）。
+        /// 云端预览与 Unity 里的值相同，说明两边生成结果逐格一致。
+        /// </summary>
+        public uint Checksum()
+        {
+            uint h = 2166136261U;
+            void Add(int v) { unchecked { for (int k = 0; k < 4; k++) { h ^= (byte)(v >> (8 * k)); h *= 16777619U; } } }
+            for (int i = 0; i < Height.Length; i++)
+            {
+                Add(Height[i]); Add(Water[i]); Add(Slope[i]); Add((int)Flags[i]);
+            }
+            return h;
+        }
+
         /// <summary>区域内高度范围（含斜坡、水）。</summary>
         public void HeightRange(out int min, out int max)
         {

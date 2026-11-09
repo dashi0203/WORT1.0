@@ -55,9 +55,19 @@ git pull origin claude/focused-galileo-rr85m8
 3. 第一次打开会导入资源、解析 Packages，需要几分钟。
 4. 打开后检查 Console：应当没有红色报错。
 
-骨架阶段仓库里还没有场景。第 3 步完成后，用菜单 **Wort → Create Terrain Lab Scene** 生成测试场景。
+## 5. 地形实验（8×8 chunk）
 
-## 5. 本地改动约定
+1. 菜单 **Wort → Create Terrain Lab Scene**：生成 `Assets/Wort/Scenes/TerrainLab.unity`（相机、Chibi 角色、灯光、Volume、Terrain Lab），并立即生成一次地形。
+2. 选中 **Terrain Lab** 物体，Inspector 里有三个按钮：**生成**、**换种子并生成**、**清除**。
+3. 点 Play：地形自动重新生成，角色放在出生点。WASD 移动，空格跳（能跳上 1m 台阶，2m 不行）。
+4. 生成的地形不保存进场景文件（每次 Play 或点“生成”时重建），所以场景文件很小。
+
+**核对云端预览**：每次生成后 Console 会打印一行 `[TerrainLab] seed … checksum 0x…`。
+默认种子 20261109 的云端预览 checksum 是 `0xEE3CECBB`，种子 7 是 `0x3DD96B8A`。数字相同，说明 Unity 里的地形和云端预览图逐格一致。
+
+**自动测试**：Window → General → Test Runner → EditMode → Run All。`MatchesCloudPreview` 会自动比对上面两个 checksum。
+
+## 6. 本地改动约定
 
 - 本地项目暂时视为只读：不要提交本地改动，代码统一由云端会话推送。
 - Unity 第一次打开时可能会改写 `Packages/packages-lock.json`，或新增少量 `.meta` 文件。这些属于正常现象，可以先不提交。要还原，执行：

@@ -445,7 +445,8 @@ namespace Wort.Generation
                     int i = z * W + x;
                     double d = mountainOut[i];
                     if (mountainMask[i] || d < 7 || d > Reach || map.Tier[i] > 0 || gully[i]) continue;
-                    double c = 0.55 * Math.Pow(1 - d / Reach, 1.5);
+                    double f = 1 - d / Reach;
+                    double c = 0.55 * f * Math.Sqrt(f); // f^1.5；不用 Math.Pow，保证跨运行时一致
                     if (hn.Sample(WX(x), WZ(z)) > q.Quantile(1 - c)) m[i] = true;
                 }
             m = Grid.BlockQuantize(m, W, H, 4, 3, 1, Hash.Derive(seed, "mtn.outlierBlock"), 0.5);

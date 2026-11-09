@@ -42,6 +42,7 @@ namespace Wort.Tools
 
             Console.WriteLine($"seed {seed}: 阶段A {tA}ms, 体素化 {tB - tA}ms, 网格 {tC - tB}ms, 三角形 {tris}");
             foreach (var kv in map.Stats) Console.WriteLine($"  {kv.Key} = {kv.Value}");
+            Console.WriteLine($"  checksum = 0x{map.Checksum():X8}");
             Console.WriteLine($"  spawn = ({map.SpawnX}, {map.SpawnZ}) h={map.Height[map.Index(map.SpawnX, map.SpawnZ)]}");
 
             Maps.Biome(map).Save(Path.Combine(outDir, "biome.png"));
