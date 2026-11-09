@@ -1167,6 +1167,24 @@ namespace Wort.Generation
                 if (placed >= target) break;
                 int px = Grid.DX4[(r.d + 1) & 3], pz = Grid.DZ4[(r.d + 1) & 3];
                 int x0 = r.start % W, z0 = r.start / W;
+                // 自然地形不允许连续两格斜坡：本段之外的四邻已有斜坡（含坡道）就放弃这一段
+                bool chain = false;
+                for (int k = 0; k < r.len && !chain; k++)
+                {
+                    int cx = x0 + px * k, cz = z0 + pz * k;
+                    for (int d = 0; d < 4; d++)
+                    {
+                        if (d == ((r.d + 1) & 3) || d == ((r.d + 3) & 3))
+                        {
+                            // 段的两端之外才算外部
+                            int kk = k + (d == ((r.d + 1) & 3) ? 1 : -1);
+                            if (kk >= 0 && kk < r.len) continue;
+                        }
+                        int nx = cx + Grid.DX4[d], nz = cz + Grid.DZ4[d];
+                        if (map.InBounds(nx, nz) && map.Slope[nz * W + nx] >= 0) { chain = true; break; }
+                    }
+                }
+                if (chain) continue;
                 for (int k = 0; k < r.len; k++)
                 {
                     int c = (z0 + pz * k) * W + x0 + px * k;
@@ -1270,6 +1288,25 @@ namespace Wort.Generation
             map.Stats["surfaceCells"] = surface;
             map.Stats["slopeCells"] = slope;
             map.Stats["rampSlopeCells"] = rampCells;
+            int chains = 0;
+            for (int i = 0; i < map.Height.Length; i++)
+            {
+                int d = map.Slope[i];
+                if (d < 0 || map.Has(i, CellFlags.Ramp)) continue;
+                int nx = i % W + Grid.DX4[d], nz = i / W + Grid.DZ4[d];
+                // 沿上坡 / 下坡方向相邻的任何斜坡都算“连续斜坡”
+                if (map.InBounds(nx, nz) && map.Slope[nz * W + nx] >= 0) chains++;
+                nx = i % W - Grid.DX4[d]; nz = i / W - Grid.DZ4[d];
+                if (map.InBounds(nx, nz) && map.Slope[nz * W + nx] >= 0) chains++;
+                // 侧面相邻但方向不同的斜坡（拐角拼接）也算
+                for (int k = 1; k <= 3; k += 2)
+                {
+                    int sd = (d + k) & 3;
+                    nx = i % W + Grid.DX4[sd]; nz = i / W + Grid.DZ4[sd];
+                    if (map.InBounds(nx, nz)) { int j = nz * W + nx; if (map.Slope[j] >= 0 && map.Slope[j] != d) chains++; }
+                }
+            }
+            map.Stats["naturalSlopeChains"] = chains;
             map.Stats["slopePermille"] = (int)Math.Round(1000.0 * slope / Math.Max(1, surface));
             map.Stats["allSlopePermille"] = (int)Math.Round(1000.0 * (slope + rampCells) / Math.Max(1, surface));
             map.Stats["drops"] = map.Drops.Count;
