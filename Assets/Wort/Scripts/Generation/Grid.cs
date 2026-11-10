@@ -113,6 +113,32 @@ namespace Wort.Generation
         }
 
         public static bool[] Open(bool[] m, int w, int h, int r) => Dilate(Erode(m, w, h, r), w, h, r);
+
+        /// <summary>圆形结构元的腐蚀（倒角距离近似欧氏）：离 false 至少 r 米才保留。</summary>
+        public static bool[] ErodeRound(bool[] m, int w, int h, double r)
+        {
+            var d = DistanceInside(m, w, h);
+            var dst = new bool[m.Length];
+            for (int i = 0; i < m.Length; i++) dst[i] = m[i] && d[i] > r;
+            return dst;
+        }
+
+        /// <summary>圆形结构元的膨胀：离 true 不超过 r 米的格都变成 true。</summary>
+        public static bool[] DilateRound(bool[] m, int w, int h, double r)
+        {
+            var inv = new bool[m.Length];
+            for (int i = 0; i < m.Length; i++) inv[i] = !m[i];
+            var d = DistanceInside(inv, w, h);
+            var dst = new bool[m.Length];
+            for (int i = 0; i < m.Length; i++) dst[i] = m[i] || d[i] <= r;
+            return dst;
+        }
+
+        /// <summary>圆形开运算：去掉窄于 2r 的部分，角是圆的（不出直角）。</summary>
+        public static bool[] OpenRound(bool[] m, int w, int h, double r) => DilateRound(ErodeRound(m, w, h, r), w, h, r);
+
+        /// <summary>圆形闭运算：填掉窄于 2r 的缝。</summary>
+        public static bool[] CloseRound(bool[] m, int w, int h, double r) => ErodeRound(DilateRound(m, w, h, r), w, h, r);
         public static bool[] Close(bool[] m, int w, int h, int r) => Erode(Dilate(m, w, h, r), w, h, r);
 
         /// <summary>

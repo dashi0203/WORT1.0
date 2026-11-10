@@ -78,7 +78,7 @@ dotnet bin/Release/net8.0/TerrainPreview.dll --layout ../../Assets/Wort/Data/Lay
 | --- | --- |
 | 20261109（默认） | `0xEE3CECBB` |
 | 7 | `0x3DD96B8A` |
-| layout `Test8x8.json`（seed 20261110） | `0x4D5BF7DC` |
+| layout `Test8x8.json`（seed 20261110） | `0x30EF682C` |
 
 ## 地形生成管线（`RegionGenerator.Run`）
 
@@ -135,6 +135,8 @@ dotnet bin/Release/net8.0/TerrainPreview.dll --layout ../../Assets/Wort/Data/Lay
 删除所有斜坡（`TerrainHooks.NoSlopes`：不跑 AssignSlopes，坡道改台阶）；海崖；峡谷河取代程序河（`SkipRiver`）。
 顺带修掉的问题：旧连通性把深水当成可走（layout 模式下深水不连通）；地点保留区在台地群里留下坑（地点不再保留，改成按占地最常见高度压平 + 外圈收台阶）；
 峡谷谷底低于 0 层时海水倒灌（谷底至少 1 层，入海口除外）；残留小陷坑自动填平（FillTrapPits）。
+
+第四轮：台地太规整 → layout 模式下去掉 4m 块量化、改用圆形开闭运算（`Grid.OpenRound / CloseRound`），坡道放置只要求坡道宽度的直边。
 
 测试 layout 结果：检查全部通过；大峡谷两侧 60m 的两点步行 406m；全图 0 个斜坡体素；在开阔地挖 3 层深的坑，检查报 100 个“回不来”。
 

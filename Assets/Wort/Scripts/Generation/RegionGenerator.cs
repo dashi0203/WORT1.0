@@ -63,6 +63,7 @@ namespace Wort.Generation
         }
 
         bool Reserved(int i) => hooks?.Reserved != null && hooks.Reserved[i];
+        bool Organic => hooks != null && hooks.Organic;
 
         double WX(int x) => s.OriginX + x + 0.5;
         double WZ(int z) => s.OriginZ + z + 0.5;
@@ -110,7 +111,7 @@ namespace Wort.Generation
                 var mm = new bool[n];
                 for (int i = 0; i < n; i++) mm[i] = map.Biome[i] == (byte)BiomeId.Mountain;
                 // 与旧版一样按 4m 块量化：山缘的崖是 ≥ 4 格的直段，方便放坡道
-                mountainMask = Grid.BlockQuantize(mm, W, H, 4, 1, 3, Hash.Derive(seed, "mtn.block"), 0.6);
+                mountainMask = Organic ? Grid.CloseRound(mm, W, H, 3) : Grid.BlockQuantize(mm, W, H, 4, 1, 3, Hash.Derive(seed, "mtn.block"), 0.6);
                 mountainMask = Grid.RemoveSmall(mountainMask, W, H, 200);
                 return;
             }
@@ -268,7 +269,7 @@ namespace Wort.Generation
                     double gx = WX(x), gz = WZ(z);
                     int hc = 4 + (int)Math.Floor(Clamp01(cliffH.Sample(gx, gz) * 1.6 + 0.5) * 4.999); // 4–8
                     // 台阶的分界用 4m 块中心的深度，保证分界线也是直段
-                    int bx = Grid.Clamp((x / B) * B + B / 2, 0, W - 1), bz = Grid.Clamp((z / B) * B + B / 2, 0, H - 1);
+                    int bx = Organic ? x : Grid.Clamp((x / B) * B + B / 2, 0, W - 1), bz = Organic ? z : Grid.Clamp((z / B) * B + B / 2, 0, H - 1);
                     double dq = mountainDepth[bz * W + bx];
                     int l;
                     if (steep.Sample(gx, gz) > 0.02) l = hc;
@@ -350,7 +351,7 @@ namespace Wort.Generation
                     cur = best; lastDir = bestDir;
                 }
             }
-            g = Grid.BlockQuantize(g, W, H, 4, 2, 0, Hash.Derive(seed, "mtn.gullyBlock"), 0.3);
+            if (!Organic) g = Grid.BlockQuantize(g, W, H, 4, 2, 0, Hash.Derive(seed, "mtn.gullyBlock"), 0.3);
             gully = Grid.RemoveSmall(g, W, H, 60);
             int c = 0;
             for (int i = 0; i < n; i++) if (gully[i]) { map.Flags[i] |= CellFlags.Gully; c++; }
@@ -425,9 +426,18 @@ namespace Wort.Generation
                         c = Math.Max(0.0, Math.Min(0.95, c));
                         m[i] = field(gx, gz) > q.Quantile(1 - c);
                     }
-                m = Grid.Close(m, W, H, TerraceGapClose);
-                m = Grid.BlockQuantize(m, W, H, 4, (k * 3 + 1) & 3, (k * 5 + 2) & 3, Hash.Derive(seed, "terrace.block" + k), 0.6);
-                m = Grid.Open(m, W, H, TerraceMinHalfWidth);
+                if (Organic)
+                {
+                    // 有机：圆形开闭运算，不做 4m 块量化（不出直边和直角）
+                    m = Grid.CloseRound(m, W, H, TerraceGapClose + 0.5);
+                    m = Grid.OpenRound(m, W, H, TerraceMinHalfWidth);
+                }
+                else
+                {
+                    m = Grid.Close(m, W, H, TerraceGapClose);
+                    m = Grid.BlockQuantize(m, W, H, 4, (k * 3 + 1) & 3, (k * 5 + 2) & 3, Hash.Derive(seed, "terrace.block" + k), 0.6);
+                    m = Grid.Open(m, W, H, TerraceMinHalfWidth);
+                }
                 for (int i = 0; i < n; i++)
                 {
                     if (k > 0) m[i] &= tiers[k - 1][i];
@@ -477,8 +487,12 @@ namespace Wort.Generation
                     double c = 0.55 * f * Math.Sqrt(f); // f^1.5；不用 Math.Pow，保证跨运行时一致
                     if (hn.Sample(WX(x), WZ(z)) > q.Quantile(1 - c)) m[i] = true;
                 }
-            m = Grid.BlockQuantize(m, W, H, 4, 3, 1, Hash.Derive(seed, "mtn.outlierBlock"), 0.5);
-            m = Grid.Open(m, W, H, TerraceMinHalfWidth);
+            if (Organic) m = Grid.OpenRound(m, W, H, TerraceMinHalfWidth);
+            else
+            {
+                m = Grid.BlockQuantize(m, W, H, 4, 3, 1, Hash.Derive(seed, "mtn.outlierBlock"), 0.5);
+                m = Grid.Open(m, W, H, TerraceMinHalfWidth);
+            }
             var lab = Grid.Label(W, H, i => m[i], (a, b) => true, out var sizes);
             int count = 0;
             var counted = new bool[sizes.Count];
@@ -548,7 +562,7 @@ namespace Wort.Generation
                     if (nearTier[i] && Blend(i, p => p.AllowMesa ? 1 : 0) >= 0.5 && mesaN.Sample(WX(x), WZ(z)) > mesaThr)
                         mesa[i] = true;
                 }
-            mesa = Grid.Open(mesa, W, H, 2);
+            mesa = Organic ? Grid.OpenRound(mesa, W, H, 2) : Grid.Open(mesa, W, H, 2);
             map.Stats["mesas"] = RaiseBlobs(mesa, 40, 300, CellFlags.Mesa, (ringMin, ringMax, inMax, k) => Math.Max(inMax, ringMin + 4 + (int)(k & 1)));
             map.Stats["spires"] = PlaceSpires();
         }
@@ -1020,8 +1034,9 @@ namespace Wort.Generation
             int px = Grid.DX4[(dir + 1) & 3], pz = Grid.DZ4[(dir + 1) & 3];
             int dx = Grid.DX4[dir], dz = Grid.DZ4[dir];
             int ht = map.Height[z * W + x], hl = ht - drop;
-            // 高处一侧：含两侧各 1 格，共 width + 2 格笔直等高
-            for (int j = -1; j <= width; j++)
+            // 高处一侧：含两侧各 1 格，共 width + 2 格笔直等高（有机模式只要求坡道本身那 width 格）
+            int pad = Organic ? 0 : 1;
+            for (int j = -pad; j < width + pad; j++)
             {
                 int cx = x + px * j, cz = z + pz * j;
                 if (!map.InBounds(cx, cz)) return false;
@@ -1415,5 +1430,7 @@ namespace Wort.Generation
         public bool SkipRiver;
         /// <summary>不放任何斜坡体素：没有自然斜坡，坡道改成每级 1 层的台阶（斜坡由策划手动放）。</summary>
         public bool NoSlopes;
+        /// <summary>有机形状：台地、山缘、残丘、高台不做 4m 块量化，开闭运算用圆形结构元（不出直边和直角）。</summary>
+        public bool Organic;
     }
 }

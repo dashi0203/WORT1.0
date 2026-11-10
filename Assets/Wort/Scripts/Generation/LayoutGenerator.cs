@@ -73,6 +73,7 @@ namespace Wort.Generation
                 SpawnZ = home != null ? home.Z : -1,
                 SkipRiver = L.Regions.Exists(r => r.River), // 河由峡谷给出
                 NoSlopes = true,                             // 斜坡由策划手动放；坡道是台阶
+                Organic = true,                              // 台地等不做块量化、不出直角
                 Stamp = map =>
                 {
                     res.Map = map;
