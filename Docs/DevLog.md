@@ -1,8 +1,16 @@
 # Wort 开发记录
 
-最后更新：2026-11-09 · 分支 `claude/focused-galileo-rr85m8` · 最新提交见 `git log`
+最后更新：2026-11-10 · 分支 `claude/focused-galileo-rr85m8` · 最新提交见 `git log`
 
 GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
+
+## GDD 同步记录
+
+`Docs/GDD.md` 是 claude.ai 上 GDD 的只读快照。每次 GDD 改动后重新导出，并在下表最上面加一行。
+
+| 日期 | 源文档 rev | 内容 |
+| --- | --- | --- |
+| 2026-11-10 | 28 | 首次导出。已包含 6.3 节“微起伏默认是台阶，少量斜坡、整体比例要小【已定】”的修改。核对：【已定】78 / 【暂定】33 / 【待讨论】10，表格 19，公式 4。 |
 
 ## 当前状态
 
