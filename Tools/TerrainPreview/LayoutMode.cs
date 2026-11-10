@@ -20,6 +20,7 @@ namespace Wort.Tools
             0x5A86C9, // 盆地
             0x8E5AC9, // 峡谷
             0xB8B0A4, // 高原
+            0x3F7FB0, // 海
         };
 
         public static int Run(string layoutPath, string outDir)
@@ -29,6 +30,7 @@ namespace Wort.Tools
             var sw = Stopwatch.StartNew();
             var L = WorldLayout.Parse(File.ReadAllText(layoutPath), File.Exists(templatesPath) ? File.ReadAllText(templatesPath) : null);
             var res = LayoutGenerator.Generate(L);
+            Res = res;
             var map = res.Map;
             long tA = sw.ElapsedMilliseconds;
             var voxels = new RegionVoxels(map);
@@ -82,30 +84,33 @@ namespace Wort.Tools
                 if (sp.Type == SpanType.Bridge)
                 {
                     // 站在桥下的峡谷底
-                    int x = sp.X0 + 4, z = (sp.Z0 + sp.Z1) / 2;
-                    for (int dz = -8; dz <= 8; dz++)
-                        if (map.Height[map.Index(x, z + dz)] < map.Height[map.Index(x, z)]) { z += dz; break; }
-                    yield return ("bridge_" + sp.Id, x, z);
+                    bool ns = sp.X0 == sp.X1;
+                    int bx = (sp.X0 + sp.X1) / 2, bz = (sp.Z0 + sp.Z1) / 2, low = int.MaxValue;
+                    for (int t = -30; t <= 30; t++)
+                    {
+                        int x = ns ? sp.X0 : (sp.X0 + sp.X1) / 2 + t, z = ns ? (sp.Z0 + sp.Z1) / 2 + t : sp.Z0;
+                        if (!map.InBounds(x, z)) continue;
+                        int hh = map.Height[map.Index(x, z)];
+                        if (hh < low) { low = hh; bx = x; bz = z; }
+                    }
+                    yield return ("bridge_" + sp.Id, ns ? bx + 4 : bx, ns ? bz : bz - 4);
                 }
-                else
-                {
-                    yield return ("tunnel_" + sp.Id, Math.Min(sp.X0, sp.X1) + 8, sp.Z0 - 4);
-                }
+                else yield return ("tunnel_" + sp.Id, Math.Min(sp.X0, sp.X1) + 8, sp.Z0 - 4);
             }
-            for (int k = 0; k < L.Gates.Count && k < map.Ramps.Count; k++)
+            // 每个结构区域（峡谷、盆地、台地）中部
+            foreach (var r in L.Regions)
             {
-                // 坡道中段的侧面，能同时看到坡道和崖
-                var rp = map.Ramps[k];
-                int up = (rp.DownDir + 2) & 3;
-                int back = rp.Length / 2 + 1;
-                int x = rp.TopX - Grid.DX4[up] * back + Grid.DX4[(up + 1) & 3] * 4;
-                int z = rp.TopZ - Grid.DZ4[up] * back + Grid.DZ4[(up + 1) & 3] * 4;
-                yield return ("gate_" + L.Gates[k].Id.Replace('.', '_'), Grid.Clamp(x, 0, map.W - 1), Grid.Clamp(z, 0, map.H - 1));
+                if (r.IsOpen || r.Kind == RegionKind.Sea) continue;
+                long sx = 0, sz = 0; int n = 0;
+                for (int z = 0; z < map.H; z++)
+                    for (int x = 0; x < map.W; x++)
+                        if (Res.RegionId[map.Index(x, z)] == r.Index) { sx += x; sz += z; n++; }
+                if (n > 0) yield return ("region_" + r.Id, (int)(sx / n), (int)(sz / n));
             }
-            foreach (var s in L.Sites)
-                if (s.Template == "cave" || s.Template == "ruinHut")
-                    yield return ("site_" + s.Id, s.X, s.Z - 3);
+            foreach (var s in L.Sites) yield return ("site_" + s.Id, s.X, s.Z - 3);
         }
+
+        static LayoutResult Res;
 
         static Image LayoutImage(LayoutResult res)
         {

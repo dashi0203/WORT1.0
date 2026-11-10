@@ -11,6 +11,7 @@ namespace Wort.Generation
         Basin = 2,    // 盆地：一圈崖，跳进去原路出不来
         Canyon = 3,   // 峡谷：两侧长崖，谷底有自己的出入口
         Highland = 4, // 高原：外缘可以 7 层以上
+        Sea = 5,      // 海：0 层水面，海底 −3 到 −6
     }
 
     public enum GateType : byte { Ramp = 0, Stairs = 1 }
@@ -182,6 +183,8 @@ namespace Wort.Generation
         /// <summary>基准层级；有父区域时相对父区域。</summary>
         public int Level;
         public BiomeId Biome;
+        /// <summary>未写 biome 的结构区域（峡谷、盆地等）沿用它下面的开放区 Biome。</summary>
+        public bool InheritBiome;
         public LayoutShape Shape;
 
         // 解析后填写
@@ -310,6 +313,7 @@ namespace Wort.Generation
                     Kind = ParseKind(Str(r, "kind", "open")),
                     Level = (int)Num(r, "level", 0),
                     Biome = ParseBiome(Str(r, "biome", "mixedForest")),
+                    InheritBiome = !r.ContainsKey("biome"),
                     Shape = ParseShape(r.TryGetValue("shape", out var sh) ? (Dictionary<string, object>)sh : null),
                 });
             }
@@ -482,6 +486,7 @@ namespace Wort.Generation
                 case "basin": return RegionKind.Basin;
                 case "canyon": return RegionKind.Canyon;
                 case "highland": return RegionKind.Highland;
+                case "sea": return RegionKind.Sea;
                 default: throw new FormatException("未知区域类型 " + s);
             }
         }

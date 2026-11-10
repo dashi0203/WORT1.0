@@ -32,8 +32,11 @@ namespace Wort.Generation
         readonly int W, H;
         readonly uint seed;
 
-        RegionGenerator(RegionSettings settings)
+        readonly TerrainHooks hooks;
+
+        RegionGenerator(RegionSettings settings, TerrainHooks hooks = null)
         {
+            this.hooks = hooks;
             s = settings;
             map = new RegionMap(settings);
             W = map.W;
@@ -47,6 +50,19 @@ namespace Wort.Generation
             g.Run();
             return g.map;
         }
+
+        /// <summary>
+        /// layout 管线用：Biome 图由 layout 给出，保留区里不放台地等噪声地物，
+        /// 河之后、连通性修复之前由 layout 盖印章（海、峡谷、盆地、地点）。hooks 为 null 时与旧版逐格一致。
+        /// </summary>
+        public static RegionMap Generate(RegionSettings settings, TerrainHooks hooks)
+        {
+            var g = new RegionGenerator(settings, hooks);
+            g.Run();
+            return g.map;
+        }
+
+        bool Reserved(int i) => hooks?.Reserved != null && hooks.Reserved[i];
 
         double WX(int x) => s.OriginX + x + 0.5;
         double WZ(int z) => s.OriginZ + z + 0.5;
@@ -70,12 +86,14 @@ namespace Wort.Generation
             BuildMesasAndSpires();
             BuildPonds();
             BuildRiver();
+            hooks?.Stamp?.Invoke(map);
             FlattenHiddenStrips();
             ConnectAndRamp();
             ExtraRamps();
             AssignSlopes();
             MarkHiddenAndEdges();
             ChooseSpawn();
+            if (hooks != null && hooks.SpawnX >= 0) { map.SpawnX = hooks.SpawnX; map.SpawnZ = hooks.SpawnZ; }
             CollectStats();
         }
 
@@ -86,6 +104,16 @@ namespace Wort.Generation
         void BuildBiomeLayout()
         {
             int n = W * H;
+            if (hooks?.Biome != null)
+            {
+                Array.Copy(hooks.Biome, map.Biome, n);
+                var mm = new bool[n];
+                for (int i = 0; i < n; i++) mm[i] = map.Biome[i] == (byte)BiomeId.Mountain;
+                // 与旧版一样按 4m 块量化：山缘的崖是 ≥ 4 格的直段，方便放坡道
+                mountainMask = Grid.BlockQuantize(mm, W, H, 4, 1, 3, Hash.Derive(seed, "mtn.block"), 0.6);
+                mountainMask = Grid.RemoveSmall(mountainMask, W, H, 200);
+                return;
+            }
             var warpX = Noise("layout.warpX", 120, 3);
             var warpZ = Noise("layout.warpZ", 120, 3);
             var line = Noise("layout.line", 150, 3);
@@ -403,7 +431,7 @@ namespace Wort.Generation
                 for (int i = 0; i < n; i++)
                 {
                     if (k > 0) m[i] &= tiers[k - 1][i];
-                    if (gully[i]) m[i] = false;
+                    if (gully[i] || Reserved(i)) m[i] = false;
                 }
                 m = Grid.RemoveSmall(m, W, H, TerraceMinArea);
                 tiers[k] = m;
@@ -444,7 +472,7 @@ namespace Wort.Generation
                 {
                     int i = z * W + x;
                     double d = mountainOut[i];
-                    if (mountainMask[i] || d < 7 || d > Reach || map.Tier[i] > 0 || gully[i]) continue;
+                    if (mountainMask[i] || d < 7 || d > Reach || map.Tier[i] > 0 || gully[i] || Reserved(i)) continue;
                     double f = 1 - d / Reach;
                     double c = 0.55 * f * Math.Sqrt(f); // f^1.5；不用 Math.Pow，保证跨运行时一致
                     if (hn.Sample(WX(x), WZ(z)) > q.Quantile(1 - c)) m[i] = true;
@@ -516,7 +544,7 @@ namespace Wort.Generation
                 for (int x = 0; x < W; x++)
                 {
                     int i = z * W + x;
-                    if (gully[i] || (map.Flags[i] & ~SoftFlags) != 0) continue;
+                    if (gully[i] || Reserved(i) || (map.Flags[i] & ~SoftFlags) != 0) continue;
                     if (nearTier[i] && Blend(i, p => p.AllowMesa ? 1 : 0) >= 0.5 && mesaN.Sample(WX(x), WZ(z)) > mesaThr)
                         mesa[i] = true;
                 }
@@ -537,7 +565,7 @@ namespace Wort.Generation
                 for (int x = 12; x < W - 12; x++)
                 {
                     int i = z * W + x;
-                    if (!mountainMask[i] || mountainDepth[i] < 14 || gully[i] || (map.Flags[i] & ~SoftFlags) != 0) continue;
+                    if (!mountainMask[i] || mountainDepth[i] < 14 || gully[i] || Reserved(i) || (map.Flags[i] & ~SoftFlags) != 0) continue;
                     if (map.Weights[(int)BiomeId.Mountain][i] < 0.7f) continue;
                     int h = map.Height[i];
                     bool nearCliff = false, isTop = true;
@@ -665,7 +693,7 @@ namespace Wort.Generation
                 for (int x = 0; x < W; x++)
                 {
                     int i = z * W + x;
-                    if (map.Tier[i] > 0 || (map.Flags[i] & ~SoftFlags) != 0) continue;
+                    if (map.Tier[i] > 0 || Reserved(i) || (map.Flags[i] & ~SoftFlags) != 0) continue;
                     double gx = WX(x), gz = WZ(z);
                     double cov = Blend(i, p => p.PondCoverage);
                     if (cov > 0 && pondN.Sample(gx, gz) > qp.Quantile(1 - cov)) pond[i] = true;
@@ -749,7 +777,7 @@ namespace Wort.Generation
                 int i = heap.Pop(out double c);
                 if (c > cost[i]) continue;
                 int x = i % W, z = i / W;
-                if (z == 0) { target = i; break; }
+                if (hooks?.RiverEnd != null ? hooks.RiverEnd[i] : z == 0) { target = i; break; }
                 for (int d = 0; d < 4; d++)
                 {
                     int nx = x + Grid.DX4[d], nz = z + Grid.DZ4[d];
@@ -761,6 +789,7 @@ namespace Wort.Generation
                     if (rise > 0) step += 3 * rise;
                     if (map.Tier[j] > 0) step += 1.5;
                     if ((map.Flags[j] & (CellFlags.Mesa | CellFlags.Spire)) != 0) step += 200;
+                    if (Reserved(j) && !(hooks.RiverEnd != null && hooks.RiverEnd[j])) step += 200;
                     if (map.HasWater(j)) step *= 0.5;
                     double nc = c + step;
                     if (nc < cost[j]) { cost[j] = nc; prev[j] = i; heap.Push(j, nc); }
@@ -1361,5 +1390,22 @@ namespace Wort.Generation
             items[i] = last; keys[i] = lk;
             return top;
         }
+    }
+}
+
+namespace Wort.Generation
+{
+    /// <summary>RegionGenerator 的可选钩子（layout 管线用）。</summary>
+    public sealed class TerrainHooks
+    {
+        /// <summary>每格 Biome（BiomeId）。取代程序自由发挥的 Biome 布局。</summary>
+        public byte[] Biome;
+        /// <summary>保留区：不放台地、残丘、高台、孤峰、池塘，河尽量绕开。</summary>
+        public bool[] Reserved;
+        /// <summary>河流可以在这些格结束（如海）。</summary>
+        public bool[] RiverEnd;
+        /// <summary>河之后、连通性修复之前调用：在地形上盖 layout 的印章。</summary>
+        public System.Action<RegionMap> Stamp;
+        public int SpawnX = -1, SpawnZ = -1;
     }
 }

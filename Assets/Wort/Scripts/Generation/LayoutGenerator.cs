@@ -10,9 +10,9 @@ namespace Wort.Generation
         public RegionMap Map;
         /// <summary>每格所属区域（WorldLayout.Regions 的下标）。</summary>
         public int[] RegionId;
-        /// <summary>出入口（坡道 / 台阶）及其周边：连通检查里允许跨区域。</summary>
+        /// <summary>手写出入口（坡道 / 台阶）及其周边。</summary>
         public bool[] GateZone;
-        /// <summary>桥 / 隧道走廊：连通检查里允许跨区域。</summary>
+        /// <summary>桥 / 隧道走廊。</summary>
         public bool[] SpanCorridor;
         /// <summary>桥面格所属的桥（Layout.Spans 下标），否则 -1。</summary>
         public int[] BridgeOf;
@@ -22,72 +22,81 @@ namespace Wort.Generation
     }
 
     /// <summary>
-    /// layout 管线（Docs/WorldGen.md 第 4 节）：
-    /// layout → Biome 图 → 区域层级 → 区域内部噪声 → 水 → 地点 / 道路 → 出入口 → 桥和隧道 → 检查。
-    /// 拓扑只由 layout 决定：区域之间的崖由层级差直接得出，只在出入口开口；内部噪声碰不到区域边界。
+    /// layout 管线（Docs/WorldGen.md 第 4 节）。自然地形（宏观走势、台地群、河、山前悬崖带、坡道与连通性）
+    /// 沿用 RegionGenerator；layout 负责它管不了的部分：
+    /// Biome 图、海、峡谷、盆地、台地区、关键地点、桥和隧道，以及可选的手写出入口和道路。
+    /// 峡谷、盆地需要的坡道默认由 RegionGenerator 的连通性修复自动放。
     /// </summary>
     public static class LayoutGenerator
     {
-        /// <summary>开放区里，离结构区域（台地、盆地等）边界多近以内不放矮台地。</summary>
-        const double TerraceBorderMargin = 8;
-        /// <summary>开放区内部高度的 Biome 平均半径（米），用于开放区之间的平滑过渡。</summary>
-        const int OpenSmoothRadius = 10;
-
         public static LayoutResult Generate(WorldLayout L)
         {
             var s = new RegionSettings { Seed = L.Seed, ChunksX = L.ChunksX, ChunksZ = L.ChunksZ, MinY = -8 };
-            var map = new RegionMap(s);
-            var res = new LayoutResult { Layout = L, Map = map };
-            int W = map.W, H = map.H, N = W * H;
+            int W = s.Width, H = s.Depth, N = W * H;
+            var res = new LayoutResult { Layout = L };
 
             // 1. 区域图（有机形状，1m 栅格化）
-            res.RegionId = RasterizeRegions(L, s, W, H);
+            res.RegionId = RasterizeRegions(L, s, W, H, out var baseBiome);
             var reg = res.RegionId;
-            var open = new bool[N];
-            for (int i = 0; i < N; i++) open[i] = L.Regions[reg[i]].IsOpen;
 
-            // 2. Biome 图：由区域给出，边界渐变
-            BuildBiomes(L, map, reg);
+            // 2. Biome 图
+            var biome = new byte[N];
+            var sea = new bool[N];
+            for (int i = 0; i < N; i++)
+            {
+                var r = L.Regions[reg[i]];
+                sea[i] = r.Kind == RegionKind.Sea;
+                biome[i] = sea[i] ? (byte)BiomeId.Coast : r.InheritBiome && !r.IsOpen ? baseBiome[i] : (byte)r.Biome;
+            }
 
-            // 3. 不放噪声的保护区：道路、地点、出入口、桥和隧道
-            var keepFlat = new bool[N];
+            // 3. 保留区：结构区域外扩 4m、地点 + buffer、桥和隧道、手写出入口和道路
+            var reserved = new bool[N];
+            for (int i = 0; i < N; i++) reserved[i] = !L.Regions[reg[i]].IsOpen;
+            reserved = Grid.Dilate(reserved, W, H, 4);
             res.GateZone = new bool[N];
             res.SpanCorridor = new bool[N];
             res.BridgeOf = new int[N];
             for (int i = 0; i < N; i++) res.BridgeOf[i] = -1;
-            MarkProtected(L, s, W, H, keepFlat, res.GateZone, res.SpanCorridor);
+            MarkProtected(L, W, H, reserved, res.SpanCorridor);
 
-            // 4. 区域层级 + 开放区内部噪声
-            var distToStruct = Grid.DistanceInside(open, W, H);
-            BuildHeights(L, map, reg, open, keepFlat, distToStruct);
-
-            // 5. 结构区域边界：保证崖至少 2 层（不被噪声补出台阶）
-            map.Stats["boundaryFixes"] = EnforceBoundaries(L, map, reg);
-
-            // 6. 地点、道路
-            StampSites(L, map, reg);
-            StampRoads(L, map, reg);
-
-            // 7. 出入口（坡道 / 台阶）
-            map.Stats["gates"] = BuildGates(L, map, res.GateZone, reg);
-
-            // 8. 桥和隧道（悬空层）
-            BuildSpans(L, map, res);
+            // 河从山里往南流：只在南半部的海结束（东海岸一直到北边，不让河横着流进东北角）
+            var riverEnd = new bool[N];
+            for (int i = 0; i < N; i++) riverEnd[i] = sea[i] && i / W < H / 2;
 
             var home = L.Home != null ? L.Site(L.Home) : null;
-            map.SpawnX = home != null ? home.X : W / 2;
-            map.SpawnZ = home != null ? home.Z : H / 2;
+            var hooks = new TerrainHooks
+            {
+                Biome = biome,
+                Reserved = reserved,
+                RiverEnd = riverEnd,
+                SpawnX = home != null ? home.X : -1,
+                SpawnZ = home != null ? home.Z : -1,
+                Stamp = map =>
+                {
+                    res.Map = map;
+                    StampStructures(L, map, reg);
+                    StampSites(L, map, reg);
+                    StampRoads(L, map, reg);
+                    map.Stats["gates"] = BuildGates(L, map, res.GateZone, reg);
+                    BuildSpans(L, map, res);
+                    FloodSea(map, sea);
+                },
+            };
 
-            // 9. 检查
+            // 4. 自然地形 + 印章 + 坡道与连通性
+            res.Map = RegionGenerator.Generate(s, hooks);
+
+            // 5. 检查
             res.Report = LayoutChecks.Run(res);
             return res;
         }
 
         // ---------------- 1. 区域图 ----------------
 
-        static int[] RasterizeRegions(WorldLayout L, RegionSettings s, int W, int H)
+        static int[] RasterizeRegions(WorldLayout L, RegionSettings s, int W, int H, out byte[] baseBiome)
         {
             var reg = new int[W * H];
+            baseBiome = new byte[W * H];
             for (int i = 0; i < reg.Length; i++) reg[i] = -1;
             int maxDepth = 0;
             foreach (var r in L.Regions) maxDepth = Math.Max(maxDepth, r.Depth);
@@ -105,8 +114,9 @@ namespace Wort.Generation
                         {
                             int i = z * W + x;
                             if (parent >= 0 && reg[i] != parent) continue;
-                            double gx = x + 0.5, gz = z + 0.5;
-                            if (sh.Organic(gx, gz) < 0) reg[i] = r.Index;
+                            if (sh.Organic(x + 0.5, z + 0.5) >= 0) continue;
+                            reg[i] = r.Index;
+                            if (r.IsOpen) baseBiome[i] = (byte)r.Biome;
                         }
                 }
             for (int i = 0; i < reg.Length; i++)
@@ -117,8 +127,8 @@ namespace Wort.Generation
 
         /// <summary>
         /// 形状扭曲留下的碎块并入周围最多的区域：
-        /// 任何区域小于 MinPiece 格的碎块（避免被崖圈死的小洞）；结构区域除最大一块以外的所有块（避免没有出入口的孤岛）。
-        /// 开放区可以合法地分成几块（如被长台地隔开的南北两片森林），只去掉碎块。
+        /// 任何区域小于 MinPiece 格的碎块（避免被崖圈死的小洞）；结构区域除最大一块以外的所有块（避免孤岛）。
+        /// 开放区可以合法地分成几块，只去掉碎块。
         /// </summary>
         const int MinPiece = 48;
 
@@ -167,47 +177,27 @@ namespace Wort.Generation
             }
         }
 
-        // ---------------- 2. Biome ----------------
+        // ---------------- 3. 保留区 ----------------
 
-        static void BuildBiomes(WorldLayout L, RegionMap map, int[] reg)
-        {
-            int W = map.W, H = map.H, N = W * H;
-            var one = new float[BiomeTable.Count][];
-            for (int b = 0; b < BiomeTable.Count; b++) one[b] = new float[N];
-            for (int i = 0; i < N; i++) one[(int)L.Regions[reg[i]].Biome][i] = 1;
-            for (int b = 0; b < BiomeTable.Count; b++)
-            {
-                var w = Grid.BoxBlur(Grid.BoxBlur(one[b], W, H, 8), W, H, 8);
-                Array.Copy(w, map.Weights[b], N);
-            }
-            for (int i = 0; i < N; i++)
-            {
-                // 主导 Biome 直接取所在区域，权重只用于地表渐变
-                map.Biome[i] = (byte)L.Regions[reg[i]].Biome;
-            }
-        }
-
-        // ---------------- 3. 保护区 ----------------
-
-        static void MarkProtected(WorldLayout L, RegionSettings s, int W, int H, bool[] keepFlat, bool[] gateZone, bool[] spanCorridor)
+        static void MarkProtected(WorldLayout L, int W, int H, bool[] reserved, bool[] spanCorridor)
         {
             foreach (var r in L.Roads)
-                StampPolyline(r.PX, r.PZ, r.Width * 0.5 + 1, W, H, i => keepFlat[i] = true);
+                StampPolyline(r.PX, r.PZ, r.Width * 0.5 + 1, W, H, i => reserved[i] = true);
             foreach (var site in L.Sites)
             {
                 var t = site.T;
-                Ellipse(site.X + 0.5, site.Z + 0.5, t.RX + t.Buffer, t.RZ + t.Buffer, W, H, i => keepFlat[i] = true);
+                Ellipse(site.X + 0.5, site.Z + 0.5, t.RX + t.Buffer, t.RZ + t.Buffer, W, H, i => reserved[i] = true);
             }
             foreach (var g in L.Gates)
             {
                 double ex = g.X + 0.5 + Grid.DX4[g.Up] * 20, ez = g.Z + 0.5 + Grid.DZ4[g.Up] * 20;
-                StampPolyline(new[] { g.X + 0.5, ex }, new[] { g.Z + 0.5, ez }, g.Width * 0.5 + 2, W, H, i => { keepFlat[i] = true; });
+                StampPolyline(new[] { g.X + 0.5, ex }, new[] { g.Z + 0.5, ez }, g.Width * 0.5 + 2, W, H, i => reserved[i] = true);
             }
             foreach (var sp in L.Spans)
             {
                 double dx = Math.Sign(sp.X1 - sp.X0) * 3, dz = Math.Sign(sp.Z1 - sp.Z0) * 3;
                 StampPolyline(new[] { sp.X0 + 0.5 - dx, sp.X1 + 0.5 + dx }, new[] { sp.Z0 + 0.5 - dz, sp.Z1 + 0.5 + dz },
-                    sp.Width * 0.5 + 2, W, H, i => { keepFlat[i] = true; spanCorridor[i] = true; });
+                    sp.Width * 0.5 + 2, W, H, i => { reserved[i] = true; spanCorridor[i] = true; });
             }
         }
 
@@ -243,160 +233,161 @@ namespace Wort.Generation
                 }
         }
 
-        // ---------------- 4. 高度 ----------------
+        // ---------------- 印章：海、峡谷、盆地、台地区 ----------------
 
-        static void BuildHeights(WorldLayout L, RegionMap map, int[] reg, bool[] open, bool[] keepFlat, float[] distToStruct)
+        static void ClearWater(RegionMap map, int i)
         {
-            var s = map.Settings;
-            int W = map.W, H = map.H, N = W * H;
-
-            // 开放区的基准层级：只在开放区之间平均（开放区不制造崖；挨着结构区域时崖属于对方）
-            var num = new float[N];
-            var den = new float[N];
-            for (int i = 0; i < N; i++) if (open[i]) { num[i] = L.Regions[reg[i]].AbsLevel; den[i] = 1; }
-            for (int k = 0; k < 2; k++) { num = Grid.BoxBlur(num, W, H, OpenSmoothRadius); den = Grid.BoxBlur(den, W, H, OpenSmoothRadius); }
-
-            var micro = new Fbm(Hash.Derive(s.Seed, "layout.micro"), 14, 3);
-            var microBroad = new Fbm(Hash.Derive(s.Seed, "layout.microBroad"), 30, 3);
-            var terrace = new Fbm(Hash.Derive(s.Seed, "layout.terrace"), 44, 3);
-            var pond = new Fbm(Hash.Derive(s.Seed, "layout.pond"), 18, 3);
-            var qMicro = new QuantileTable((x, z) => micro.Sample(x, z));
-            var qMicroBroad = new QuantileTable((x, z) => microBroad.Sample(x, z));
-            var qTerrace = new QuantileTable((x, z) => terrace.Sample(x, z));
-            var qPond = new QuantileTable((x, z) => pond.Sample(x, z));
-
-            // 到区域边界的距离：结构区域（台地、高原）顶面离边 5m 以外才放微起伏，崖边保持干净
-            var inner = new bool[N];
-            for (int z = 0; z < H; z++)
-                for (int x = 0; x < W; x++)
-                {
-                    int i = z * W + x;
-                    bool same = true;
-                    for (int d = 0; d < 4 && same; d++)
-                    {
-                        int nx = x + Grid.DX4[d], nz = z + Grid.DZ4[d];
-                        if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
-                        if (reg[nz * W + nx] != reg[i]) same = false;
-                    }
-                    inner[i] = same;
-                }
-            var distToEdge = Grid.DistanceInside(inner, W, H);
-
-            int ponds = 0, raised = 0, terraced = 0;
-            for (int z = 0; z < H; z++)
-                for (int x = 0; x < W; x++)
-                {
-                    int i = z * W + x;
-                    var r = L.Regions[reg[i]];
-                    double gx = s.OriginX + x + 0.5, gz = s.OriginZ + z + 0.5;
-                    if (!open[i])
-                    {
-                        int hs = r.AbsLevel;
-                        // 台地、高原顶面：0–1 层轻微起伏；盆地、峡谷保持平整（空盆地不放东西）
-                        bool top = r.Kind == RegionKind.Plateau || r.Kind == RegionKind.Highland;
-                        if (top && !keepFlat[i] && distToEdge[i] >= 5 && microBroad.Sample(gx, gz) > qMicroBroad.Quantile(0.7)) { hs++; raised++; }
-                        map.Height[i] = hs;
-                        continue;
-                    }
-                    int baseLv = (int)Math.Floor(num[i] / Math.Max(1e-6f, den[i]) + 0.5);
-                    var p = BiomeTable.Get(r.Biome);
-                    int h = baseLv;
-                    if (!keepFlat[i])
-                    {
-                        // 微起伏：0–1 层的台阶，覆盖率按 Biome 微起伏幅度
-                        double cov = p.MicroAmp >= 1 ? 0.45 : 0.3;
-                        bool up = p.MicroBroad
-                            ? microBroad.Sample(gx, gz) > qMicroBroad.Quantile(1 - cov)
-                            : micro.Sample(gx, gz) > qMicro.Quantile(1 - cov);
-                        if (up) { h++; raised++; }
-                        // 矮台地：1–2 层，叠一次；离结构区域边界 8m 以内不放
-                        if (distToStruct[i] >= TerraceBorderMargin)
-                        {
-                            double c1 = p.TerraceCoverage * 0.6;
-                            double t = terrace.Sample(gx, gz);
-                            if (t > qTerrace.Quantile(1 - c1)) { h++; terraced++; }
-                            if (t > qTerrace.Quantile(1 - c1 * 0.35)) h++;
-                        }
-                        // 沼泽池塘：比底面低 1 层的浅水
-                        if (p.PondCoverage > 0 && distToStruct[i] >= 4 && pond.Sample(gx, gz) > qPond.Quantile(1 - p.PondCoverage))
-                        {
-                            h = baseLv - 1;
-                            map.Water[i] = baseLv;
-                            map.Flags[i] |= CellFlags.Pond;
-                            ponds++;
-                        }
-                    }
-                    map.Height[i] = h;
-                }
-
-            // 开放区内部高差不超过 1 层（矮台地叠成台阶；微起伏和台地边缘重合处不出 2 层）
-            LipschitzClamp(map, open);
-            map.Stats["pondCells"] = ponds;
-            map.Stats["microRaised"] = raised;
-            map.Stats["terraceCells"] = terraced;
+            map.Water[i] = RegionMap.NoWater;
+            map.Flags[i] &= ~(CellFlags.Pond | CellFlags.River);
         }
-
-        static void LipschitzClamp(RegionMap map, bool[] open)
-        {
-            int W = map.W, H = map.H;
-            var h = map.Height;
-            for (int pass = 0; pass < 16; pass++)
-            {
-                bool changed = false;
-                for (int dir = 0; dir < 2; dir++)
-                    for (int zz = 0; zz < H; zz++)
-                        for (int xx = 0; xx < W; xx++)
-                        {
-                            int x = dir == 0 ? xx : W - 1 - xx, z = dir == 0 ? zz : H - 1 - zz;
-                            int i = z * W + x;
-                            if (!open[i]) continue;
-                            for (int d = 0; d < 4; d++)
-                            {
-                                int nx = x + Grid.DX4[d], nz = z + Grid.DZ4[d];
-                                if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
-                                int n = nz * W + nx;
-                                if (!open[n]) continue;
-                                if (h[i] > h[n] + 1) { h[i] = h[n] + 1; changed = true; }
-                            }
-                        }
-                if (!changed) break;
-            }
-            // 水面跟着被压低的池底走
-            for (int i = 0; i < h.Length; i++)
-                if (map.Water[i] != RegionMap.NoWater && map.Water[i] <= h[i]) { map.Water[i] = RegionMap.NoWater; map.Flags[i] &= ~CellFlags.Pond; }
-        }
-
-        // ---------------- 5. 边界 ----------------
 
         /// <summary>
-        /// 结构区域的边界（出入口以外）必须至少 2 层高差，按 layout 的层级方向：
-        /// 设计上高的一侧至少高 2 层。噪声补出的台阶在这里改回去（改结构区域那一侧）。
+        /// 结构区域按“相对周围地形”的层级压进去：
+        /// 峡谷 = 周围地面平滑值 + level（负），谷底沿程每格最多变 1 层；盆地 = 外圈最低 + level，整块平；
+        /// 台地区 = 外圈最高 + level；海 = 0 层水面，海底 −3 到 −6。边界保证至少 2 层的崖。
         /// </summary>
-        static int EnforceBoundaries(WorldLayout L, RegionMap map, int[] reg)
+        static void StampStructures(WorldLayout L, RegionMap map, int[] reg)
         {
-            int W = map.W, H = map.H, fixes = 0;
+            int W = map.W, H = map.H, N = W * H;
             var h = map.Height;
-            for (int z = 0; z < H; z++)
-                for (int x = 0; x < W; x++)
+            var surf = new float[N];
+            for (int i = 0; i < N; i++) surf[i] = h[i];
+            surf = Grid.BoxBlur(Grid.BoxBlur(surf, W, H, 10), W, H, 10);
+
+            foreach (var r in L.Regions)
+            {
+                if (r.IsOpen) continue;
+                var cells = new List<int>();
+                for (int i = 0; i < N; i++) if (reg[i] == r.Index) cells.Add(i);
+                if (cells.Count == 0) continue;
+                var inR = new bool[N];
+                foreach (int i in cells) inR[i] = true;
+
+                int ringMin = int.MaxValue, ringMax = int.MinValue;
+                foreach (int i in cells)
                 {
-                    int i = z * W + x;
-                    var ri = L.Regions[reg[i]];
-                    if (ri.IsOpen) continue;
+                    int x = i % W, z = i / W;
                     for (int d = 0; d < 4; d++)
                     {
                         int nx = x + Grid.DX4[d], nz = z + Grid.DZ4[d];
                         if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
-                        int n = nz * W + nx;
-                        var rn = L.Regions[reg[n]];
-                        if (rn == ri) continue;
-                        if (ri.AbsLevel > rn.AbsLevel && h[i] < h[n] + 2) { h[i] = h[n] + 2; fixes++; }
-                        else if (ri.AbsLevel < rn.AbsLevel && h[i] > h[n] - 2) { h[i] = h[n] - 2; fixes++; }
+                        int j = nz * W + nx;
+                        if (inR[j]) continue;
+                        ringMin = Math.Min(ringMin, h[j]);
+                        ringMax = Math.Max(ringMax, h[j]);
                     }
                 }
-            return fixes;
+                if (ringMin == int.MaxValue) { ringMin = ringMax = 0; }
+
+                switch (r.Kind)
+                {
+                    case RegionKind.Sea:
+                    {
+                        var d = Grid.DistanceInside(inR, W, H);
+                        foreach (int i in cells)
+                        {
+                            h[i] = -3 - Math.Min(3, (int)(d[i] / 10));
+                            map.Water[i] = 0;
+                            map.Slope[i] = -1; map.Tier[i] = 0;
+                            map.Flags[i] &= ~(CellFlags.Pond | CellFlags.River);
+                        }
+                        break;
+                    }
+                    case RegionKind.Canyon:
+                    {
+                        foreach (int i in cells)
+                        {
+                            h[i] = (int)Math.Floor(surf[i]) + r.Level;
+                            map.Slope[i] = -1; map.Tier[i] = 0;
+                            ClearWater(map, i);
+                        }
+                        RimAndSmooth(map, cells, inR, true);
+                        break;
+                    }
+                    case RegionKind.Basin:
+                    {
+                        int floor = ringMin + r.Level;
+                        foreach (int i in cells) { h[i] = floor; map.Slope[i] = -1; map.Tier[i] = 0; ClearWater(map, i); }
+                        RimAndSmooth(map, cells, inR, true);
+                        break;
+                    }
+                    default: // Plateau / Highland：比外圈最高处再高 level
+                    {
+                        int top = ringMax + Math.Max(2, r.Level);
+                        foreach (int i in cells) { h[i] = top; map.Slope[i] = -1; ClearWater(map, i); }
+                        RimAndSmooth(map, cells, inR, false);
+                        break;
+                    }
+                }
+                foreach (int i in cells) if (h[i] < map.Settings.MinY) h[i] = map.Settings.MinY;
+            }
         }
 
-        // ---------------- 6. 地点、道路 ----------------
+        /// <summary>
+        /// 下沉区域（峡谷、盆地）：与外面相邻的格至少比外面低 2 层（崖），内部相邻格高差 ≤ 1（谷底可沿程走）。
+        /// 抬升区域反之。
+        /// </summary>
+        static void RimAndSmooth(RegionMap map, List<int> cells, bool[] inR, bool lower)
+        {
+            int W = map.W, H = map.H;
+            var h = map.Height;
+            for (int pass = 0; pass < 64; pass++)
+            {
+                bool changed = false;
+                foreach (int i in cells)
+                {
+                    int x = i % W, z = i / W;
+                    for (int d = 0; d < 4; d++)
+                    {
+                        int nx = x + Grid.DX4[d], nz = z + Grid.DZ4[d];
+                        if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
+                        int j = nz * W + nx;
+                        if (lower)
+                        {
+                            int lim = inR[j] ? h[j] + 1 : h[j] - 2;
+                            if (h[i] > lim) { h[i] = lim; changed = true; }
+                        }
+                        else
+                        {
+                            int lim = inR[j] ? h[j] - 1 : h[j] + 2;
+                            if (h[i] < lim) { h[i] = lim; changed = true; }
+                        }
+                    }
+                }
+                if (!changed) break;
+            }
+        }
+
+        /// <summary>和海相连、低于 0 层的地面灌成海水（峡谷入海口等）。</summary>
+        static void FloodSea(RegionMap map, bool[] sea)
+        {
+            int W = map.W, H = map.H;
+            var q = new Queue<int>();
+            var seen = new bool[W * H];
+            for (int i = 0; i < sea.Length; i++) if (sea[i]) { seen[i] = true; q.Enqueue(i); }
+            int flooded = 0;
+            while (q.Count > 0)
+            {
+                int i = q.Dequeue();
+                int x = i % W, z = i / W;
+                for (int d = 0; d < 4; d++)
+                {
+                    int nx = x + Grid.DX4[d], nz = z + Grid.DZ4[d];
+                    if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
+                    int j = nz * W + nx;
+                    if (seen[j] || map.Height[j] >= 0) continue;
+                    seen[j] = true;
+                    map.Water[j] = 0;
+                    map.Slope[j] = -1;
+                    map.Flags[j] &= ~CellFlags.Pond;
+                    flooded++;
+                    q.Enqueue(j);
+                }
+            }
+            map.Stats["seaFlooded"] = flooded;
+        }
+
+        // ---------------- 地点、道路 ----------------
 
         static void StampSites(WorldLayout L, RegionMap map, int[] reg)
         {
@@ -406,7 +397,7 @@ namespace Wort.Generation
             {
                 var t = site.T;
                 int c = site.Z * W + site.X;
-                int level = map.Height[c];
+                int level = map.HasWater(c) ? map.Water[c] : map.Height[c];
                 var warp = new Fbm(Hash.Derive(s.Seed, "layout.site." + site.Id), Math.Max(8, Math.Min(t.RX, t.RZ)), 2);
                 double amp = Math.Max(0.5, Math.Min(4, Math.Min(t.RX, t.RZ) * 0.15));
                 int x0 = Math.Max(0, (int)(site.X - t.RX - amp - 1)), x1 = Math.Min(W - 1, (int)(site.X + t.RX + amp + 1));
@@ -420,12 +411,9 @@ namespace Wort.Generation
                         double d = (Math.Sqrt(dx * dx + dz * dz) - 1) * Math.Min(t.RX, t.RZ) + amp * warp.Sample(x + 0.5, z + 0.5);
                         if (d >= 0) continue;
                         map.Flags[i] |= CellFlags.Site;
-                        if (t.Terrain == "flat" || t.Terrain == "cliffBehind")
-                        {
-                            map.Height[i] = level;
-                            map.Water[i] = RegionMap.NoWater;
-                            map.Flags[i] &= ~CellFlags.Pond;
-                        }
+                        map.Height[i] = level;
+                        map.Slope[i] = -1;
+                        ClearWater(map, i);
                     }
             }
         }
@@ -446,18 +434,13 @@ namespace Wort.Generation
                 {
                     if (!allowed.Contains(reg[i])) return;
                     map.Flags[i] |= CellFlags.Road;
-                    map.Water[i] = RegionMap.NoWater;
-                    map.Flags[i] &= ~CellFlags.Pond;
+                    ClearWater(map, i);
                 });
             }
         }
 
-        // ---------------- 7. 出入口 ----------------
+        // ---------------- 手写出入口（可选；默认由连通性修复自动放坡道） ----------------
 
-        /// <summary>
-        /// 从 gate.at 沿上坡方向走，找到第一道 ≥ 2 层的崖；在崖脚低的一侧往回铺坡道（斜坡体素，每格升 1 层）
-        /// 或台阶（每级 1 层），宽 gate.Width。
-        /// </summary>
         static int BuildGates(WorldLayout L, RegionMap map, bool[] gateZone, int[] reg)
         {
             int W = map.W, H = map.H, built = 0;
@@ -466,16 +449,16 @@ namespace Wort.Generation
             {
                 int dx = Grid.DX4[g.Up], dz = Grid.DZ4[g.Up];
                 int px = Grid.DX4[(g.Up + 1) & 3], pz = Grid.DZ4[(g.Up + 1) & 3];
-                // 在 at 前后 60 格内找离 at 最近的一道 ≥ 2 层的上坡崖（形状有机化后，at 可能落在崖的任一侧）
                 int toRegion = g.To != null ? (L.Region(g.To) ?? throw new FormatException($"出入口 {g.Id} 的 to 区域 {g.To} 不存在")).Index : -1;
+                // 在 at 前后 60 格内找离 at 最近的一道 ≥ 2 层的上坡崖
                 int cx = g.X, cz = g.Z, top = int.MinValue, bestDist = int.MaxValue;
                 for (int t = -60; t < 60; t++)
                 {
                     int ax = g.X + dx * t, az = g.Z + dz * t, bx = ax + dx, bz = az + dz;
                     if (!map.InBounds(ax, az) || !map.InBounds(bx, bz)) continue;
+                    if (toRegion >= 0 && reg[bz * W + bx] != toRegion) continue;
                     int diff = h[bz * W + bx] - h[az * W + ax];
                     int dist = t < 0 ? -t : t;
-                    if (toRegion >= 0 && reg[bz * W + bx] != toRegion) continue;
                     if (diff >= 2 && dist < bestDist) { bestDist = dist; cx = ax; cz = az; top = h[bz * W + bx]; }
                 }
                 if (top == int.MinValue) { map.Stats["gateNotFound." + g.Id] = 1; continue; }
@@ -490,16 +473,15 @@ namespace Wort.Generation
                         int i = z * W + x;
                         int target = top - 1 - j;
                         int ground = h[i];
-                        if (target < ground) break; // 碰到更高的地面
+                        if (target < ground) break;
                         h[i] = target;
-                        map.Water[i] = RegionMap.NoWater;
-                        map.Flags[i] = (map.Flags[i] & ~CellFlags.Pond) | CellFlags.Gate | CellFlags.Ramp;
+                        ClearWater(map, i);
+                        map.Flags[i] |= CellFlags.Gate | CellFlags.Ramp;
                         map.Slope[i] = g.Type == GateType.Ramp ? (sbyte)g.Up : (sbyte)-1;
-                        if (target == ground) break; // 到坡脚了
+                        if (target == ground) break;
                     }
                 }
                 map.Ramps.Add(new RampInfo { TopX = cx + dx, TopZ = cz + dz, DownDir = (g.Up + 2) & 3, Width = g.Width, Length = top - h[cz * W + cx] });
-                // 出入口区域：坡道本身加周边 2 格
                 for (int j = -2; j < 60; j++)
                     for (int o = -half - 2; o <= g.Width - 1 - half + 2; o++)
                     {
@@ -513,11 +495,10 @@ namespace Wort.Generation
             return built;
         }
 
-        // ---------------- 8. 桥和隧道 ----------------
+        // ---------------- 桥和隧道 ----------------
 
         static void BuildSpans(WorldLayout L, RegionMap map, LayoutResult res)
         {
-            int W = map.W, H = map.H;
             var h = map.Height;
             int bridges = 0, tunnels = 0;
             for (int si = 0; si < L.Spans.Count; si++)
@@ -543,8 +524,8 @@ namespace Wort.Generation
                             int i = map.Index(x, z);
                             if (h[i] >= deck - 1)
                             {
-                                // 桥头：地面压到桥面高度
                                 h[i] = deck; map.Slope[i] = -1;
+                                ClearWater(map, i);
                                 map.Flags[i] |= CellFlags.Road;
                             }
                             else
@@ -568,8 +549,8 @@ namespace Wort.Generation
                             int i = map.Index(x, z);
                             int orig = h[i];
                             h[i] = floor; map.Slope[i] = -1;
-                            map.Water[i] = RegionMap.NoWater;
-                            map.Flags[i] = (map.Flags[i] & ~CellFlags.Pond) | CellFlags.Road;
+                            ClearWater(map, i);
+                            map.Flags[i] |= CellFlags.Road;
                             if (orig - (floor + sp.Clear) >= 1)
                             {
                                 map.SpanBottom[i] = floor + sp.Clear;

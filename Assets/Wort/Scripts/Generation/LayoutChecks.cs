@@ -59,6 +59,7 @@ namespace Wort.Generation
         {
             int i = Cell(node);
             if (IsTop(node)) return 2 * map.SpanTop[i];
+            if (map.HasWater(i)) return 2 * map.Water[i]; // 浅水（≤ 1 层）里按水面走，与 RegionGenerator 的连通性一致
             return 2 * map.Height[i] + (map.Slope[i] >= 0 ? 1 : 0);
         }
 
@@ -269,8 +270,9 @@ namespace Wort.Generation
                 if (perRegion[k] > 0) rep.Lines.Add($"  走不到：区域 {L.Regions[k].Id}（{L.Regions[k].Kind}）{perRegion[k]} 个节点");
             if (rep.Traps > 0) rep.Errors.Add($"有 {rep.Traps} 个节点进得去、回不到住所");
 
-            // 多余通路：从设计上低的区域无伤走进设计上高的区域，且不在出入口 / 桥 / 隧道
-            for (int i = 0; i < N; i++)
+            // 多余通路：只在 layout 手写了出入口时检查（默认由连通性修复自动放坡道，没有“多余”的概念）
+            // 从设计上低的区域无伤走进设计上高的区域，且不在出入口 / 桥 / 隧道
+            for (int i = 0; i < N && L.Gates.Count > 0; i++)
             {
                 if (!g.Valid(i)) continue;
                 var ri = res.RegionAt(i);
@@ -292,7 +294,7 @@ namespace Wort.Generation
                     }
                 }
             }
-            rep.Lines.Add($"出入口以外多出来的通路 {rep.Leaks} 处");
+            if (L.Gates.Count > 0) rep.Lines.Add($"出入口以外多出来的通路 {rep.Leaks} 处");
             if (rep.Leaks > 0) rep.Errors.Add($"有 {rep.Leaks} 处出入口以外的通路");
 
             // 跳下代价统计（只统计地面之间）
