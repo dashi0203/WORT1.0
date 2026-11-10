@@ -78,7 +78,7 @@ dotnet bin/Release/net8.0/TerrainPreview.dll --layout ../../Assets/Wort/Data/Lay
 | --- | --- |
 | 20261109（默认） | `0xEE3CECBB` |
 | 7 | `0x3DD96B8A` |
-| layout `Test8x8.json`（seed 20261110） | `0xF6290339` |
+| layout `Test8x8.json`（seed 20261110） | `0x4B9C27D9` |
 
 ## 地形生成管线（`RegionGenerator.Run`）
 
@@ -140,6 +140,8 @@ dotnet bin/Release/net8.0/TerrainPreview.dll --layout ../../Assets/Wort/Data/Lay
 
 第五轮：Biome 大区 + 不规则小斑块（`ApplyBiomePatches`），过渡带 32m（`TerrainHooks.BiomeBlurRadius = 13`），山前悬崖带只按山地大区（`MountainMask`），
 湿地宏观高度改为比混交林低 1 层（`MacroBase`），大湿地缩小并改成不规则形；预览新增 `biome_raw.png`（每格主导 Biome）。
+
+第六轮：第二条河改由东峡谷承载（`riverDeep: false`，全程浅水），一直流到东海岸；河漫滩湿地沿河一侧（下游浅段）；海放在峡谷后面避免入海口出现沙环。
 
 测试 layout 结果：检查全部通过；大峡谷两侧 60m 的两点步行 406m；全图 0 个斜坡体素；在开阔地挖 3 层深的坑，检查报 100 个“回不来”。
 

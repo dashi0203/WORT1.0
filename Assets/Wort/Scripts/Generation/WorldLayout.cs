@@ -156,14 +156,18 @@ namespace Wort.Generation
         /// 线条（stroke）上的位置：t = 沿线条从第一个控制点算起的比例（0..1），
         /// across = 到中线的距离 / 当地半宽（0 = 中线，1 = 边缘）。与 Organic 用同一套扭曲。
         /// </summary>
-        public void StrokeInfo(double x, double z, out double t, out double across)
+        public void StrokeInfo(double x, double z, out double t, out double across) =>
+            StrokeInfo(x, z, out t, out across, out _, out _, out _);
+
+        /// <summary>同上，另外给出：到中线的距离（米）、当地半宽（米）、在流向的哪一侧（+1 左 / −1 右）、线条总长（米）。</summary>
+        public void StrokeInfo(double x, double z, out double t, out double across, out double dist, out int side, out double length)
         {
             double wx = x + 2 * aBig * bigX.Sample(x, z) + 2 * aSmall * smallX.Sample(x, z);
             double wz = z + 2 * aBig * bigZ.Sample(x, z) + 2 * aSmall * smallZ.Sample(x, z);
             double k = 1 + 1.3 * widthVar.Sample(x, z);
             if (k < 0.55) k = 0.55; else if (k > 1.6) k = 1.6;
             int n = PX.Length;
-            double best = double.MaxValue, bestAlong = 0, total = 0;
+            double best = double.MaxValue, bestAlong = 0, total = 0, cross = 0;
             for (int i = 0; i + 1 < n; i++)
             {
                 double ax = PX[i], az = PZ[i], vx = PX[i + 1] - ax, vz = PZ[i + 1] - az;
@@ -172,11 +176,22 @@ namespace Wort.Generation
                 if (u < 0) u = 0; else if (u > 1) u = 1;
                 double qx = ax + vx * u - wx, qz = az + vz * u - wz;
                 double d2 = qx * qx + qz * qz;
-                if (d2 < best) { best = d2; bestAlong = total + u * len; }
+                if (d2 < best) { best = d2; bestAlong = total + u * len; cross = vx * (wz - az) - vz * (wx - ax); }
                 total += len;
             }
             t = total > 0 ? bestAlong / total : 0;
-            across = Math.Sqrt(best) / (Width * 0.5 * k);
+            dist = Math.Sqrt(best);
+            across = dist / (Width * 0.5 * k);
+            side = cross >= 0 ? 1 : -1;
+            length = total;
+        }
+
+        /// <summary>当地半宽（米），与 Organic / StrokeInfo 一致。</summary>
+        public double HalfWidthAt(double x, double z)
+        {
+            double k = 1 + 1.3 * widthVar.Sample(x, z);
+            if (k < 0.55) k = 0.55; else if (k > 1.6) k = 1.6;
+            return Width * 0.5 * k;
         }
 
         /// <summary>Chaikin 细分：把控制点围成的多边形磨成平滑曲线。</summary>
@@ -213,6 +228,8 @@ namespace Wort.Generation
         /// <summary>峡谷：谷底有河（深水段过不去，变浅后可涉水）；河宽占谷宽的比例。</summary>
         public bool River;
         public double RiverWidth = 0.45;
+        /// <summary>false = 全程浅水（1 层，可涉水）；true = 深段 2 层过不去。</summary>
+        public bool RiverDeep = true;
         /// <summary>未写 biome 的结构区域（峡谷、盆地等）沿用它下面的开放区 Biome。</summary>
         public bool InheritBiome;
         public LayoutShape Shape;
@@ -346,6 +363,7 @@ namespace Wort.Generation
                     InheritBiome = !r.ContainsKey("biome"),
                     River = r.TryGetValue("river", out var rv) && rv is bool rb && rb,
                     RiverWidth = Num(r, "riverWidth", 0.45),
+                    RiverDeep = !(r.TryGetValue("riverDeep", out var rd) && rd is bool rdb && !rdb),
                     Shape = ParseShape(r.TryGetValue("shape", out var sh) ? (Dictionary<string, object>)sh : null),
                 });
             }

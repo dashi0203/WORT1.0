@@ -280,8 +280,38 @@ namespace Wort.Generation
             Rule("patch.moor", 45, Mo, i => (baseB[i] == F || baseB[i] == C) && Zn(i) > 0.35 ? 0.06 : 0);
             Rule("patch.hill", 45, M, i => (baseB[i] == F || baseB[i] == C) && Zn(i) > 0.4 ? 0.045 : 0);
             Rule("patch.wetIsland", 35, F, i => baseB[i] == Wt ? 0.1 : 0);
-            Rule("patch.miniWetland", 30, Wt, i => baseB[i] == F || baseB[i] == C || baseB[i] == Hm
-                ? 0.05 + (dRiver[i] < 50 ? 0.3 * (1 - dRiver[i] / 50) : 0) : 0);
+            Rule("patch.miniWetland", 30, Wt, i => baseB[i] == F || baseB[i] == C || baseB[i] == Hm ? 0.05 : 0);
+
+            // 河漫滩湿地：只在下游变浅的河段（深度 ≤ 约 3 层），沿河一侧，每隔约 100m 换边，带宽 15–45m，边缘不规则
+            foreach (var r in L.Regions)
+            {
+                if (!r.River || r.Shape.Type != "stroke") continue;
+                var sh = r.Shape;
+                var sideN = new Fbm(Hash.Derive(s.Seed, "floodplain.side." + r.Id), 1, 1);
+                var bandN = new Fbm(Hash.Derive(s.Seed, "floodplain.band." + r.Id), 40, 2);
+                var edgeN = new Fbm(Hash.Derive(s.Seed, "floodplain.edge." + r.Id), 14, 2);
+                var m = new bool[N];
+                for (int z = 0; z < H; z++)
+                    for (int x = 0; x < W; x++)
+                    {
+                        int i = z * W + x;
+                        if (!open[i] || dRiver[i] > 60) continue;
+                        double gx = x + 0.5, gz = z + 0.5;
+                        sh.StrokeInfo(gx, gz, out double t, out _, out double dist, out int side, out double len);
+                        if (-r.Level * Taper(t) > 3.2 || t > 0.97) continue;
+                        // 每 100m 一段，按段号的哈希决定这段在哪一侧
+                        int seg = (int)(t * len / 100);
+                        int want = (Hash.Of((uint)seg, Hash.Derive(s.Seed, "floodplain." + r.Id)) & 1) == 0 ? 1 : -1;
+                        if (side != want) continue;
+                        double band = 30 + 15 * bandN.Sample(gx, gz) * 2;
+                        double over = dist - sh.HalfWidthAt(gx, gz);
+                        if (over < 0 || over > band + 6 * edgeN.Sample(gx, gz)) continue;
+                        m[i] = true;
+                    }
+                m = Grid.OpenRound(m, W, H, 4);
+                m = Grid.RemoveSmall(m, W, H, 300);
+                for (int i = 0; i < N; i++) if (m[i]) biome[i] = Wt;
+            }
         }
 
         /// <summary>
@@ -553,7 +583,7 @@ namespace Wort.Generation
                 if (r.River && aArr[c] < r.RiverWidth)
                 {
                     double depth = -r.Level * Taper(tArr[c]);
-                    int dr = depth >= 3.5 ? 2 : 1;
+                    int dr = r.RiverDeep && depth >= 3.5 ? 2 : 1;
                     h[i] = floor - dr;
                     map.Water[i] = floor;
                     map.Flags[i] = (map.Flags[i] & ~CellFlags.Pond) | CellFlags.River;
