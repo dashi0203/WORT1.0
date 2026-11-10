@@ -152,6 +152,33 @@ namespace Wort.Generation
             return d + 0.6 * rough.Sample(x, z);
         }
 
+        /// <summary>
+        /// 线条（stroke）上的位置：t = 沿线条从第一个控制点算起的比例（0..1），
+        /// across = 到中线的距离 / 当地半宽（0 = 中线，1 = 边缘）。与 Organic 用同一套扭曲。
+        /// </summary>
+        public void StrokeInfo(double x, double z, out double t, out double across)
+        {
+            double wx = x + 2 * aBig * bigX.Sample(x, z) + 2 * aSmall * smallX.Sample(x, z);
+            double wz = z + 2 * aBig * bigZ.Sample(x, z) + 2 * aSmall * smallZ.Sample(x, z);
+            double k = 1 + 1.3 * widthVar.Sample(x, z);
+            if (k < 0.55) k = 0.55; else if (k > 1.6) k = 1.6;
+            int n = PX.Length;
+            double best = double.MaxValue, bestAlong = 0, total = 0;
+            for (int i = 0; i + 1 < n; i++)
+            {
+                double ax = PX[i], az = PZ[i], vx = PX[i + 1] - ax, vz = PZ[i + 1] - az;
+                double len = Math.Sqrt(vx * vx + vz * vz);
+                double u = len > 0 ? ((wx - ax) * vx + (wz - az) * vz) / (len * len) : 0;
+                if (u < 0) u = 0; else if (u > 1) u = 1;
+                double qx = ax + vx * u - wx, qz = az + vz * u - wz;
+                double d2 = qx * qx + qz * qz;
+                if (d2 < best) { best = d2; bestAlong = total + u * len; }
+                total += len;
+            }
+            t = total > 0 ? bestAlong / total : 0;
+            across = Math.Sqrt(best) / (Width * 0.5 * k);
+        }
+
         /// <summary>Chaikin 细分：把控制点围成的多边形磨成平滑曲线。</summary>
         public static void Chaikin(List<double> xs, List<double> zs, bool closed, int iterations)
         {
@@ -183,6 +210,9 @@ namespace Wort.Generation
         /// <summary>基准层级；有父区域时相对父区域。</summary>
         public int Level;
         public BiomeId Biome;
+        /// <summary>峡谷：谷底有河（深水段过不去，变浅后可涉水）；河宽占谷宽的比例。</summary>
+        public bool River;
+        public double RiverWidth = 0.45;
         /// <summary>未写 biome 的结构区域（峡谷、盆地等）沿用它下面的开放区 Biome。</summary>
         public bool InheritBiome;
         public LayoutShape Shape;
@@ -314,6 +344,8 @@ namespace Wort.Generation
                     Level = (int)Num(r, "level", 0),
                     Biome = ParseBiome(Str(r, "biome", "mixedForest")),
                     InheritBiome = !r.ContainsKey("biome"),
+                    River = r.TryGetValue("river", out var rv) && rv is bool rb && rb,
+                    RiverWidth = Num(r, "riverWidth", 0.45),
                     Shape = ParseShape(r.TryGetValue("shape", out var sh) ? (Dictionary<string, object>)sh : null),
                 });
             }

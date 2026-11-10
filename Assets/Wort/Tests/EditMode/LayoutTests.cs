@@ -10,7 +10,7 @@ namespace Wort.Tests
     /// </summary>
     public sealed class LayoutTests
     {
-        private const uint PreviewChecksumTest8x8 = 0xFC883C97u;
+        private const uint PreviewChecksumTest8x8 = 0x4D5BF7DCu;
         private const string Dir = "Assets/Wort/Data/Layout";
 
         private static WorldLayout Load() =>
@@ -54,21 +54,31 @@ namespace Wort.Tests
         }
 
         [Test]
-        public void BasinWithoutRampIsATrap()
+        public void PitWithoutExitIsATrap()
         {
-            // 反例：把通进盆地的坡道抹平成盆地底面，检查必须报“进得去、回不来”
+            // 反例：在住所东边的开阔地挖一个 10×10、深 3 层的坑，检查必须报“进得去、回不来”
             var res = LayoutGenerator.Generate(Load());
             var map = res.Map;
-            int floor = int.MaxValue;
-            for (int i = 0; i < map.Height.Length; i++)
-                if (res.RegionAt(i).Id == "basin" && !map.Has(i, CellFlags.Ramp)) floor = System.Math.Min(floor, map.Height[i]);
-            int removed = 0;
-            for (int i = 0; i < map.Height.Length; i++)
-                if (res.RegionAt(i).Id == "basin" && map.Has(i, CellFlags.Ramp)) { map.Height[i] = floor; map.Slope[i] = -1; removed++; }
-            Assert.Greater(removed, 0, "盆地里没有自动坡道");
+            var home = res.Layout.Site(res.Layout.Home);
+            int x0 = home.X + 50, z0 = home.Z - 5;
+            int floor = map.Height[map.Index(x0, z0)] - 3;
+            for (int z = z0; z < z0 + 10; z++)
+                for (int x = x0; x < x0 + 10; x++)
+                {
+                    int i = map.Index(x, z);
+                    map.Height[i] = floor; map.Slope[i] = -1; map.Water[i] = RegionMap.NoWater;
+                }
             var rep = LayoutChecks.Run(res);
             Assert.Greater(rep.Traps, 0);
             Assert.IsFalse(rep.Ok);
+        }
+
+        [Test]
+        public void NoSlopeVoxels()
+        {
+            // 斜坡由策划手动放：layout 管线里不生成任何斜坡体素，坡道是台阶
+            var map = LayoutGenerator.Generate(Load()).Map;
+            for (int i = 0; i < map.Slope.Length; i++) Assert.AreEqual(-1, map.Slope[i]);
         }
     }
 }

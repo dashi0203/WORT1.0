@@ -85,12 +85,12 @@ namespace Wort.Generation
             Quantize();
             BuildMesasAndSpires();
             BuildPonds();
-            BuildRiver();
+            if (hooks == null || !hooks.SkipRiver) BuildRiver(); else map.Stats["river"] = 0;
             hooks?.Stamp?.Invoke(map);
             FlattenHiddenStrips();
             ConnectAndRamp();
             ExtraRamps();
-            AssignSlopes();
+            if (hooks == null || !hooks.NoSlopes) AssignSlopes();
             MarkHiddenAndEdges();
             ChooseSpawn();
             if (hooks != null && hooks.SpawnX >= 0) { map.SpawnX = hooks.SpawnX; map.SpawnZ = hooks.SpawnZ; }
@@ -880,9 +880,13 @@ namespace Wort.Generation
         // 8. 坡道与连通性：小块封闭区填平，大块在笔直崖边开 2–3 格宽坡道
         // ------------------------------------------------------------------
         int WalkHeight(int i) => map.HasWater(i) ? map.Water[i] : map.Height[i];
+        bool Deep(int i) => map.HasWater(i) && map.Water[i] - map.Height[i] > 1;
 
         int[] LabelWalk(out List<int> sizes)
         {
+            // layout 管线：深水（> 1 层）过不去，不能当作连通（峡谷大河的深水段）
+            if (hooks != null)
+                return Grid.Label(W, H, i => true, (a, b) => !Deep(a) && !Deep(b) && Math.Abs(WalkHeight(a) - WalkHeight(b)) <= 1, out sizes);
             return Grid.Label(W, H, i => true, (a, b) => Math.Abs(WalkHeight(a) - WalkHeight(b)) <= 1, out sizes);
         }
 
@@ -1049,7 +1053,7 @@ namespace Wort.Generation
                 {
                     int c = (z + pz * j + dz * k) * W + (x + px * j + dx * k);
                     map.Height[c] = ht - k;
-                    map.Slope[c] = (sbyte)up;
+                    map.Slope[c] = hooks != null && hooks.NoSlopes ? (sbyte)-1 : (sbyte)up; // 不用斜坡时坡道是每级 1 层的台阶
                     map.Flags[c] |= CellFlags.Ramp;
                 }
             map.Ramps.Add(new RampInfo { TopX = x, TopZ = z, DownDir = dir, Width = width, Length = drop });
@@ -1407,5 +1411,9 @@ namespace Wort.Generation
         /// <summary>河之后、连通性修复之前调用：在地形上盖 layout 的印章。</summary>
         public System.Action<RegionMap> Stamp;
         public int SpawnX = -1, SpawnZ = -1;
+        /// <summary>不生成程序河（河由 layout 给出，如峡谷里的大河）。</summary>
+        public bool SkipRiver;
+        /// <summary>不放任何斜坡体素：没有自然斜坡，坡道改成每级 1 层的台阶（斜坡由策划手动放）。</summary>
+        public bool NoSlopes;
     }
 }
