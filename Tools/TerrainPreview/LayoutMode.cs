@@ -21,6 +21,8 @@ namespace Wort.Tools
             0x8E5AC9, // 峡谷
             0xB8B0A4, // 高原
             0x3F7FB0, // 海
+            0x4FA0E0, // 溪流
+            0x2F6FB8, // 池塘
         };
 
         public static int Run(string layoutPath, string outDir)

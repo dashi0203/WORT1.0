@@ -12,6 +12,8 @@ namespace Wort.Generation
         Canyon = 3,   // 峡谷：两侧长崖，谷底有自己的出入口
         Highland = 4, // 高原：外缘可以 7 层以上
         Sea = 5,      // 海：0 层水面，海底 −3 到 −6
+        Stream = 6,   // 溪流 / 支流：浅水河道切进地形，不起峡谷崖壁，水位从第一个控制点到最后一个单调下降
+        Pond = 7,     // 池塘：水面比外圈最低处低 1 层，边上浅、中间深
     }
 
     public enum GateType : byte { Ramp = 0, Stairs = 1 }
@@ -230,6 +232,10 @@ namespace Wort.Generation
         public double RiverWidth = 0.45;
         /// <summary>false = 全程浅水（1 层，可涉水）；true = 深段 2 层过不去。</summary>
         public bool RiverDeep = true;
+        /// <summary>有河的峡谷：河漫滩湿地从河水边缘往外的最大宽度（米）。</summary>
+        public double Floodplain = 10;
+        /// <summary>只在本区域里撒的小斑块（如人类区和森林的碎混合）。</summary>
+        public readonly List<(BiomeId biome, double coverage, double size)> Patches = new List<(BiomeId, double, double)>();
         /// <summary>未写 biome 的结构区域（峡谷、盆地等）沿用它下面的开放区 Biome。</summary>
         public bool InheritBiome;
         public LayoutShape Shape;
@@ -365,7 +371,13 @@ namespace Wort.Generation
                     RiverWidth = Num(r, "riverWidth", 0.45),
                     RiverDeep = !(r.TryGetValue("riverDeep", out var rd) && rd is bool rdb && !rdb),
                     Shape = ParseShape(r.TryGetValue("shape", out var sh) ? (Dictionary<string, object>)sh : null),
+                    Floodplain = Num(r, "floodplain", 10),
                 });
+                foreach (var po in Arr(r, "patches"))
+                {
+                    var pd = (Dictionary<string, object>)po;
+                    L.Regions[L.Regions.Count - 1].Patches.Add((ParseBiome(Str(pd, "biome", "mixedForest")), Num(pd, "coverage", 0.3), Num(pd, "size", 40)));
+                }
             }
             foreach (var o in Arr(d, "gates"))
             {
@@ -537,6 +549,8 @@ namespace Wort.Generation
                 case "canyon": return RegionKind.Canyon;
                 case "highland": return RegionKind.Highland;
                 case "sea": return RegionKind.Sea;
+                case "stream": return RegionKind.Stream;
+                case "pond": return RegionKind.Pond;
                 default: throw new FormatException("未知区域类型 " + s);
             }
         }

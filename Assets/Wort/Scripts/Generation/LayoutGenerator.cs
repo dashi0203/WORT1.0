@@ -178,6 +178,7 @@ namespace Wort.Generation
                         {
                             int i = z * W + x;
                             if (parent >= 0 && reg[i] != parent) continue;
+                            if (r.Kind == RegionKind.Stream && reg[i] >= 0 && !L.Regions[reg[i]].IsOpen) continue; // 溪流不覆盖峡谷、池塘、海
                             if (sh.Organic(x + 0.5, z + 0.5) >= 0) continue;
                             reg[i] = r.Index;
                             if (r.IsOpen) baseBiome[i] = (byte)r.Biome;
@@ -282,7 +283,17 @@ namespace Wort.Generation
             Rule("patch.wetIsland", 35, F, i => baseB[i] == Wt ? 0.1 : 0);
             Rule("patch.miniWetland", 30, Wt, i => baseB[i] == F || baseB[i] == C || baseB[i] == Hm ? 0.05 : 0);
 
-            // 河漫滩湿地：只在下游变浅的河段（深度 ≤ 约 3 层），沿河一侧，每隔约 100m 换边，带宽 15–45m，边缘不规则
+            // 区域自己的斑块（如西南角人类区和森林的碎混合）
+            foreach (var r in L.Regions)
+                for (int k = 0; k < r.Patches.Count; k++)
+                {
+                    var (to, cov, size) = r.Patches[k];
+                    int idx = r.Index;
+                    Rule("patch.region." + r.Id + "." + k, size, (byte)to, i => reg[i] == idx ? cov : 0);
+                }
+
+            // 河漫滩湿地：只在下游变浅的河段（深度 ≤ 约 3 层），沿河一侧，每隔约 100m 换边；
+            // 从河水边缘直接往外渐变（谷底的河岸也算），最宽 floodplain 米，边缘不规则
             foreach (var r in L.Regions)
             {
                 if (!r.River || r.Shape.Type != "stroke") continue;
@@ -295,7 +306,8 @@ namespace Wort.Generation
                     for (int x = 0; x < W; x++)
                     {
                         int i = z * W + x;
-                        if (!open[i] || dRiver[i] > 60) continue;
+                        bool own = reg[i] == r.Index;
+                        if (!own && (!open[i] || dRiver[i] > r.Floodplain + 8)) continue;
                         double gx = x + 0.5, gz = z + 0.5;
                         sh.StrokeInfo(gx, gz, out double t, out _, out double dist, out int side, out double len);
                         if (-r.Level * Taper(t) > 3.2 || t > 0.97) continue;
@@ -303,13 +315,13 @@ namespace Wort.Generation
                         int seg = (int)(t * len / 100);
                         int want = (Hash.Of((uint)seg, Hash.Derive(s.Seed, "floodplain." + r.Id)) & 1) == 0 ? 1 : -1;
                         if (side != want) continue;
-                        double band = 30 + 15 * bandN.Sample(gx, gz) * 2;
-                        double over = dist - sh.HalfWidthAt(gx, gz);
-                        if (over < 0 || over > band + 6 * edgeN.Sample(gx, gz)) continue;
+                        double band = r.Floodplain * (0.6 + 0.8 * bandN.Sample(gx, gz)) + 0.25 * r.Floodplain * edgeN.Sample(gx, gz);
+                        double over = dist - r.RiverWidth * sh.HalfWidthAt(gx, gz); // 从河水边缘量
+                        if (over < 0 || over > band) continue;
                         m[i] = true;
                     }
-                m = Grid.OpenRound(m, W, H, 4);
-                m = Grid.RemoveSmall(m, W, H, 300);
+                m = Grid.OpenRound(m, W, H, 1.5);
+                m = Grid.RemoveSmall(m, W, H, 120);
                 for (int i = 0; i < N; i++) if (m[i]) biome[i] = Wt;
             }
         }
@@ -472,6 +484,23 @@ namespace Wort.Generation
                     case RegionKind.Canyon:
                         StampCanyon(r, map, cells, surf);
                         break;
+                    case RegionKind.Stream:
+                        StampStream(r, map, cells, surf, reg, L);
+                        break;
+                    case RegionKind.Pond:
+                    {
+                        // 水面比外圈开放区最低处低 1 层；离岸 3m 内水深 1 层，再往里 2 层
+                        int water = ringMin - 1;
+                        var d = Grid.DistanceInside(inR, W, H);
+                        foreach (int i in cells)
+                        {
+                            h[i] = d[i] < 3 ? water - 1 : water - 2;
+                            map.Water[i] = water;
+                            map.Slope[i] = -1; map.Tier[i] = 0;
+                            map.Flags[i] = (map.Flags[i] & ~CellFlags.River) | CellFlags.Pond;
+                        }
+                        break;
+                    }
                     case RegionKind.Basin:
                     {
                         int floor = ringMin + r.Level;
@@ -596,6 +625,128 @@ namespace Wort.Generation
                 }
             }
             map.Stats["canyonRiver." + r.Id] = river;
+        }
+
+        /// <summary>
+        /// 溪流：浅水河道，水面比沿线平均地面低 1 层，跟着地形走；
+        /// 两端挨着水（池塘、大河）时降到那里的水面，往里每米最多升 1 层。水深 1 层可以涉水。
+        /// </summary>
+        static void StampStream(LayoutRegion r, RegionMap map, List<int> cells, float[] surf, int[] reg, WorldLayout L)
+        {
+            int W = map.W;
+            var h = map.Height;
+            var sh = r.Shape;
+            int n = sh.PX.Length;
+            double total = 0;
+            for (int k = 0; k + 1 < n; k++)
+            {
+                double vx = sh.PX[k + 1] - sh.PX[k], vz = sh.PZ[k + 1] - sh.PZ[k];
+                total += Math.Sqrt(vx * vx + vz * vz);
+            }
+            int B = Math.Max(2, (int)total);
+            var tArr = new double[cells.Count];
+            var sum = new double[B];
+            var cnt = new int[B];
+            for (int c = 0; c < cells.Count; c++)
+            {
+                int i = cells[c];
+                sh.StrokeInfo(i % W + 0.5, i / W + 0.5, out tArr[c], out _);
+                int b = (int)(tArr[c] * (B - 1) + 0.5);
+                sum[b] += surf[i]; cnt[b]++;
+            }
+            var target = new double[B];
+            double last = double.NaN;
+            for (int b = 0; b < B; b++)
+            {
+                double mean = cnt[b] > 0 ? sum[b] / cnt[b] : last;
+                if (double.IsNaN(mean)) mean = 0;
+                last = mean;
+                target[b] = mean - 1;
+            }
+            // 水面跟着地形走（沿线 ±8m 平均），不强制单调：地形先升后降时，溪流就在分水处两头分流
+            var smooth = new double[B];
+            for (int b = 0; b < B; b++)
+            {
+                double acc = 0; int k = 0;
+                for (int o = -8; o <= 8; o++) { int bb = b + o; if (bb < 0 || bb >= B) continue; acc += target[bb]; k++; }
+                smooth[b] = acc / k;
+            }
+            target = smooth;
+            // 两端挨着水时降到那里的水面，往里每米最多升 1 层
+            int startCap = NearestWater(map, sh.PX[0], sh.PZ[0], 6);
+            int endCap = NearestWater(map, sh.PX[n - 1], sh.PZ[n - 1], 10);
+            if (startCap != int.MaxValue) target[0] = Math.Min(target[0], startCap);
+            if (endCap != int.MaxValue) target[B - 1] = Math.Min(target[B - 1], endCap);
+            for (int b = 1; b < B; b++) target[b] = Math.Min(target[b], target[b - 1] + 1);
+            for (int b = B - 2; b >= 0; b--) target[b] = Math.Min(target[b], target[b + 1] + 1);
+            int minW = map.Settings.MinY + 2;
+            for (int c = 0; c < cells.Count; c++)
+            {
+                int i = cells[c];
+                int b = (int)(tArr[c] * (B - 1) + 0.5);
+                int water = Math.Max(minW, (int)Math.Floor(target[b]));
+                h[i] = water - 1;
+                map.Water[i] = water;
+                map.Slope[i] = -1; map.Tier[i] = 0;
+                map.Flags[i] = (map.Flags[i] & ~CellFlags.Pond) | CellFlags.River;
+            }
+            map.Stats["stream." + r.Id] = cells.Count;
+            CarveValley(map, cells, r.Index, reg, L);
+        }
+
+        /// <summary>
+        /// 溪流两岸切出河谷：离河道 8m 内的开放区地面，每离河 2m 最多升 1 层（一级级台阶下到水边），
+        /// 避免河道成为跳得进、爬不出的沟。峡谷等结构区域和地点不动。
+        /// </summary>
+        static void CarveValley(RegionMap map, List<int> cells, int self, int[] reg, WorldLayout L)
+        {
+            int W = map.W, H = map.H, N = W * H;
+            var notStream = new bool[N];
+            for (int i = 0; i < N; i++) notStream[i] = reg[i] != self;
+            var d = Grid.DistanceInside(notStream, W, H);
+            var h = map.Height;
+            int carved = 0;
+            for (int pass = 0; pass < 12; pass++)
+            {
+                bool changed = false;
+                for (int z = 0; z < H; z++)
+                    for (int x = 0; x < W; x++)
+                    {
+                        int i = z * W + x;
+                        if (d[i] <= 0 || d[i] > 8 || !L.Regions[reg[i]].IsOpen || map.Has(i, CellFlags.Site) || map.HasWater(i)) continue;
+                        int lim = int.MaxValue;
+                        for (int k = 0; k < 4; k++)
+                        {
+                            int nx = x + Grid.DX4[k], nz = z + Grid.DZ4[k];
+                            if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
+                            int j = nz * W + nx;
+                            if (d[j] >= d[i]) continue; // 只看靠河一侧的邻格
+                            int hj = map.HasWater(j) ? map.Water[j] : h[j];
+                            // 每离河 2m 最多升 1 层：河谷两侧是缓的台阶，不是峡谷
+                            int step = (int)(d[i] / 2) > (int)(d[j] / 2) ? 1 : 0;
+                            lim = Math.Min(lim, hj + step);
+                        }
+                        if (lim != int.MaxValue && h[i] > lim) { h[i] = lim; map.Slope[i] = -1; changed = true; carved++; }
+                    }
+                if (!changed) break;
+            }
+            map.Stats["valley." + L.Regions[self].Id] = carved;
+        }
+
+        /// <summary>(x, z) 附近 radius 米内最低的水面；没有水返回 int.MaxValue。</summary>
+        static int NearestWater(RegionMap map, double x, double z, int radius)
+        {
+            int best = int.MaxValue;
+            int cx = (int)x, cz = (int)z;
+            for (int dz = -radius; dz <= radius; dz++)
+                for (int dx = -radius; dx <= radius; dx++)
+                {
+                    int px = cx + dx, pz = cz + dz;
+                    if (!map.InBounds(px, pz)) continue;
+                    int i = map.Index(px, pz);
+                    if (map.HasWater(i)) best = Math.Min(best, map.Water[i]);
+                }
+            return best;
         }
 
         static double Taper(double t)

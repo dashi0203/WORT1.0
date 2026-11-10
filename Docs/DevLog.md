@@ -78,7 +78,7 @@ dotnet bin/Release/net8.0/TerrainPreview.dll --layout ../../Assets/Wort/Data/Lay
 | --- | --- |
 | 20261109（默认） | `0xEE3CECBB` |
 | 7 | `0x3DD96B8A` |
-| layout `Test8x8.json`（seed 20261110） | `0x4B9C27D9` |
+| layout `Test8x8.json`（seed 20261110） | `0x8C73CCB3` |
 
 ## 地形生成管线（`RegionGenerator.Run`）
 
@@ -142,6 +142,9 @@ dotnet bin/Release/net8.0/TerrainPreview.dll --layout ../../Assets/Wort/Data/Lay
 湿地宏观高度改为比混交林低 1 层（`MacroBase`），大湿地缩小并改成不规则形；预览新增 `biome_raw.png`（每格主导 Biome）。
 
 第六轮：第二条河改由东峡谷承载（`riverDeep: false`，全程浅水），一直流到东海岸；河漫滩湿地沿河一侧（下游浅段）；海放在峡谷后面避免入海口出现沙环。
+
+第七轮（负责人标注）：三条支流（`kind: stream`）、和支流 C 相连的池塘（`kind: pond`，西北边和湿地交错、中间有湿地岛）、东边河漫滩湿地大幅缩小、河漫滩湿地从河水边缘渐变、大河湿地变窄、西南角人类区和森林的碎混合（区域 `patches`）。
+溪流起初强制水面单调下降，支流 B 因地形往河边升高而变成深沟；改成水面跟着地形走、两岸切出缓的河谷。
 
 测试 layout 结果：检查全部通过；大峡谷两侧 60m 的两点步行 406m；全图 0 个斜坡体素；在开阔地挖 3 层深的坑，检查报 100 个“回不来”。
 
