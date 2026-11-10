@@ -21,10 +21,10 @@ GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
 | 第 1 步 | 盘点 topdowntemp，定目录结构 | 完成 |
 | 第 2 步 | 项目骨架、.gitignore / .gitattributes（LFS）、`Docs/LocalSetup.md` | 完成 |
 | 第 3 步 | GDD 16 节 8×8 chunk 地形实验：纯 C# 生成核心 + 云端预览 + Unity 接入 | 完成，本地测试通过 |
-| 第 4 步 | 世界生成规格 `Docs/WorldGen.md`（layout 优先、拓扑由 layout 决定） | 完成，已并入 GDD rev 56 |
-| 第 5 步 | layout 管线技术验证：`LayoutGenerator` + 检查 + 8×8 测试 layout + 云端预览 | 云端通过，等负责人看图；Unity 侧只加了测试，TerrainLab 仍用旧生成器 |
+| 第 4 步 | 世界生成规格 `Docs/WorldGen.md`（布局优先、拓扑由布局决定） | 完成，已并入 GDD rev 56 |
+| 第 5 步 | 布局管线技术验证：`LayoutGenerator` + 检查 + 8×8 测试布局 + 云端预览 | 云端通过，等负责人看图；Unity 侧只加了测试，TerrainLab 仍用旧生成器 |
 
-本地验证结果（2026-11-09）：Unity 里 checksum 与云端预览一致，EditMode 测试通过，“基本顺利且符合预期”。
+本地验证结果（2026-11-09）：Unity 里 校验和 与云端预览一致，EditMode 测试通过，“基本顺利且符合预期”。
 
 ## 目录
 
@@ -60,7 +60,7 @@ dotnet bin/Release/net8.0/TerrainPreview.dll --seed 20261109 --out out
 
 预览专用的视觉辅助（Unity 里没有）：深度突变处描暗边、顶面按高度略提亮。
 
-**layout 模式**（Docs/WorldGen.md 管线）：
+**布局模式**（Docs/WorldGen.md 管线）：
 
 ```bash
 dotnet bin/Release/net8.0/TerrainPreview.dll --layout ../../Assets/Wort/Data/Layout/Test8x8.json --out out_layout
@@ -72,13 +72,13 @@ dotnet bin/Release/net8.0/TerrainPreview.dll --layout ../../Assets/Wort/Data/Lay
 - `height.png`：同旧模式；另加道路（浅黄）、桥（棕）、隧道（深灰斜纹）、回不来（品红）、多余通路（青）。
 - `shear_overview.png`、`view_*.png`（1080p 相机视野）、`mid_*.png`（80m × 60m，8 px/m）：每个桥、隧道、出入口、洞穴和小屋一张。
 
-## 当前 checksum（改算法后要同步更新测试和 LocalSetup）
+## 当前 校验和（改算法后要同步更新测试和 LocalSetup）
 
-| 种子 | checksum |
+| 种子 | 校验和 |
 | --- | --- |
 | 20261109（默认） | `0xEE3CECBB` |
 | 7 | `0x3DD96B8A` |
-| layout `Test8x8.json`（seed 20261110） | `0x30EF682C` |
+| 布局 `Test8x8.json`（seed 20261110） | `0x30EF682C` |
 
 ## 地形生成管线（`RegionGenerator.Run`）
 
@@ -112,14 +112,14 @@ dotnet bin/Release/net8.0/TerrainPreview.dll --layout ../../Assets/Wort/Data/Lay
 - Packages 已精简（去掉 ai.assistant / ai.inference / pipeline / collab-proxy / multiplayer.center / visualscripting）。
 - 云端环境：个人环境 “WORT1.0” 放行了 GitHub LFS 主机（lfs.github.com 等），否则推不了 .fbx/.jpeg。
 
-## layout 管线（`LayoutGenerator`，Docs/WorldGen.md）
+## 布局管线（`LayoutGenerator`，Docs/WorldGen.md）
 
 文件：`Json.cs`（极简 JSON 读取）、`WorldLayout.cs`（数据模型 + 有机形状）、`LayoutGenerator.cs`、`LayoutChecks.cs`（可站立表面图 + 检查）；
 数据：`Assets/Wort/Data/Layout/Test8x8.json`、`SiteTemplates.json`。
 
-第一版（自己生成开放区高度）被否：开放区只有 0 层 + 微起伏，没了大走势；测试 layout 是机制清单拼出来的（直条台地、蛋形台地、东西向峡谷）。
+第一版（自己生成开放区高度）被否：开放区只有 0 层 + 微起伏，没了大走势；测试布局是机制清单拼出来的（直条台地、蛋形台地、东西向峡谷）。
 现在的做法：**自然地形沿用 `RegionGenerator`**，给它加了可选的 `TerrainHooks`（Biome 图、保留区、河的终点、印章回调、出生点），
-不传钩子时与旧版逐格一致（checksum 未变）。
+不传钩子时与旧版逐格一致（校验和 未变）。
 
 1. 区域形状：椭圆 / blob（控制点 + Chaikin 3 次平滑）/ stroke（粗折线），**坐标扭曲**（大尺度约为尺寸的 18%，小尺度 1–4m）+ 线条宽度 0.55–1.6 倍变化 + 崖线粗糙；
    1m 栅格化；小于 48 格的碎块和结构区域的孤岛并入周围区域。
@@ -127,23 +127,23 @@ dotnet bin/Release/net8.0/TerrainPreview.dll --layout ../../Assets/Wort/Data/Lay
 3. 保留区：结构区域外扩 4m、地点 + buffer、桥和隧道走廊 → 旧生成器在这里不放台地、残丘、高台、孤峰、池塘，河绕开。
 4. 印章（河之后、连通性修复之前）：海（0 层水面，海底 −3 到 −6）、峡谷（周围平滑地面 + level，谷底相邻格差 ≤ 1，边界 ≥ 2 层崖）、
    盆地（外圈最低 + level）、台地区（外圈最高 + level）、地点压平、道路、手写出入口、桥和隧道、和海相连的低于 0 层的地面灌海水。
-5. 坡道与连通性、斜坡、出生点都走旧流程；出生点改成 layout 的住所；河只在南半部的海结束。
+5. 坡道与连通性、斜坡、出生点都走旧流程；出生点改成布局的住所；河只在南半部的海结束。
 6. 检查：每格最多两个节点（地面 + 悬空层顶面）；浅水里按水面高度走；往上 1 层、往下按坠落规则，连通只用无伤边（≤ 3 层）。
    有向连通、地点地形、步行距离、高度范围；手写了出入口时另查多余通路。
 
 2026-11-10 第三轮（负责人反馈）：沼泽移到内陆；大峡谷底下有大河、北端切进山里、往南逐渐变浅；峡谷下段右侧融一个小盆地；
 删除所有斜坡（`TerrainHooks.NoSlopes`：不跑 AssignSlopes，坡道改台阶）；海崖；峡谷河取代程序河（`SkipRiver`）。
-顺带修掉的问题：旧连通性把深水当成可走（layout 模式下深水不连通）；地点保留区在台地群里留下坑（地点不再保留，改成按占地最常见高度压平 + 外圈收台阶）；
+顺带修掉的问题：旧连通性把深水当成可走（布局模式下深水不连通）；地点保留区在台地群里留下坑（地点不再保留，改成按占地最常见高度压平 + 外圈收台阶）；
 峡谷谷底低于 0 层时海水倒灌（谷底至少 1 层，入海口除外）；残留小陷坑自动填平（FillTrapPits）。
 
-第四轮：台地太规整 → layout 模式下去掉 4m 块量化、改用圆形开闭运算（`Grid.OpenRound / CloseRound`），坡道放置只要求坡道宽度的直边。
+第四轮：台地太规整 → 布局模式下去掉 4m 块量化、改用圆形开闭运算（`Grid.OpenRound / CloseRound`），坡道放置只要求坡道宽度的直边。
 
-测试 layout 结果：检查全部通过；大峡谷两侧 60m 的两点步行 406m；全图 0 个斜坡体素；在开阔地挖 3 层深的坑，检查报 100 个“回不来”。
+测试布局结果：检查全部通过；大峡谷两侧 60m 的两点步行 406m；全图 0 个斜坡体素；在开阔地挖 3 层深的坑，检查报 100 个“回不来”。
 
 ## 未决问题 / 可调项
 
-- layout 管线：桥和隧道只支持南北或东西走向；随机区域、固定 chunk 划分还没接进来；
-  旧生成器的程序河（不用 layout 时）仍是 4 方向寻路、转弯偏直角；layout 里的河跟着峡谷的平滑曲线走。
+- 布局管线：桥和隧道只支持南北或东西走向；随机区域、固定 chunk 划分还没接进来；
+  旧生成器的程序河（不用布局时）仍是 4 方向寻路、转弯偏直角；布局里的河跟着峡谷的平滑曲线走。
 
 - 4m 块量化让斜向边界呈 4 格一阶的锯齿；嫌方可改 3m。
 - 森林里有几条 1 层等高线与山前大致平行（宏观高度过渡造成），是否打散待定。
@@ -153,7 +153,7 @@ dotnet bin/Release/net8.0/TerrainPreview.dll --layout ../../Assets/Wort/Data/Lay
 
 ## 下一步候选（等负责人决定）
 
-- layout 管线：负责人看图确认后接 Unity（TerrainLab 加一个 layout 模式），补 2 层矮台地、自然 3–4 层台地、随机区域组。
+- 布局管线：负责人看图确认后接 Unity（TerrainLab 加一个布局模式），补 2 层矮台地、自然 3–4 层台地、随机区域组。
 
 - GDD 6.2：环境层（湿度、地表分区、土壤、扰动）与植物层。
 - 第 7 节：高度裁切、遮挡虚化原型。

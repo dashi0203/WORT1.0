@@ -63,11 +63,11 @@ git pull origin claude/intelligent-noether-7f0v7r
 4. 生成的地形不保存进场景文件（每次 Play 或点“生成”时重建），所以场景文件很小。
 
 **核对云端预览**：每次生成后 Console 会打印一行 `[TerrainLab] seed … checksum 0x…`。
-默认种子 20261109 的云端预览 checksum 是 `0xEE3CECBB`，种子 7 是 `0x3DD96B8A`。数字相同，说明 Unity 里的地形和云端预览图逐格一致。
+默认种子 20261109 的云端预览 校验和 是 `0xEE3CECBB`，种子 7 是 `0x3DD96B8A`。数字相同，说明 Unity 里的地形和云端预览图逐格一致。
 
-**自动测试**：Window → General → Test Runner → EditMode → Run All。`GenerationTests.MatchesCloudPreview` 会自动比对上面两个 checksum。
-`LayoutTests` 测 layout 管线（Docs/WorldGen.md）：8×8 测试 layout 的 checksum 应为 `0x30EF682C`，检查全部通过，盆地能进能出，没有斜坡体素，挖坑的反例要报错。
-layout 管线目前只在云端预览和测试里用，TerrainLab 场景还是旧生成器。
+**自动测试**：Window → General → Test Runner → EditMode → Run All。`GenerationTests.MatchesCloudPreview` 会自动比对上面两个 校验和。
+`LayoutTests` 测布局管线（Docs/WorldGen.md）：8×8 测试布局的 校验和 应为 `0x30EF682C`，检查全部通过，盆地能进能出，没有斜坡体素，挖坑的反例要报错。
+布局管线目前只在云端预览和测试里用，TerrainLab 场景还是旧生成器。
 
 ## 6. 本地改动约定
 
