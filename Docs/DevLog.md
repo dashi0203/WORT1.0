@@ -78,7 +78,7 @@ dotnet bin/Release/net8.0/TerrainPreview.dll --layout ../../Assets/Wort/Data/Lay
 | --- | --- |
 | 20261109（默认） | `0xEE3CECBB` |
 | 7 | `0x3DD96B8A` |
-| layout `Test8x8.json`（seed 20261110） | `0x30EF682C` |
+| layout `Test8x8.json`（seed 20261110） | `0xF6290339` |
 
 ## 地形生成管线（`RegionGenerator.Run`）
 
@@ -137,6 +137,9 @@ dotnet bin/Release/net8.0/TerrainPreview.dll --layout ../../Assets/Wort/Data/Lay
 峡谷谷底低于 0 层时海水倒灌（谷底至少 1 层，入海口除外）；残留小陷坑自动填平（FillTrapPits）。
 
 第四轮：台地太规整 → layout 模式下去掉 4m 块量化、改用圆形开闭运算（`Grid.OpenRound / CloseRound`），坡道放置只要求坡道宽度的直边。
+
+第五轮：Biome 大区 + 不规则小斑块（`ApplyBiomePatches`），过渡带 32m（`TerrainHooks.BiomeBlurRadius = 13`），山前悬崖带只按山地大区（`MountainMask`），
+湿地宏观高度改为比混交林低 1 层（`MacroBase`），大湿地缩小并改成不规则形；预览新增 `biome_raw.png`（每格主导 Biome）。
 
 测试 layout 结果：检查全部通过；大峡谷两侧 60m 的两点步行 406m；全图 0 个斜坡体素；在开阔地挖 3 层深的坑，检查报 100 个“回不来”。
 

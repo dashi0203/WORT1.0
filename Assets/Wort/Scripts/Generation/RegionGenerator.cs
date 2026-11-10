@@ -109,7 +109,8 @@ namespace Wort.Generation
             {
                 Array.Copy(hooks.Biome, map.Biome, n);
                 var mm = new bool[n];
-                for (int i = 0; i < n; i++) mm[i] = map.Biome[i] == (byte)BiomeId.Mountain;
+                // 山前大悬崖带只按 layout 的山地大区算，森林里的小山包斑块不起山前高崖
+                for (int i = 0; i < n; i++) mm[i] = hooks.MountainMask != null ? hooks.MountainMask[i] : map.Biome[i] == (byte)BiomeId.Mountain;
                 // 与旧版一样按 4m 块量化：山缘的崖是 ≥ 4 格的直段，方便放坡道
                 mountainMask = Organic ? Grid.CloseRound(mm, W, H, 3) : Grid.BlockQuantize(mm, W, H, 4, 1, 3, Hash.Derive(seed, "mtn.block"), 0.6);
                 mountainMask = Grid.RemoveSmall(mountainMask, W, H, 200);
@@ -206,7 +207,8 @@ namespace Wort.Generation
             {
                 var one = new float[n];
                 for (int i = 0; i < n; i++) one[i] = map.Biome[i] == b ? 1f : 0f;
-                for (int pass = 0; pass < 3; pass++) one = Grid.BoxBlur(one, W, H, BiomeBlurRadius);
+                int blur = hooks != null && hooks.BiomeBlurRadius > 0 ? hooks.BiomeBlurRadius : BiomeBlurRadius;
+                for (int pass = 0; pass < 3; pass++) one = Grid.BoxBlur(one, W, H, blur);
                 map.Weights[b] = one;
             }
         }
@@ -245,7 +247,7 @@ namespace Wort.Generation
                     double rough = map.Weights[(int)BiomeId.MixedForest][i] + map.Weights[(int)BiomeId.Conifer][i] + map.Weights[(int)BiomeId.Mountain][i];
                     // 山里压低连续起伏，让台地主导山体形状（避免一圈圈 1 层等高线）
                     double damp = 1 - 0.7 * map.Weights[(int)BiomeId.Mountain][i];
-                    macro[i] = Blend(i, p => p.MacroBase) + damp * (1.3 * low.Sample(px, pz) + 1.1 * mid.Sample(px, pz) * rough);
+                    macro[i] = Blend(i, p => hooks?.MacroBase != null ? hooks.MacroBase[(int)p.Id] : p.MacroBase) + damp * (1.3 * low.Sample(px, pz) + 1.1 * mid.Sample(px, pz) * rough);
                 }
 
             mountainDepth = Grid.DistanceInside(mountainMask, W, H);
@@ -1432,5 +1434,11 @@ namespace Wort.Generation
         public bool NoSlopes;
         /// <summary>有机形状：台地、山缘、残丘、高台不做 4m 块量化，开闭运算用圆形结构元（不出直边和直角）。</summary>
         public bool Organic;
+        /// <summary>Biome 权重的盒式模糊半径（3 次）。0 = 旧版 16（过渡带约 40m）；13 ≈ 32m。</summary>
+        public int BiomeBlurRadius;
+        /// <summary>山地大区（起山前大悬崖带、冲沟、孤峰）。为空时取 Biome == 山地。</summary>
+        public bool[] MountainMask;
+        /// <summary>各 Biome 的宏观高度（按 BiomeId 下标），为空时用 BiomeTable。</summary>
+        public double[] MacroBase;
     }
 }

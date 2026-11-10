@@ -56,6 +56,7 @@ namespace Wort.Tools
             LayoutImage(res).Save(Path.Combine(outDir, "layout.png"));
             Maps.Height(map).Save(Path.Combine(outDir, "height.png"));
             Maps.Biome(map).Save(Path.Combine(outDir, "biome.png"));
+            BiomeRaw(map).Save(Path.Combine(outDir, "biome_raw.png"));
             var r = new ShearRenderer(map, meshes);
             r.Render(0, 0, map.W, map.H, 2.0, null).Save(Path.Combine(outDir, "shear_overview.png"));
 
@@ -111,6 +112,23 @@ namespace Wort.Tools
         }
 
         static LayoutResult Res;
+
+        /// <summary>每格的主导 Biome（不混合），看斑块形状用。</summary>
+        static Image BiomeRaw(RegionMap map)
+        {
+            const int S = Maps.Scale;
+            var img = new Image(map.W * S, map.H * S);
+            for (int z = 0; z < map.H; z++)
+                for (int x = 0; x < map.W; x++)
+                {
+                    int i = map.Index(x, z);
+                    uint col = Maps.BiomeColor[map.Biome[i]];
+                    if (map.Biome[i] == (byte)BiomeId.Swamp) col = 0x7A9A9A;
+                    if (map.HasWater(i)) col = Image.Mix(col, 0x3F7FB0, 0.8);
+                    img.FillRect(x * S, (map.H - 1 - z) * S, S, S, col);
+                }
+            return img;
+        }
 
         static Image LayoutImage(LayoutResult res)
         {

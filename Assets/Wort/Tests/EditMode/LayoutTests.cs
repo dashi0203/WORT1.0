@@ -10,7 +10,7 @@ namespace Wort.Tests
     /// </summary>
     public sealed class LayoutTests
     {
-        private const uint PreviewChecksumTest8x8 = 0x30EF682Cu;
+        private const uint PreviewChecksumTest8x8 = 0xF6290339u;
         private const string Dir = "Assets/Wort/Data/Layout";
 
         private static WorldLayout Load() =>

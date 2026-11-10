@@ -66,7 +66,7 @@ git pull origin claude/intelligent-noether-7f0v7r
 默认种子 20261109 的云端预览 checksum 是 `0xEE3CECBB`，种子 7 是 `0x3DD96B8A`。数字相同，说明 Unity 里的地形和云端预览图逐格一致。
 
 **自动测试**：Window → General → Test Runner → EditMode → Run All。`GenerationTests.MatchesCloudPreview` 会自动比对上面两个 checksum。
-`LayoutTests` 测 layout 管线（Docs/WorldGen.md）：8×8 测试 layout 的 checksum 应为 `0x30EF682C`，检查全部通过，盆地能进能出，没有斜坡体素，挖坑的反例要报错。
+`LayoutTests` 测 layout 管线（Docs/WorldGen.md）：8×8 测试 layout 的 checksum 应为 `0xF6290339`，检查全部通过，盆地能进能出，没有斜坡体素，挖坑的反例要报错。
 layout 管线目前只在云端预览和测试里用，TerrainLab 场景还是旧生成器。
 
 ## 6. 本地改动约定

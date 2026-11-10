@@ -48,6 +48,10 @@ namespace Wort.Generation
                 sea[i] = r.Kind == RegionKind.Sea;
                 biome[i] = sea[i] ? (byte)BiomeId.Coast : r.InheritBiome && !r.IsOpen ? baseBiome[i] : (byte)r.Biome;
             }
+            // 山前大悬崖带只按 layout 的山地大区算；然后在大区里撒不规则的小斑块
+            var mountainZone = new bool[N];
+            for (int i = 0; i < N; i++) mountainZone[i] = biome[i] == (byte)BiomeId.Mountain;
+            ApplyBiomePatches(L, s, reg, biome, W, H);
 
             // 3. 保留区：结构区域外扩 4m、桥和隧道、手写出入口
             var reserved = new bool[N];
@@ -73,6 +77,9 @@ namespace Wort.Generation
                 SpawnZ = home != null ? home.Z : -1,
                 SkipRiver = L.Regions.Exists(r => r.River), // 河由峡谷给出
                 NoSlopes = true,                             // 斜坡由策划手动放；坡道是台阶
+                BiomeBlurRadius = 13,                        // Biome 过渡带约 32m
+                MountainMask = mountainZone,
+                MacroBase = LayoutMacroBase(),
                 Organic = true,                              // 台地等不做块量化、不出直角
                 Stamp = map =>
                 {
@@ -232,6 +239,94 @@ namespace Wort.Generation
                     if (kv.Value > bestN || kv.Value == bestN && kv.Key < best) { best = kv.Key; bestN = kv.Value; }
                 if (best >= 0) foreach (int i in cells) reg[i] = best;
             }
+        }
+
+        // ---------------- 2b. Biome 小斑块 ----------------
+
+        /// <summary>
+        /// 大区由 layout 画，大区里按规则撒不规则的小斑块（Docs/WorldGen.md）：
+        /// 森林往北针叶林越来越多、针叶林带里夹混交林；人类区夹林地；山地外缘夹针叶林；
+        /// 森林深处偶有小山包、小块 moorland；低处和大河两岸有迷你湿地；大湿地里有林地小岛。
+        /// 斑块形状用两层坐标扭曲的噪声，去掉窄于 10m 的部分和小于约 25m 见方的碎块。只改开放区。
+        /// </summary>
+        static void ApplyBiomePatches(WorldLayout L, RegionSettings s, int[] reg, byte[] biome, int W, int H)
+        {
+            int N = W * H;
+            var baseB = (byte[])biome.Clone();
+            var open = new bool[N];
+            for (int i = 0; i < N; i++) open[i] = L.Regions[reg[i]].IsOpen && L.Regions[reg[i]].Kind != RegionKind.Sea;
+
+            // 到有河峡谷的距离、到山地大区外的距离
+            var notRiver = new bool[N];
+            var mountain = new bool[N];
+            for (int i = 0; i < N; i++) { notRiver[i] = !L.Regions[reg[i]].River; mountain[i] = baseB[i] == (byte)BiomeId.Mountain; }
+            var dRiver = Grid.DistanceInside(notRiver, W, H);
+            var dMountainEdge = Grid.DistanceInside(mountain, W, H);
+
+            byte F = (byte)BiomeId.MixedForest, C = (byte)BiomeId.Conifer, Hm = (byte)BiomeId.Human,
+                 M = (byte)BiomeId.Mountain, Mo = (byte)BiomeId.Moor, Wt = (byte)BiomeId.Swamp;
+            double Zn(int i) => (i / W) / (double)(H - 1);
+
+            void Rule(string name, double wavelength, byte to, Func<int, double> coverage)
+            {
+                var mask = PatchMask(s, name, wavelength, W, H, i => open[i] ? coverage(i) : 0);
+                for (int i = 0; i < N; i++) if (mask[i]) biome[i] = to;
+            }
+
+            Rule("patch.conifer", 70, C, i => baseB[i] == F ? 0.5 * Clamp01((Zn(i) - 0.3) / 0.45) : 0);
+            Rule("patch.mixed", 70, F, i => baseB[i] == C ? 0.35 * Clamp01((0.85 - Zn(i)) / 0.4) : 0);
+            Rule("patch.humanWood", 50, F, i => baseB[i] == Hm ? 0.2 : 0);
+            Rule("patch.mountainWood", 50, C, i => baseB[i] == M && dMountainEdge[i] < 70 ? 0.3 : 0);
+            Rule("patch.moor", 45, Mo, i => (baseB[i] == F || baseB[i] == C) && Zn(i) > 0.35 ? 0.06 : 0);
+            Rule("patch.hill", 45, M, i => (baseB[i] == F || baseB[i] == C) && Zn(i) > 0.4 ? 0.045 : 0);
+            Rule("patch.wetIsland", 35, F, i => baseB[i] == Wt ? 0.1 : 0);
+            Rule("patch.miniWetland", 30, Wt, i => baseB[i] == F || baseB[i] == C || baseB[i] == Hm
+                ? 0.05 + (dRiver[i] < 50 ? 0.3 * (1 - dRiver[i] / 50) : 0) : 0);
+        }
+
+        /// <summary>
+        /// layout 模式的宏观高度：湿地只比森林低 1 层（BiomeTable 里是 0，比混交林低 4 层，
+        /// 32m 的过渡带会把它变成一圈圈等高线的“火山口”）。低处由池塘和迷你湿地提供。
+        /// </summary>
+        static double[] LayoutMacroBase()
+        {
+            var m = new double[BiomeTable.Count];
+            for (int b = 0; b < m.Length; b++) m[b] = BiomeTable.All[b].MacroBase;
+            m[(int)BiomeId.Swamp] = BiomeTable.Get(BiomeId.MixedForest).MacroBase - 1;
+            return m;
+        }
+
+        static double Clamp01(double v) => v < 0 ? 0 : (v > 1 ? 1 : v);
+
+        static bool[] PatchMask(RegionSettings s, string name, double wl, int W, int H, Func<int, double> coverage)
+        {
+            int N = W * H;
+            var f = new Fbm(Hash.Derive(s.Seed, name), wl, 3);
+            var w1x = new Fbm(Hash.Derive(s.Seed, name + ".w1x"), wl * 2, 2);
+            var w1z = new Fbm(Hash.Derive(s.Seed, name + ".w1z"), wl * 2, 2);
+            var w2x = new Fbm(Hash.Derive(s.Seed, name + ".w2x"), wl * 0.5, 2);
+            var w2z = new Fbm(Hash.Derive(s.Seed, name + ".w2z"), wl * 0.5, 2);
+            Func<double, double, double> field = (x, z) =>
+            {
+                double qx = x + wl * 0.6 * w1x.Sample(x, z), qz = z + wl * 0.6 * w1z.Sample(x, z);
+                double rx = qx + wl * 0.25 * w2x.Sample(qx, qz), rz = qz + wl * 0.25 * w2z.Sample(qx, qz);
+                return f.Sample(rx, rz);
+            };
+            var q = new QuantileTable(field);
+            var m = new bool[N];
+            bool any = false;
+            for (int z = 0; z < H; z++)
+                for (int x = 0; x < W; x++)
+                {
+                    int i = z * W + x;
+                    double c = coverage(i);
+                    if (c <= 0) continue;
+                    any = true;
+                    if (field(s.OriginX + x + 0.5, s.OriginZ + z + 0.5) > q.Quantile(1 - Math.Min(0.95, c))) m[i] = true;
+                }
+            if (!any) return m;
+            m = Grid.OpenRound(m, W, H, 5);
+            return Grid.RemoveSmall(m, W, H, 600);
         }
 
         // ---------------- 3. 保留区 ----------------
