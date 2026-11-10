@@ -20,6 +20,7 @@ GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
 | 第 1 步 | 盘点 topdowntemp，定目录结构 | 完成 |
 | 第 2 步 | 项目骨架、.gitignore / .gitattributes（LFS）、`Docs/LocalSetup.md` | 完成 |
 | 第 3 步 | GDD 16 节 8×8 chunk 地形实验：纯 C# 生成核心 + 云端预览 + Unity 接入 | 完成，本地测试通过 |
+| 第 4 步 | 世界生成规格 `Docs/WorldGen.md`（layout 优先、拓扑由 layout 决定）；之后做 8×8 测试 layout 技术验证 | 文档草稿 v0.1，等负责人确认 |
 
 本地验证结果（2026-11-09）：Unity 里 checksum 与云端预览一致，EditMode 测试通过，“基本顺利且符合预期”。
 
