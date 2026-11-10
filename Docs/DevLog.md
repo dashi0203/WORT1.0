@@ -1,6 +1,6 @@
 # Wort 开发记录
 
-最后更新：2026-11-10 · 分支 `claude/focused-galileo-rr85m8` · 最新提交见 `git log`
+最后更新：2026-11-10 · 分支 `claude/intelligent-noether-7f0v7r` · 最新提交见 `git log`
 
 GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
 
@@ -21,7 +21,8 @@ GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
 | 第 1 步 | 盘点 topdowntemp，定目录结构 | 完成 |
 | 第 2 步 | 项目骨架、.gitignore / .gitattributes（LFS）、`Docs/LocalSetup.md` | 完成 |
 | 第 3 步 | GDD 16 节 8×8 chunk 地形实验：纯 C# 生成核心 + 云端预览 + Unity 接入 | 完成，本地测试通过 |
-| 第 4 步 | 世界生成规格 `Docs/WorldGen.md`（layout 优先、拓扑由 layout 决定）；之后做 8×8 测试 layout 技术验证 | 文档草稿 v0.1，等负责人确认 |
+| 第 4 步 | 世界生成规格 `Docs/WorldGen.md`（layout 优先、拓扑由 layout 决定） | 完成，已并入 GDD rev 56 |
+| 第 5 步 | layout 管线技术验证：`LayoutGenerator` + 检查 + 8×8 测试 layout + 云端预览 | 云端通过，等负责人看图；Unity 侧只加了测试，TerrainLab 仍用旧生成器 |
 
 本地验证结果（2026-11-09）：Unity 里 checksum 与云端预览一致，EditMode 测试通过，“基本顺利且符合预期”。
 
@@ -59,12 +60,25 @@ dotnet bin/Release/net8.0/TerrainPreview.dll --seed 20261109 --out out
 
 预览专用的视觉辅助（Unity 里没有）：深度突变处描暗边、顶面按高度略提亮。
 
+**layout 模式**（Docs/WorldGen.md 管线）：
+
+```bash
+dotnet bin/Release/net8.0/TerrainPreview.dll --layout ../../Assets/Wort/Data/Layout/Test8x8.json --out out_layout
+```
+
+- 同目录的 `SiteTemplates.json` 自动读入。检查全部通过时退出码 0，有错误时 2。
+- `layout.png`：区域类型（绿 = 开放区，土黄 = 台地，蓝 = 盆地，紫 = 峡谷，灰 = 高原；黑线 = 区域边界），
+  浅色 = 道路，橙 = 出入口，棕 = 桥面，深灰 = 隧道，白点 = 地点，红点 = 住所，品红 = 回不来，青 = 多余通路。
+- `height.png`：同旧模式；另加道路（浅黄）、桥（棕）、隧道（深灰斜纹）、回不来（品红）、多余通路（青）。
+- `shear_overview.png`、`view_*.png`（1080p 相机视野）、`mid_*.png`（80m × 60m，8 px/m）：每个桥、隧道、出入口、洞穴和小屋一张。
+
 ## 当前 checksum（改算法后要同步更新测试和 LocalSetup）
 
 | 种子 | checksum |
 | --- | --- |
 | 20261109（默认） | `0xEE3CECBB` |
 | 7 | `0x3DD96B8A` |
+| layout `Test8x8.json`（seed 20261110） | `0x311C95C3` |
 
 ## 地形生成管线（`RegionGenerator.Run`）
 
@@ -98,7 +112,30 @@ dotnet bin/Release/net8.0/TerrainPreview.dll --seed 20261109 --out out
 - Packages 已精简（去掉 ai.assistant / ai.inference / pipeline / collab-proxy / multiplayer.center / visualscripting）。
 - 云端环境：个人环境 “WORT1.0” 放行了 GitHub LFS 主机（lfs.github.com 等），否则推不了 .fbx/.jpeg。
 
+## layout 管线（`LayoutGenerator`，Docs/WorldGen.md）
+
+新文件：`Json.cs`（极简 JSON 读取）、`WorldLayout.cs`（数据模型 + 有机形状）、`LayoutGenerator.cs`、`LayoutChecks.cs`（可站立表面图 + 检查）。
+数据：`Assets/Wort/Data/Layout/Test8x8.json`、`SiteTemplates.json`。旧的 `RegionGenerator` 未改动，checksum 不变。
+
+1. 区域图：椭圆 / blob（控制点 + Chaikin 3 次平滑）/ stroke（粗折线），边缘叠世界坐标噪声，1m 栅格化；子区域只画在父区域里。
+2. Biome：取所在区域；权重为两次盒式模糊（半径 8）。
+3. 保护区（不放噪声）：道路、地点 + buffer、出入口前方 20m、桥和隧道走廊。
+4. 高度：结构区域 = 绝对层级，平整；开放区 = 只在开放区之间平均的层级（半径 10，两次）+ 微起伏 0–1 层 + 矮台地 1–2 层（离结构区域 8m 以内不放）+ 池塘；
+   最后开放区内部做 1 层 Lipschitz 压平（矮台地叠成台阶，全部能走上去）。
+5. 结构区域边界补到至少 2 层（本次 0 处需要补）。
+6. 地点按模板压平（有机椭圆）；道路只铺在控制点所在的区域（过桥的路不会铺到桥下）。
+7. 出入口：从 at 沿上坡方向找第一道 ≥ 2 层的崖，在低的一侧往回铺坡道（斜坡体素）或台阶。
+8. 桥：桥面一层悬空（SpanKind 1），桥头地面压到桥面高；隧道：地面挖到两端较低的高度，上方保留净空 3 层以上的岩顶（SpanKind 2）。
+9. 检查：每格最多两个节点（地面 + 悬空层顶面），往上 1 层、往下按坠落规则；连通只用无伤边（≤ 3 层）。
+   有向连通（走不到 / 回不来）、多余通路、地点地形要求、步行距离约束、高度范围、桥的护栏提醒。
+
+测试 layout 结果：所有检查通过；走不到的 4208 个节点全部是没有出入口的长台地 ridge（设计如此）；
+ridge 两侧直线 100m 的两点步行 416m；去掉盆地出口的反例报 418 个回不来的节点。
+
 ## 未决问题 / 可调项
+
+- layout 管线：开放区目前没有 2 层矮台地（Lipschitz 压平把它们变成了台阶）、没有 3–4 层的自然台地；桥和隧道只支持南北或东西走向；
+  随机区域、固定 chunk 划分还没接进来；混交林里零散的小池塘偏多。
 
 - 4m 块量化让斜向边界呈 4 格一阶的锯齿；嫌方可改 3m。
 - 森林里有几条 1 层等高线与山前大致平行（宏观高度过渡造成），是否打散待定。
@@ -107,6 +144,8 @@ dotnet bin/Release/net8.0/TerrainPreview.dll --seed 20261109 --out out
 - GDD 第 14 节的待讨论问题（高度裁切过渡、遮挡虚化、雪山呈现、VisualCameraTilt / TiltShift 是否沿用等）。
 
 ## 下一步候选（等负责人决定）
+
+- layout 管线：负责人看图确认后接 Unity（TerrainLab 加一个 layout 模式），补 2 层矮台地、自然 3–4 层台地、随机区域组。
 
 - GDD 6.2：环境层（湿度、地表分区、土壤、扰动）与植物层。
 - 第 7 节：高度裁切、遮挡虚化原型。

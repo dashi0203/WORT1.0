@@ -8,6 +8,7 @@ namespace Wort.Tools
 {
     /// <summary>
     /// 用法：dotnet run -c Release -- [--seed N] [--out DIR]
+    ///       dotnet run -c Release -- --layout ../../Assets/Wort/Data/Layout/Test8x8.json [--out DIR]（layout 管线，见 LayoutMode）
     /// 输出：biome.png / height.png（俯视）、shear_overview.png、shear_*.png（1080p 相机视野，orthoSize 9.5，shear 1）。
     /// </summary>
     public static class Program
@@ -16,11 +17,14 @@ namespace Wort.Tools
         {
             uint seed = 20261109;
             string outDir = "out";
+            string layout = null;
             for (int i = 0; i < args.Length - 1; i++)
             {
                 if (args[i] == "--seed") seed = uint.Parse(args[i + 1]);
                 if (args[i] == "--out") outDir = args[i + 1];
+                if (args[i] == "--layout") layout = args[i + 1];
             }
+            if (layout != null) return LayoutMode.Run(layout, outDir);
             Directory.CreateDirectory(outDir);
 
             var sw = Stopwatch.StartNew();
@@ -191,11 +195,15 @@ namespace Wort.Tools
                     if (map.Slope[i] >= 0) col = Image.Mix(col, 0xFFFFFF, 0.18);
                     if (map.HasWater(i)) col = map.Has(i, CellFlags.River) ? 0x2F6FB8u : 0x3F86B8u;
                     if (map.Has(i, CellFlags.Hidden)) col = Image.Mix(col, 0xD040D0, ((x + z) & 3) == 0 ? 0.65 : 0.2);
+                    if (map.Has(i, CellFlags.Road)) col = Image.Mix(col, 0xD8CFB0, 0.55);
+                    if (map.HasSpan(i)) col = map.SpanKind[i] == 1 ? 0x8B5A2Bu : Image.Mix(col, 0x202020, ((x + z) & 3) == 0 ? 0.7 : 0.35);
                     if (map.Has(i, CellFlags.Unreachable)) col = Image.Mix(col, 0xFF2020, 0.45);
+                    if (map.Has(i, CellFlags.Trap)) col = Image.Mix(col, 0xFF00FF, 0.7);
+                    if (map.Has(i, CellFlags.Leak)) col = 0x00E5FFu;
                     if (map.Has(i, CellFlags.Gully) && !map.HasWater(i)) col = Image.Mix(col, 0x30D0E0, 0.35);
                     if (map.Has(i, CellFlags.Scree)) col = 0xC8C8C8u;
                     if (map.Has(i, CellFlags.Spire)) col = 0xFFFFFFu;
-                    if (map.Has(i, CellFlags.Ramp)) col = 0xFF9A1Fu;
+                    if (map.Has(i, CellFlags.Ramp)) col = map.Slope[i] >= 0 ? 0xFF9A1Fu : 0xFFC860u;
                     Fill(img, x, z, map.H, col);
                     // 悬崖线：与南/东邻居高差 ≥ 2 画黑线
                     if (z > 0 && Math.Abs(map.Height[i - map.W] - h) >= 2) HLine(img, x, z, map.H, 0x111111);

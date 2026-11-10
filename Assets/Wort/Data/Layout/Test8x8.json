@@ -1,0 +1,81 @@
+// 8×8 技术验证 layout（Docs/WorldGen.md 第 11 节）。只验证管线，不沿用到 16×16。
+// 坐标单位米，x 向东，z 向北，区域 512m × 512m。
+{
+  "name": "Test8x8",
+  "seed": 20261110,
+  "chunks": [8, 8],
+  "home": "home",
+
+  "regions": [
+    { "id": "forest", "kind": "open", "level": 0, "biome": "mixedForest", "shape": { "type": "fill" } },
+
+    // 住所和小村庄所在的人类区
+    { "id": "homestead", "kind": "open", "level": 0, "biome": "human",
+      "shape": { "type": "blob", "points": [[150,40],[300,30],[430,70],[440,150],[330,165],[200,160],[140,110]] } },
+
+    // 东南角一小块沼泽
+    { "id": "swamp", "kind": "open", "level": 0, "biome": "swamp",
+      "shape": { "type": "ellipse", "center": [470, 30], "radius": [55, 40] } },
+
+    // +4 台地：只有南边 1 个坡道口；东侧崖面上有洞穴入口；中间有一条东西向隧道
+    { "id": "plateauA", "kind": "plateau", "level": 4, "biome": "conifer",
+      "shape": { "type": "blob", "points": [[75,205],[150,195],[195,225],[190,285],[130,300],[70,275],[60,235]] } },
+
+    // 小的空盆地：−2，四周都能跳进去，只有东边一个台阶口出来
+    { "id": "basin", "kind": "basin", "level": -2, "biome": "mixedForest",
+      "shape": { "type": "ellipse", "center": [300, 232], "radius": [12, 11] } },
+
+    // 长条台地：把两个直线约 100m 的地点隔开，逼人往西绕
+    { "id": "ridge", "kind": "plateau", "level": 4, "biome": "conifer",
+      "shape": { "type": "stroke", "width": 18, "points": [[285,300],[360,306],[440,296],[530,302]] } },
+
+    // 峡谷：−6，东西两端各一条坡道下去；中间有一座桥跨过
+    { "id": "canyon", "kind": "canyon", "level": -6, "biome": "mixedForest",
+      "shape": { "type": "stroke", "width": 14, "points": [[18,352],[90,360],[170,350],[262,357]] } },
+
+    // 北部高原：+9（跳下必死），一条坡道上去；上面再叠一级 +3
+    { "id": "highland", "kind": "highland", "level": 9, "biome": "mountain",
+      "shape": { "type": "blob", "points": [[-30,540],[545,540],[545,440],[430,452],[330,420],[220,445],[110,428],[-30,446]] } },
+    { "id": "highlandUpper", "parent": "highland", "kind": "plateau", "level": 3, "biome": "mountain",
+      "shape": { "type": "ellipse", "center": [300, 482], "radius": [55, 22] } }
+  ],
+
+  "gates": [
+    { "id": "plateauA.ramp", "type": "ramp", "at": [130, 185], "up": "N", "width": 3 },
+    { "id": "basin.exit", "type": "stairs", "at": [305, 232], "up": "E", "width": 3 },
+    { "id": "canyon.west", "type": "ramp", "at": [32, 355], "up": "W", "width": 3 },
+    { "id": "canyon.east", "type": "ramp", "at": [248, 356], "up": "E", "width": 3 },
+    { "id": "highland.ramp", "type": "ramp", "at": [250, 405], "up": "N", "width": 3 },
+    { "id": "highlandUpper.ramp", "type": "ramp", "at": [300, 450], "up": "N", "width": 3 }
+  ],
+
+  "sites": [
+    { "id": "home", "template": "home", "at": [224, 96] },
+    { "id": "village", "template": "village", "at": [372, 112] },
+    { "id": "hut", "template": "ruinHut", "at": [55, 140] },
+    { "id": "cave", "template": "cave", "at": [197, 252] },
+    { "id": "southOfRidge", "template": "marker", "at": [460, 252] },
+    { "id": "northOfRidge", "template": "marker", "at": [460, 352] },
+    { "id": "highlandTop", "template": "marker", "at": [300, 485] }
+  ],
+
+  "roads": [
+    { "id": "homeToVillage", "kind": "road", "points": [[224,96],[290,100],[372,112]] },
+    { "id": "homeToHut", "kind": "trail", "points": [[224,96],[150,118],[55,140]] },
+    // 北上的路：过峡谷上的桥，到高原坡道
+    { "id": "north", "kind": "road", "points": [[224,96],[238,180],[236,300],[236,340],[236,372],[250,405]] },
+    // 峡谷底的路：从西端坡道到东端坡道，从桥下穿过
+    { "id": "canyonFloor", "kind": "trail", "points": [[32,355],[90,360],[170,350],[248,356]] },
+    // 穿过台地 A 的隧道小径
+    { "id": "tunnelTrail", "kind": "trail", "points": [[30,240],[230,240]] }
+  ],
+
+  "spans": [
+    { "id": "canyonBridge", "type": "bridge", "from": [236, 342], "to": [236, 372], "width": 3, "railing": true },
+    { "id": "plateauTunnel", "type": "tunnel", "from": [45, 240], "to": [215, 240], "width": 3, "clear": 3 }
+  ],
+
+  "constraints": [
+    { "type": "minWalk", "a": "southOfRidge", "b": "northOfRidge", "meters": 300 }
+  ]
+}

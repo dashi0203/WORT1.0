@@ -32,20 +32,20 @@ git lfs pull
 
 ## 3. 切换到开发分支
 
-云端会话推送的分支是 `claude/focused-galileo-rr85m8`。
+云端会话推送的分支以每次会话指定的为准，当前是 `claude/intelligent-noether-7f0v7r`。
 
 ```bash
-git fetch origin claude/focused-galileo-rr85m8
+git fetch origin claude/intelligent-noether-7f0v7r
 ```
 
 ```bash
-git switch claude/focused-galileo-rr85m8
+git switch claude/intelligent-noether-7f0v7r
 ```
 
 之后云端每次推送新内容，在本地拉取：
 
 ```bash
-git pull origin claude/focused-galileo-rr85m8
+git pull origin claude/intelligent-noether-7f0v7r
 ```
 
 ## 4. 用 Unity 打开
@@ -65,7 +65,9 @@ git pull origin claude/focused-galileo-rr85m8
 **核对云端预览**：每次生成后 Console 会打印一行 `[TerrainLab] seed … checksum 0x…`。
 默认种子 20261109 的云端预览 checksum 是 `0xEE3CECBB`，种子 7 是 `0x3DD96B8A`。数字相同，说明 Unity 里的地形和云端预览图逐格一致。
 
-**自动测试**：Window → General → Test Runner → EditMode → Run All。`MatchesCloudPreview` 会自动比对上面两个 checksum。
+**自动测试**：Window → General → Test Runner → EditMode → Run All。`GenerationTests.MatchesCloudPreview` 会自动比对上面两个 checksum。
+`LayoutTests` 测 layout 管线（Docs/WorldGen.md）：8×8 测试 layout 的 checksum 应为 `0x311C95C3`，检查全部通过，去掉盆地出口的反例要报错。
+layout 管线目前只在云端预览和测试里用，TerrainLab 场景还是旧生成器。
 
 ## 6. 本地改动约定
 
