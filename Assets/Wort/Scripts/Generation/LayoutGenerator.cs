@@ -69,7 +69,7 @@ namespace Wort.Generation
             StampRoads(L, map, reg);
 
             // 7. 出入口（坡道 / 台阶）
-            map.Stats["gates"] = BuildGates(L, map, res.GateZone);
+            map.Stats["gates"] = BuildGates(L, map, res.GateZone, reg);
 
             // 8. 桥和隧道（悬空层）
             BuildSpans(L, map, res);
@@ -97,9 +97,7 @@ namespace Wort.Generation
                     if (r.Depth != depth) continue;
                     var sh = r.Shape;
                     int parent = r.Parent != null ? L.Region(r.Parent).Index : -1;
-                    double wl = Math.Max(10, Math.Min(80, sh.Size * 0.6));
-                    var warp = new Fbm(Hash.Derive(s.Seed, "layout.warp." + r.Id), wl, 3);
-                    double amp = sh.WarpAmp;
+                    sh.Init(Hash.Derive(s.Seed, "layout.shape." + r.Id));
                     int x0 = Math.Max(0, (int)Math.Floor(sh.MinX)), x1 = Math.Min(W - 1, (int)Math.Ceiling(sh.MaxX));
                     int z0 = Math.Max(0, (int)Math.Floor(sh.MinZ)), z1 = Math.Min(H - 1, (int)Math.Ceiling(sh.MaxZ));
                     for (int z = z0; z <= z1; z++)
@@ -108,14 +106,65 @@ namespace Wort.Generation
                             int i = z * W + x;
                             if (parent >= 0 && reg[i] != parent) continue;
                             double gx = x + 0.5, gz = z + 0.5;
-                            double d = sh.Distance(gx, gz);
-                            if (sh.Type != "fill") d += amp * warp.Sample(s.OriginX + gx, s.OriginZ + gz);
-                            if (d < 0) reg[i] = r.Index;
+                            if (sh.Organic(gx, gz) < 0) reg[i] = r.Index;
                         }
                 }
             for (int i = 0; i < reg.Length; i++)
                 if (reg[i] < 0) throw new FormatException("有格子不属于任何区域：layout 需要一个 fill 形状的底层区域");
+            RemoveSlivers(L, reg, W, H);
             return reg;
+        }
+
+        /// <summary>
+        /// 形状扭曲留下的碎块并入周围最多的区域：
+        /// 任何区域小于 MinPiece 格的碎块（避免被崖圈死的小洞）；结构区域除最大一块以外的所有块（避免没有出入口的孤岛）。
+        /// 开放区可以合法地分成几块（如被长台地隔开的南北两片森林），只去掉碎块。
+        /// </summary>
+        const int MinPiece = 48;
+
+        static void RemoveSlivers(WorldLayout L, int[] reg, int W, int H)
+        {
+            var lab = Grid.Label(W, H, i => true, (a, b) => reg[a] == reg[b], out var sizes);
+            var largest = new int[L.Regions.Count];
+            var largestSize = new int[L.Regions.Count];
+            for (int k = 0; k < largest.Length; k++) largest[k] = -1;
+            for (int i = 0; i < reg.Length; i++)
+            {
+                int c = lab[i];
+                if (sizes[c] > largestSize[reg[i]] || sizes[c] == largestSize[reg[i]] && c < largest[reg[i]]) { largestSize[reg[i]] = sizes[c]; largest[reg[i]] = c; }
+            }
+            var counts = new Dictionary<int, int>();
+            var members = new List<int>[sizes.Count];
+            for (int i = 0; i < reg.Length; i++)
+            {
+                int c = lab[i];
+                bool drop = sizes[c] < MinPiece || !L.Regions[reg[i]].IsOpen && c != largest[reg[i]];
+                if (drop) (members[c] ??= new List<int>()).Add(i);
+            }
+            for (int c = 0; c < members.Length; c++)
+            {
+                var cells = members[c];
+                if (cells == null) continue;
+                counts.Clear();
+                int self = reg[cells[0]];
+                foreach (int i in cells)
+                {
+                    int x = i % W, z = i / W;
+                    for (int d = 0; d < 4; d++)
+                    {
+                        int nx = x + Grid.DX4[d], nz = z + Grid.DZ4[d];
+                        if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
+                        int r = reg[nz * W + nx];
+                        if (r == self) continue;
+                        counts.TryGetValue(r, out int n);
+                        counts[r] = n + 1;
+                    }
+                }
+                int best = -1, bestN = -1;
+                foreach (var kv in counts)
+                    if (kv.Value > bestN || kv.Value == bestN && kv.Key < best) { best = kv.Key; bestN = kv.Value; }
+                if (best >= 0) foreach (int i in cells) reg[i] = best;
+            }
         }
 
         // ---------------- 2. Biome ----------------
@@ -216,14 +265,39 @@ namespace Wort.Generation
             var qTerrace = new QuantileTable((x, z) => terrace.Sample(x, z));
             var qPond = new QuantileTable((x, z) => pond.Sample(x, z));
 
+            // 到区域边界的距离：结构区域（台地、高原）顶面离边 5m 以外才放微起伏，崖边保持干净
+            var inner = new bool[N];
+            for (int z = 0; z < H; z++)
+                for (int x = 0; x < W; x++)
+                {
+                    int i = z * W + x;
+                    bool same = true;
+                    for (int d = 0; d < 4 && same; d++)
+                    {
+                        int nx = x + Grid.DX4[d], nz = z + Grid.DZ4[d];
+                        if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
+                        if (reg[nz * W + nx] != reg[i]) same = false;
+                    }
+                    inner[i] = same;
+                }
+            var distToEdge = Grid.DistanceInside(inner, W, H);
+
             int ponds = 0, raised = 0, terraced = 0;
             for (int z = 0; z < H; z++)
                 for (int x = 0; x < W; x++)
                 {
                     int i = z * W + x;
                     var r = L.Regions[reg[i]];
-                    if (!open[i]) { map.Height[i] = r.AbsLevel; continue; }
                     double gx = s.OriginX + x + 0.5, gz = s.OriginZ + z + 0.5;
+                    if (!open[i])
+                    {
+                        int hs = r.AbsLevel;
+                        // 台地、高原顶面：0–1 层轻微起伏；盆地、峡谷保持平整（空盆地不放东西）
+                        bool top = r.Kind == RegionKind.Plateau || r.Kind == RegionKind.Highland;
+                        if (top && !keepFlat[i] && distToEdge[i] >= 5 && microBroad.Sample(gx, gz) > qMicroBroad.Quantile(0.7)) { hs++; raised++; }
+                        map.Height[i] = hs;
+                        continue;
+                    }
                     int baseLv = (int)Math.Floor(num[i] / Math.Max(1e-6f, den[i]) + 0.5);
                     var p = BiomeTable.Get(r.Biome);
                     int h = baseLv;
@@ -384,7 +458,7 @@ namespace Wort.Generation
         /// 从 gate.at 沿上坡方向走，找到第一道 ≥ 2 层的崖；在崖脚低的一侧往回铺坡道（斜坡体素，每格升 1 层）
         /// 或台阶（每级 1 层），宽 gate.Width。
         /// </summary>
-        static int BuildGates(WorldLayout L, RegionMap map, bool[] gateZone)
+        static int BuildGates(WorldLayout L, RegionMap map, bool[] gateZone, int[] reg)
         {
             int W = map.W, H = map.H, built = 0;
             var h = map.Height;
@@ -392,14 +466,17 @@ namespace Wort.Generation
             {
                 int dx = Grid.DX4[g.Up], dz = Grid.DZ4[g.Up];
                 int px = Grid.DX4[(g.Up + 1) & 3], pz = Grid.DZ4[(g.Up + 1) & 3];
-                int cx = g.X, cz = g.Z, top = int.MinValue;
-                for (int step = 0; step < 80; step++)
+                // 在 at 前后 60 格内找离 at 最近的一道 ≥ 2 层的上坡崖（形状有机化后，at 可能落在崖的任一侧）
+                int toRegion = g.To != null ? (L.Region(g.To) ?? throw new FormatException($"出入口 {g.Id} 的 to 区域 {g.To} 不存在")).Index : -1;
+                int cx = g.X, cz = g.Z, top = int.MinValue, bestDist = int.MaxValue;
+                for (int t = -60; t < 60; t++)
                 {
-                    int nx = cx + dx, nz = cz + dz;
-                    if (nx < 0 || nz < 0 || nx >= W || nz >= H) break;
-                    int diff = h[nz * W + nx] - h[cz * W + cx];
-                    if (diff >= 2) { top = h[nz * W + nx]; break; }
-                    cx = nx; cz = nz;
+                    int ax = g.X + dx * t, az = g.Z + dz * t, bx = ax + dx, bz = az + dz;
+                    if (!map.InBounds(ax, az) || !map.InBounds(bx, bz)) continue;
+                    int diff = h[bz * W + bx] - h[az * W + ax];
+                    int dist = t < 0 ? -t : t;
+                    if (toRegion >= 0 && reg[bz * W + bx] != toRegion) continue;
+                    if (diff >= 2 && dist < bestDist) { bestDist = dist; cx = ax; cz = az; top = h[bz * W + bx]; }
                 }
                 if (top == int.MinValue) { map.Stats["gateNotFound." + g.Id] = 1; continue; }
                 built++;

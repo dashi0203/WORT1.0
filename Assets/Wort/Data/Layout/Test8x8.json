@@ -19,41 +19,42 @@
 
     // +4 台地：只有南边 1 个坡道口；东侧崖面上有洞穴入口；中间有一条东西向隧道
     { "id": "plateauA", "kind": "plateau", "level": 4, "biome": "conifer",
-      "shape": { "type": "blob", "points": [[75,205],[150,195],[195,225],[190,285],[130,300],[70,275],[60,235]] } },
+      "shape": { "type": "blob", "points": [[70,200],[108,214],[150,188],[198,212],[184,246],[206,282],[162,290],[132,314],[98,288],[56,284],[74,252],[48,226]] } },
 
     // 小的空盆地：−2，四周都能跳进去，只有东边一个台阶口出来
     { "id": "basin", "kind": "basin", "level": -2, "biome": "mixedForest",
-      "shape": { "type": "ellipse", "center": [300, 232], "radius": [12, 11] } },
+      "shape": { "type": "blob", "points": [[289,228],[296,220],[306,222],[313,229],[310,240],[300,244],[291,239]] } },
 
     // 长条台地：把两个直线约 100m 的地点隔开，逼人往西绕
     { "id": "ridge", "kind": "plateau", "level": 4, "biome": "conifer",
-      "shape": { "type": "stroke", "width": 18, "points": [[285,300],[360,306],[440,296],[530,302]] } },
+      "shape": { "type": "blob", "points": [[282,298],[300,286],[330,294],[352,278],[382,290],[410,302],[440,288],[470,280],[500,294],[530,286],
+                                            [530,320],[502,328],[478,314],[450,328],[418,336],[392,318],[360,324],[334,314],[306,322],[286,312]] } },
 
     // 峡谷：−6，东西两端各一条坡道下去；中间有一座桥跨过
     { "id": "canyon", "kind": "canyon", "level": -6, "biome": "mixedForest",
-      "shape": { "type": "stroke", "width": 14, "points": [[18,352],[90,360],[170,350],[262,357]] } },
+      "shape": { "type": "stroke", "width": 14, "points": [[18,350],[45,362],[75,354],[100,368],[130,358],[160,345],[190,352],[215,364],[240,356],[262,349]] } },
 
     // 北部高原：+9（跳下必死），一条坡道上去；上面再叠一级 +3
     { "id": "highland", "kind": "highland", "level": 9, "biome": "mountain",
       "shape": { "type": "blob", "points": [[-30,540],[545,540],[545,440],[430,452],[330,420],[220,445],[110,428],[-30,446]] } },
     { "id": "highlandUpper", "parent": "highland", "kind": "plateau", "level": 3, "biome": "mountain",
-      "shape": { "type": "ellipse", "center": [300, 482], "radius": [55, 22] } }
+      "shape": { "type": "blob", "points": [[250,472],[280,462],[312,469],[346,458],[354,478],[334,499],[300,502],[268,494],[246,488]] } }
   ],
 
   "gates": [
-    { "id": "plateauA.ramp", "type": "ramp", "at": [130, 185], "up": "N", "width": 3 },
-    { "id": "basin.exit", "type": "stairs", "at": [305, 232], "up": "E", "width": 3 },
-    { "id": "canyon.west", "type": "ramp", "at": [32, 355], "up": "W", "width": 3 },
-    { "id": "canyon.east", "type": "ramp", "at": [248, 356], "up": "E", "width": 3 },
-    { "id": "highland.ramp", "type": "ramp", "at": [250, 405], "up": "N", "width": 3 },
-    { "id": "highlandUpper.ramp", "type": "ramp", "at": [300, 450], "up": "N", "width": 3 }
+    { "id": "plateauA.ramp", "type": "ramp", "at": [130, 185], "up": "N", "width": 3, "to": "plateauA" },
+    { "id": "basin.exit", "type": "stairs", "at": [306, 232], "up": "E", "width": 3, "to": "forest" },
+    { "id": "canyon.west", "type": "ramp", "at": [32, 354], "up": "W", "width": 3, "to": "forest" },
+    { "id": "canyon.east", "type": "ramp", "at": [250, 352], "up": "E", "width": 3, "to": "forest" },
+    { "id": "highland.ramp", "type": "ramp", "at": [250, 405], "up": "N", "width": 3, "to": "highland" },
+    { "id": "highlandUpper.ramp", "type": "ramp", "at": [300, 450], "up": "N", "width": 3, "to": "highlandUpper" }
   ],
 
   "sites": [
     { "id": "home", "template": "home", "at": [224, 96] },
     { "id": "village", "template": "village", "at": [372, 112] },
     { "id": "hut", "template": "ruinHut", "at": [55, 140] },
-    { "id": "cave", "template": "cave", "at": [197, 252] },
+    { "id": "cave", "template": "cave", "at": [204, 252] },
     { "id": "southOfRidge", "template": "marker", "at": [460, 252] },
     { "id": "northOfRidge", "template": "marker", "at": [460, 352] },
     { "id": "highlandTop", "template": "marker", "at": [300, 485] }
@@ -63,16 +64,16 @@
     { "id": "homeToVillage", "kind": "road", "points": [[224,96],[290,100],[372,112]] },
     { "id": "homeToHut", "kind": "trail", "points": [[224,96],[150,118],[55,140]] },
     // 北上的路：过峡谷上的桥，到高原坡道
-    { "id": "north", "kind": "road", "points": [[224,96],[238,180],[236,300],[236,340],[236,372],[250,405]] },
+    { "id": "north", "kind": "road", "points": [[224,96],[238,180],[236,300],[236,334],[236,380],[250,405]] },
     // 峡谷底的路：从西端坡道到东端坡道，从桥下穿过
-    { "id": "canyonFloor", "kind": "trail", "points": [[32,355],[90,360],[170,350],[248,356]] },
+    { "id": "canyonFloor", "kind": "trail", "points": [[32,354],[45,362],[75,354],[100,368],[130,358],[160,345],[190,352],[215,364],[240,356],[250,352]] },
     // 穿过台地 A 的隧道小径
-    { "id": "tunnelTrail", "kind": "trail", "points": [[30,240],[230,240]] }
+    { "id": "tunnelTrail", "kind": "trail", "points": [[20,240],[232,240]] }
   ],
 
   "spans": [
-    { "id": "canyonBridge", "type": "bridge", "from": [236, 342], "to": [236, 372], "width": 3, "railing": true },
-    { "id": "plateauTunnel", "type": "tunnel", "from": [45, 240], "to": [215, 240], "width": 3, "clear": 3 }
+    { "id": "canyonBridge", "type": "bridge", "from": [236, 334], "to": [236, 380], "width": 3, "railing": true },
+    { "id": "plateauTunnel", "type": "tunnel", "from": [26, 240], "to": [226, 240], "width": 3, "clear": 3 }
   ],
 
   "constraints": [

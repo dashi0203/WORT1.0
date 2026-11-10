@@ -99,7 +99,57 @@ namespace Wort.Generation
             }
         }
 
-        public double WarpAmp => Warp >= 0 ? Warp : Math.Max(1.0, Math.Min(6.0, Size * 0.08));
+        public double WarpAmp => Warp >= 0 ? Warp : Math.Max(2.5, Math.Min(20.0, Size * 0.18));
+
+        // ---- 有机化：坐标扭曲（大尺度凸起 / 凹湾 + 小尺度缺口）、线条宽度变化、崖线粗糙 ----
+        Fbm bigX, bigZ, smallX, smallZ, rough, widthVar;
+        double aBig, aSmall;
+        bool inited;
+
+        static double Clamp(double v, double lo, double hi) => v < lo ? lo : (v > hi ? hi : v);
+
+        /// <summary>按种子建好扰动场，并把外接框放大到扰动能到达的范围。</summary>
+        public void Init(uint seed)
+        {
+            if (Type == "fill") return;
+            bool first = !inited;
+            inited = true;
+            bool stroke = Type == "stroke";
+            double size = Size;
+            aBig = stroke ? (Warp >= 0 ? Warp : Clamp(Width * 0.8, 4, 16)) : WarpAmp;
+            double wlBig = stroke ? Clamp(Width * 5, 40, 120) : Clamp(size * 0.7, 16, 160);
+            aSmall = Clamp(size * 0.05, 1, 4);
+            double wlSmall = Clamp(size * 0.15, 5, 18);
+            bigX = new Fbm(Hash.Of(seed, 1), wlBig, 3);
+            bigZ = new Fbm(Hash.Of(seed, 2), wlBig, 3);
+            smallX = new Fbm(Hash.Of(seed, 3), wlSmall, 2);
+            smallZ = new Fbm(Hash.Of(seed, 4), wlSmall, 2);
+            rough = new Fbm(Hash.Of(seed, 5), 7, 2);
+            if (stroke) widthVar = new Fbm(Hash.Of(seed, 6), Clamp(Width * 3, 24, 80), 2);
+            // Fbm 输出约在 ±1，典型 ±0.5：外接框按 2 倍幅度放大
+            if (!first) return;
+            double m = 2 * (aBig + aSmall) + (stroke ? Width * 0.6 : 0) + 2;
+            MinX -= m; MinZ -= m; MaxX += m; MaxZ += m;
+        }
+
+        /// <summary>有机化后的有符号距离（米），内部为负。x, z 为 layout 坐标（米）。</summary>
+        public double Organic(double x, double z)
+        {
+            if (Type == "fill") return -1e9;
+            // Fbm 的典型幅度约 0.5，乘 2 让 aBig / aSmall 接近实际位移
+            double wx = x + 2 * aBig * bigX.Sample(x, z) + 2 * aSmall * smallX.Sample(x, z);
+            double wz = z + 2 * aBig * bigZ.Sample(x, z) + 2 * aSmall * smallZ.Sample(x, z);
+            double d;
+            if (Type == "stroke")
+            {
+                // 宽度沿长度变化 0.55–1.6 倍
+                double k = 1 + 1.3 * widthVar.Sample(x, z);
+                if (k < 0.55) k = 0.55; else if (k > 1.6) k = 1.6;
+                d = SegmentsDistance(wx, wz, false) - Width * 0.5 * k;
+            }
+            else d = Distance(wx, wz);
+            return d + 0.6 * rough.Sample(x, z);
+        }
 
         /// <summary>Chaikin 细分：把控制点围成的多边形磨成平滑曲线。</summary>
         public static void Chaikin(List<double> xs, List<double> zs, bool closed, int iterations)
@@ -150,6 +200,8 @@ namespace Wort.Generation
         /// <summary>上坡方向（Grid.DX4/DZ4 索引：0=北 1=东 2=南 3=西）。</summary>
         public int Up;
         public int Width = 3;
+        /// <summary>坡道通往的区域（高的一侧）。为空时取离 at 最近的崖。</summary>
+        public string To;
     }
 
     public sealed class SiteTemplate
@@ -272,6 +324,7 @@ namespace Wort.Generation
                     X = (int)(double)at[0], Z = (int)(double)at[1],
                     Up = ParseDir(Str(g, "up", "N")),
                     Width = (int)Num(g, "width", 3),
+                    To = Str(g, "to", null),
                 });
             }
             foreach (var o in Arr(d, "sites"))
@@ -417,8 +470,6 @@ namespace Wort.Generation
                 }
                 default: throw new FormatException("未知形状类型 " + shape.Type);
             }
-            double m = shape.WarpAmp + 1;
-            shape.MinX -= m; shape.MinZ -= m; shape.MaxX += m; shape.MaxZ += m;
             return shape;
         }
 

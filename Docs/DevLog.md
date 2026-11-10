@@ -78,7 +78,7 @@ dotnet bin/Release/net8.0/TerrainPreview.dll --layout ../../Assets/Wort/Data/Lay
 | --- | --- |
 | 20261109（默认） | `0xEE3CECBB` |
 | 7 | `0x3DD96B8A` |
-| layout `Test8x8.json`（seed 20261110） | `0x311C95C3` |
+| layout `Test8x8.json`（seed 20261110） | `0xDCE5283D` |
 
 ## 地形生成管线（`RegionGenerator.Run`）
 
