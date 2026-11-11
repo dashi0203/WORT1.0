@@ -349,7 +349,7 @@ namespace Wort.Generation
             moorP = Grid.RemoveSmall(Grid.OpenRound(moorP, W, H, 1.5), W, H, 18);
             wetP = Grid.RemoveSmall(Grid.OpenRound(wetP, W, H, 1.5), W, H, 18);
             for (int i = 0; i < N; i++) { if (moorP[i]) bio[i] = (byte)BiomeId.Moor; if (wetP[i]) bio[i] = (byte)BiomeId.Swamp; }
-            // 3) 河漫滩湿地：下游（可玩区南半段）每约 24m 一段，按段随机选一侧（约 3 成的段空着），从水边往外最宽约 4–10m，边缘不规则，最小 18 格
+            // 3) 河漫滩湿地：下游（可玩区南半段）每约 70m 一段，段内随机位置放一小块（沿河 6–14m、往外 2–5m，约 18–70 格），随机选一侧，边缘不规则，小于 18 格剔除
             int floodCells = 0;
             var floodP = new bool[N];
             double zFlood = b0 + play * 0.55;
@@ -361,15 +361,17 @@ namespace Wort.Generation
                     if (k < 0 || z > zFlood || cls[i] != Ground || map.HasWater(i)) continue;
                     double out0 = dRiver[i] - HalfWidth(i);
                     if (out0 <= 0) continue;
-                    double width = 7 + 3 * fFlood.Sample(x, z);
+                    uint segH = Hash.Of((uint)(k / 70), Hash.Derive(seed, "tf.fseg"));
+                    int segStart = (k / 70) * 70 + (int)(Hash.Unit(segH) * 50);
+                    int segLen = 6 + (int)(Hash.Unit(Hash.Mix(segH)) * 9);
+                    if (k < segStart || k >= segStart + segLen) continue;
+                    double width = 3.5 + 1.5 * fFlood.Sample(x, z);
                     if (out0 > width) continue;
                     if (h[i] > wl[k] + 1) continue; // 只在贴水的低岸
                     int a = path[Math.Max(0, k - 4)], b = path[Math.Min(path.Count - 1, k + 4)];
                     double tx = b % W - a % W, tz = b / W - a / W;
                     double cross = tx * (z - path[k] / W) - tz * (x - path[k] % W);
-                    double r = Hash.Unit(Hash.Of((uint)(k / 24), Hash.Derive(seed, "tf.fside")));
-                    if (r > 0.7) continue;
-                    int side = r < 0.35 ? 1 : -1;
+                    int side = Hash.Unit(Hash.Of((uint)(k / 70), Hash.Derive(seed, "tf.fside"))) < 0.5 ? 1 : -1;
                     if (cross * side <= 0) continue;
                     floodP[i] = true;
                 }
