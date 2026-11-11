@@ -1,0 +1,797 @@
+{
+ "schema": "wort-world-layout",
+ "version": 2,
+ "chunkMeters": 64,
+ "world": {
+  "columns": 5,
+  "rows": 5
+ },
+ "planning": {
+  "speedMps": 4,
+  "dayMinutes": 24
+ },
+ "layers": {
+  "biomes": {
+   "model": "hard-edge-categorical-mask",
+   "marks": [
+    {
+     "id": "b_base",
+     "shape": "rect",
+     "biome": "forest",
+     "x": 0,
+     "y": 0,
+     "w": 320,
+     "h": 320
+    },
+    {
+     "id": "b_west",
+     "shape": "stroke",
+     "biome": "conifer",
+     "width": 100,
+     "points": [
+      [
+       20,
+       0
+      ],
+      [
+       24,
+       130
+      ],
+      [
+       18,
+       260
+      ]
+     ]
+    },
+    {
+     "id": "b_nw",
+     "shape": "stroke",
+     "biome": "conifer",
+     "width": 46,
+     "points": [
+      [
+       72,
+       72
+      ],
+      [
+       105,
+       92
+      ]
+     ]
+    },
+    {
+     "id": "b_north",
+     "shape": "stroke",
+     "biome": "mountain",
+     "width": 88,
+     "points": [
+      [
+       0,
+       22
+      ],
+      [
+       110,
+       30
+      ],
+      [
+       210,
+       18
+      ],
+      [
+       320,
+       26
+      ]
+     ]
+    },
+    {
+     "id": "b_east",
+     "shape": "stroke",
+     "biome": "mountain",
+     "width": 86,
+     "points": [
+      [
+       298,
+       0
+      ],
+      [
+       300,
+       90
+      ],
+      [
+       292,
+       160
+      ]
+     ]
+    },
+    {
+     "id": "b_south",
+     "shape": "stroke",
+     "biome": "coast",
+     "width": 70,
+     "points": [
+      [
+       0,
+       298
+      ],
+      [
+       120,
+       302
+      ],
+      [
+       320,
+       294
+      ]
+     ]
+    },
+    {
+     "id": "b_se",
+     "shape": "stroke",
+     "biome": "coast",
+     "width": 80,
+     "points": [
+      [
+       300,
+       250
+      ],
+      [
+       320,
+       232
+      ]
+     ]
+    },
+    {
+     "id": "b_home",
+     "shape": "stroke",
+     "biome": "human",
+     "width": 72,
+     "points": [
+      [
+       172,
+       214
+      ],
+      [
+       226,
+       226
+      ]
+     ]
+    },
+    {
+     "id": "b_basin",
+     "shape": "stroke",
+     "biome": "wetland",
+     "width": 34,
+     "points": [
+      [
+       86,
+       208
+      ],
+      [
+       96,
+       226
+      ]
+     ]
+    },
+    {
+     "id": "b_moor",
+     "shape": "stroke",
+     "biome": "moorland",
+     "width": 26,
+     "points": [
+      [
+       150,
+       94
+      ],
+      [
+       168,
+       100
+      ]
+     ]
+    },
+    {
+     "id": "b_random",
+     "shape": "stroke",
+     "biome": "conifer",
+     "width": 52,
+     "points": [
+      [
+       204,
+       82
+      ],
+      [
+       244,
+       114
+      ]
+     ]
+    }
+   ]
+  },
+  "chunkZones": [
+   {
+    "x": 0,
+    "y": 0,
+    "zone": "blocked"
+   },
+   {
+    "x": 1,
+    "y": 0,
+    "zone": "blocked"
+   },
+   {
+    "x": 2,
+    "y": 0,
+    "zone": "blocked"
+   },
+   {
+    "x": 3,
+    "y": 0,
+    "zone": "blocked"
+   },
+   {
+    "x": 4,
+    "y": 0,
+    "zone": "blocked"
+   },
+   {
+    "x": 0,
+    "y": 1,
+    "zone": "blocked"
+   },
+   {
+    "x": 1,
+    "y": 1,
+    "zone": "fixed"
+   },
+   {
+    "x": 2,
+    "y": 1,
+    "zone": "fixed"
+   },
+   {
+    "x": 3,
+    "y": 1,
+    "zone": "random"
+   },
+   {
+    "x": 4,
+    "y": 1,
+    "zone": "blocked"
+   },
+   {
+    "x": 0,
+    "y": 2,
+    "zone": "blocked"
+   },
+   {
+    "x": 1,
+    "y": 2,
+    "zone": "fixed"
+   },
+   {
+    "x": 2,
+    "y": 2,
+    "zone": "fixed"
+   },
+   {
+    "x": 3,
+    "y": 2,
+    "zone": "fixed"
+   },
+   {
+    "x": 4,
+    "y": 2,
+    "zone": "blocked"
+   },
+   {
+    "x": 0,
+    "y": 3,
+    "zone": "blocked"
+   },
+   {
+    "x": 1,
+    "y": 3,
+    "zone": "fixed"
+   },
+   {
+    "x": 2,
+    "y": 3,
+    "zone": "fixed"
+   },
+   {
+    "x": 3,
+    "y": 3,
+    "zone": "fixed"
+   },
+   {
+    "x": 4,
+    "y": 3,
+    "zone": "blocked"
+   },
+   {
+    "x": 0,
+    "y": 4,
+    "zone": "blocked"
+   },
+   {
+    "x": 1,
+    "y": 4,
+    "zone": "blocked"
+   },
+   {
+    "x": 2,
+    "y": 4,
+    "zone": "blocked"
+   },
+   {
+    "x": 3,
+    "y": 4,
+    "zone": "blocked"
+   },
+   {
+    "x": 4,
+    "y": 4,
+    "zone": "blocked"
+   }
+  ],
+  "places": [
+   {
+    "id": "home",
+    "name": "住所",
+    "category": "home",
+    "shape": "square",
+    "radius": 26,
+    "x": 208,
+    "y": 218
+   },
+   {
+    "id": "ruins",
+    "name": "遗迹",
+    "category": "landmark",
+    "shape": "circle",
+    "radius": 12,
+    "x": 90,
+    "y": 218
+   },
+   {
+    "id": "cave",
+    "name": "洞穴",
+    "category": "dungeon",
+    "shape": "circle",
+    "radius": 10,
+    "x": 160,
+    "y": 74
+   },
+   {
+    "id": "herbs",
+    "name": "草药",
+    "category": "resource",
+    "shape": "circle",
+    "radius": 18,
+    "x": 84,
+    "y": 108
+   },
+   {
+    "id": "bridge",
+    "name": "桥",
+    "category": "other",
+    "shape": "circle",
+    "radius": 8,
+    "x": 127,
+    "y": 160
+   },
+   {
+    "id": "ford",
+    "name": "浅滩",
+    "category": "other",
+    "shape": "circle",
+    "radius": 8,
+    "x": 136,
+    "y": 252
+   },
+   {
+    "id": "rA",
+    "name": "A",
+    "category": "other",
+    "shape": "circle",
+    "radius": 6,
+    "x": 192,
+    "y": 96
+   },
+   {
+    "id": "rB",
+    "name": "B",
+    "category": "other",
+    "shape": "circle",
+    "radius": 6,
+    "x": 224,
+    "y": 128
+   }
+  ],
+  "hydrography": {
+   "rivers": [
+    {
+     "id": "r_canyon",
+     "kind": "river",
+     "width": 6,
+     "points": [
+      [
+       118,
+       0
+      ],
+      [
+       125,
+       50
+      ],
+      [
+       116,
+       100
+      ],
+      [
+       128,
+       150
+      ],
+      [
+       122,
+       200
+      ],
+      [
+       134,
+       250
+      ],
+      [
+       140,
+       320
+      ]
+     ]
+    }
+   ],
+   "canyons": [
+    {
+     "id": "c_main",
+     "kind": "canyon",
+     "width": 18,
+     "points": [
+      [
+       118,
+       0
+      ],
+      [
+       125,
+       50
+      ],
+      [
+       116,
+       100
+      ],
+      [
+       128,
+       150
+      ],
+      [
+       122,
+       200
+      ],
+      [
+       134,
+       250
+      ],
+      [
+       140,
+       320
+      ]
+     ]
+    }
+   ]
+  },
+  "terrain": {
+   "model": "hard-edge-terrain-split-mask",
+   "marks": [
+    {
+     "id": "t_plateau",
+     "shape": "stroke",
+     "terrain": "plateau",
+     "width": 38,
+     "points": [
+      [
+       148,
+       88
+      ],
+      [
+       170,
+       98
+      ]
+     ]
+    },
+    {
+     "id": "t_basin",
+     "shape": "stroke",
+     "terrain": "basin",
+     "width": 30,
+     "points": [
+      [
+       84,
+       205
+      ],
+      [
+       96,
+       228
+      ]
+     ]
+    }
+   ]
+  },
+  "routes": {
+   "draft": [
+    {
+     "id": "d1",
+     "name": "意图：住所→遗迹",
+     "stage": "draft",
+     "type": "main",
+     "oneWay": false,
+     "points": [
+      [
+       208,
+       218
+      ],
+      [
+       150,
+       200
+      ],
+      [
+       90,
+       218
+      ]
+     ]
+    },
+    {
+     "id": "d2",
+     "name": "意图：住所→洞穴",
+     "stage": "draft",
+     "type": "trail",
+     "oneWay": false,
+     "points": [
+      [
+       208,
+       218
+      ],
+      [
+       175,
+       140
+      ],
+      [
+       160,
+       74
+      ]
+     ]
+    },
+    {
+     "id": "d3",
+     "name": "意图：住所→随机区",
+     "stage": "draft",
+     "type": "trail",
+     "oneWay": false,
+     "points": [
+      [
+       208,
+       218
+      ],
+      [
+       224,
+       128
+      ]
+     ]
+    },
+    {
+     "id": "d4",
+     "name": "意图：遗迹→草药坡",
+     "stage": "draft",
+     "type": "trail",
+     "oneWay": false,
+     "points": [
+      [
+       90,
+       218
+      ],
+      [
+       84,
+       108
+      ]
+     ]
+    }
+   ],
+   "final": [
+    {
+     "id": "f1",
+     "name": "主路：住所→峡谷桥→西岸",
+     "stage": "final",
+     "type": "main",
+     "oneWay": false,
+     "points": [
+      [
+       208,
+       218
+      ],
+      [
+       172,
+       186
+      ],
+      [
+       142,
+       166
+      ],
+      [
+       127,
+       160
+      ],
+      [
+       110,
+       157
+      ],
+      [
+       88,
+       150
+      ]
+     ]
+    },
+    {
+     "id": "f2",
+     "name": "近路：跳入盆地（单向）",
+     "stage": "final",
+     "type": "trail",
+     "oneWay": true,
+     "points": [
+      [
+       88,
+       150
+      ],
+      [
+       90,
+       190
+      ],
+      [
+       90,
+       218
+      ]
+     ]
+    },
+    {
+     "id": "f3",
+     "name": "盆地南口→浅滩→回住所",
+     "stage": "final",
+     "type": "trail",
+     "oneWay": false,
+     "points": [
+      [
+       90,
+       218
+      ],
+      [
+       100,
+       246
+      ],
+      [
+       136,
+       252
+      ],
+      [
+       176,
+       240
+      ],
+      [
+       208,
+       218
+      ]
+     ]
+    },
+    {
+     "id": "f4",
+     "name": "西岸→草药坡",
+     "stage": "final",
+     "type": "trail",
+     "oneWay": false,
+     "points": [
+      [
+       88,
+       150
+      ],
+      [
+       84,
+       108
+      ]
+     ]
+    },
+    {
+     "id": "f5",
+     "name": "上台地：沿峡谷东沿到西端坡道",
+     "stage": "final",
+     "type": "trail",
+     "oneWay": false,
+     "points": [
+      [
+       142,
+       166
+      ],
+      [
+       136,
+       128
+      ],
+      [
+       133,
+       104
+      ],
+      [
+       150,
+       84
+      ],
+      [
+       160,
+       74
+      ]
+     ]
+    },
+    {
+     "id": "f6",
+     "name": "近路：台地东南跳下（单向）",
+     "stage": "final",
+     "type": "trail",
+     "oneWay": true,
+     "points": [
+      [
+       178,
+       112
+      ],
+      [
+       190,
+       150
+      ],
+      [
+       205,
+       200
+      ]
+     ]
+    },
+    {
+     "id": "f7",
+     "name": "台地顶→随机区口 A",
+     "stage": "final",
+     "type": "trail",
+     "oneWay": false,
+     "points": [
+      [
+       160,
+       74
+      ],
+      [
+       182,
+       92
+      ],
+      [
+       192,
+       96
+      ]
+     ]
+    },
+    {
+     "id": "f8",
+     "name": "住所→随机区口 B",
+     "stage": "final",
+     "type": "trail",
+     "oneWay": false,
+     "points": [
+      [
+       208,
+       218
+      ],
+      [
+       222,
+       160
+      ],
+      [
+       224,
+       128
+      ]
+     ]
+    }
+   ]
+  }
+ }
+}
