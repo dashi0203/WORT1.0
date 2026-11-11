@@ -880,32 +880,6 @@ namespace Wort.Generation
             }
             R.Corridor = corridor;
 
-            // 开口 / 通道南侧 3 格内的墙压到最低（比两侧地面和接缝带高 2 层），减少错切视角下的遮挡；其余靠遮挡虚化（GDD）
-            {
-                var opening = OpeningMask(m, roomOf, wall, inner, corridor, N);
-                foreach (int i in win)
-                {
-                    if (!opening[i]) continue;
-                    int x = i % W, z = i / W;
-                    for (int dz = 1; dz <= 3; dz++)
-                        for (int dx = -1; dx <= 1; dx++)
-                        {
-                            int n = (z - dz) * W + x + dx;
-                            if (n < 0 || n >= N || !wall[n] || !(inner[n] || mass[n]) || corridor[n]) continue;
-                            int nx = n % W, nz = n / W, lo = int.MinValue;
-                            for (int qz = -3; qz <= 3; qz++)
-                                for (int qx = -3; qx <= 3; qx++)
-                                {
-                                    int q = (nz + qz) * W + nx + qx;
-                                    if (q < 0 || q >= N) continue;
-                                    if (roomOf[q] >= 0) lo = Math.Max(lo, fl[q] + 1); // 房间小起伏 +1
-                                    if (seam[q] || corridor[q] || opening[q]) lo = Math.Max(lo, h[q]);
-                                }
-                            if (lo != int.MinValue && h[n] > lo + 2) h[n] = lo + 2;
-                        }
-                }
-            }
-
             // ---------- 11b. 落差大的地方的过渡：山脚碎石（零散或成片，+1 层，顶部比崖顶至少低 2 层）；台阶边上贴着的石柱 ----------
             {
                 var fScree = new Fbm(Hash.Of(seed, 61), 5, 2);
