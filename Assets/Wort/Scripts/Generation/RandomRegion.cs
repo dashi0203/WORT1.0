@@ -924,6 +924,42 @@ namespace Wort.Generation
                     if (hc[i] + 1 > top - 2) continue;
                     h[i] = hc[i] + 1; m.Flags[i] |= CellFlags.Scree;
                 }
+                // 山体朝外的崖脚（接缝带里能走进来的部分）：偶尔长 1 层高的小台地，打破光滑的长崖面。
+                // 只放在崖比崖脚高 ≥ 3 层的地方；之后的跳跃安全会再把附近的崖顶抬到比它高 ≥ 2 层（负责人 2026-11-11）
+                var fLedge = new Fbm(Hash.Of(seed, 62), 4, 2);
+                for (int i = 0; i < N; i++)
+                {
+                    if (!seam[i] || corridor[i] || m.HasWater(i)) continue;
+                    if (near[i] >= 0 && clsBaked[near[i]] == TerraceField.Border) continue;
+                    int x = i % W, z = i / W, top = int.MinValue;
+                    for (int dz = -2; dz <= 2; dz++)
+                        for (int dx = -2; dx <= 2; dx++)
+                        {
+                            int n = (z + dz) * W + x + dx;
+                            if (n >= 0 && n < N && region[n] && (mass[n] || (wall[n] && !corridor[n]))) top = Math.Max(top, hc[n]);
+                        }
+                    if (top == int.MinValue || top - hc[i] < 3) continue;
+                    if (fLedge.Sample(x, z) < 0.25) continue; // 偶尔、成小簇
+                    h[i] = hc[i] + 1; m.Flags[i] |= CellFlags.Scree;
+                }
+                // 崖脚贴着 chunk 外面的固定地面时（接缝带太窄），在山体最外一圈里偶尔挖出 1 层高的小台地（固定格不动）
+                for (int i = 0; i < N; i++)
+                {
+                    if (!(mass[i] || (wall[i] && !corridor[i])) || !region[i]) continue;
+                    if (seam[i]) continue;
+                    int x = i % W, z = i / W, foot = int.MinValue;
+                    for (int d = 0; d < 4; d++)
+                    {
+                        int n = (z + Grid.DZ4[d]) * W + x + Grid.DX4[d];
+                        if (n < 0 || n >= N) continue;
+                        bool outsideWalk = !region[n] && clsBaked[n] != TerraceField.Border && !m.HasWater(n);
+                        bool seamWalk = seam[n] && !(near[n] >= 0 && clsBaked[near[n]] == TerraceField.Border);
+                        if (outsideWalk || seamWalk) foot = Math.Max(foot, hc[n]);
+                    }
+                    if (foot == int.MinValue || hc[i] - foot < 3) continue;
+                    if (fLedge.Sample(x * 1.3 + 11, z * 1.3) < 0.3) continue;
+                    h[i] = foot + 1; mass[i] = false; wall[i] = false; m.Flags[i] |= CellFlags.Scree;
+                }
                 // 石柱：外围山体 / 贴高地的接缝带里，台阶边上随机立 1–2m 粗的柱子，比所在台阶高 2–3 层（看得到、上不去，不影响通行）
                 int pillars = 0;
                 for (int tries = 0; tries < 400 && pillars < 5; tries++)
