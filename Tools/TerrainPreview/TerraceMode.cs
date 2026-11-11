@@ -12,12 +12,12 @@ namespace Wort.Tools
     /// </summary>
     static class TerraceMode
     {
-        public static int Run(uint seed, string outDir)
+        public static int Run(uint seed, string outDir, int chunks = 5)
         {
             Directory.CreateDirectory(outDir);
             var sw = Stopwatch.StartNew();
             if (Environment.GetEnvironmentVariable("DEBUG_UNREACH") != null) TerraceField.Debug = new System.Text.StringBuilder();
-            var map = TerraceField.Generate(new TerraceFieldSettings { Seed = seed }, out var cls);
+            var map = TerraceField.Generate(new TerraceFieldSettings { Seed = seed, Chunks = chunks }, out var cls);
             long tA = sw.ElapsedMilliseconds;
             var voxels = new RegionVoxels(map);
             var meshes = new List<(MeshData mesh, int ox, int oz)>();
@@ -46,9 +46,10 @@ namespace Wort.Tools
             if (Environment.GetEnvironmentVariable("BAND_STATS") != null)
             {
                 int b0 = 64;
+                int bandH = (map.H - 2 * b0) / 3;
                 for (int band = 0; band < 3; band++)
                 {
-                    int z0 = b0 + band * 64, z1 = z0 + 64;
+                    int z0 = b0 + band * bandH, z1 = z0 + bandH;
                     var hist = new SortedDictionary<int, int>();
                     int gmin = int.MaxValue, gmax = int.MinValue;
                     for (int z = z0; z < z1; z++) for (int x = b0; x < map.W - b0; x++)

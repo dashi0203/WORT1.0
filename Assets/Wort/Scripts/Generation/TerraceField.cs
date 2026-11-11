@@ -895,106 +895,112 @@ namespace Wort.Generation
             int W = m.W, H = m.H, N = W * H;
             var tried = new HashSet<long>();
             uint rseed = Hash.Derive(s.Seed, "tf.ramp");
-            for (int round = 0; round < 400; round++)
+            // 每轮：算一次区和可达性，然后把所有还没连上、该连的区都试一遍（大图上一轮能放很多坡道）
+            for (int round = 0; round < 200; round++)
             {
                 var good = Good(m, cls, spawn);
                 var zone = Zones(m, cls, out var sizes);
-                // 找一个还没连上、该连的区
-                int target = -1;
                 var zoneCls = new byte[sizes.Count];
                 var zoneHasGood = new bool[sizes.Count];
-                var zoneMin = new int[sizes.Count];
-                for (int z = 0; z < zoneMin.Length; z++) zoneMin[z] = -1;
+                var zoneCells = new List<int>[sizes.Count];
+                for (int z = 0; z < sizes.Count; z++) zoneCells[z] = new List<int>();
                 for (int i = 0; i < N; i++)
                 {
                     if (zone[i] < 0) continue;
-                    if (zoneMin[zone[i]] < 0) { zoneMin[zone[i]] = i; zoneCls[zone[i]] = cls[i]; }
+                    if (zoneCells[zone[i]].Count == 0) zoneCls[zone[i]] = cls[i];
+                    zoneCells[zone[i]].Add(i);
                     if (good[i]) zoneHasGood[zone[i]] = true;
                 }
-                long KeyOf(int z) => ((long)zoneMin[z] << 20) ^ sizes[z];
-                // 按区编号的确定性顺序：先平地 / 盆地，再台地
-                for (int pass = 0; pass < 2 && target < 0; pass++)
+                long KeyOf(int z) => ((long)zoneCells[z][0] << 20) ^ sizes[z];
+                // 确定性顺序：先平地 / 盆地，再台地
+                var targets = new List<int>();
+                for (int pass = 0; pass < 2; pass++)
                     for (int z = 0; z < sizes.Count; z++)
                     {
                         if (zoneHasGood[z] || tried.Contains(KeyOf(z))) continue;
                         bool isPlat = zoneCls[z] == Plateau || zoneCls[z] == Plateau2;
                         if (pass == 0 && isPlat) continue;
+                        if (pass == 1 && !isPlat) continue;
                         if (isPlat && sizes[z] < s.MinRampedPlateau) continue;
                         if (!isPlat && sizes[z] < 4) continue;
-                        target = z; break;
+                        targets.Add(z);
                     }
-                if (target < 0) break;
-                long key = KeyOf(target);
-                // 候选：区边上一格 a（属 target）与相邻好格 b，高差 2–6
-                var cands = new List<Cand>();
-                for (int a = 0; a < N; a++)
-                {
-                    if (zone[a] != target) continue;
-                    int x = a % W, z = a / W;
-                    for (int d = 0; d < 4; d++)
-                    {
-                        int nx = x + Grid.DX4[d], nz = z + Grid.DZ4[d];
-                        if (!m.InBounds(nx, nz)) continue;
-                        int b = nz * W + nx;
-                        if (!good[b] || m.Slope[a] >= 0 || m.Slope[b] >= 0) continue;
-                        int diff = m.Height[a] - m.Height[b];
-                        int ad = Math.Abs(diff);
-                        if (ad < 2 || ad > 6) continue;
-                        int top = diff > 0 ? a : b;
-                        int down = diff > 0 ? d : Opp(d);
-                        if (down == 0) continue; // 不朝北下（错切视角下会被台地挡住）
-                        cands.Add(new Cand { Top = top, Dir = down, Diff = ad, Key = Hash.Of((uint)top, rseed + (uint)down) });
-                    }
-                }
-                cands.Sort((p, q) => p.Diff != q.Diff ? p.Diff.CompareTo(q.Diff) : p.Key.CompareTo(q.Key));
-                bool placed = false;
-                int fGeom = 0, fLost = 0;
+                if (targets.Count == 0) break;
                 int goodCount = 0;
                 for (int i = 0; i < N; i++) if (good[i]) goodCount++;
-                foreach (var c in cands)
+                bool anyPlaced = false, anyChanged = false;
+                foreach (int target in targets)
                 {
-                    if (!TryRamp(m, cls, c, s.RampWidth, out var undo) && !TryRampInner(m, cls, c, s.RampWidth, out undo)) { fGeom++; continue; }
-                    var g2 = Good(m, cls, spawn);
-                    bool lost = false;
-                    int newCount = 0;
-                    for (int i = 0; i < N; i++) { if (g2[i]) newCount++; if (good[i] && !g2[i]) { lost = true; break; } }
-                    if (lost || newCount <= goodCount) { fLost++; Undo(m, undo); continue; }
-                    placed = true; break;
-                }
-                if (placed) tried.Clear();
-                if (!placed)
-                {
+                    // 前面放的坡道可能已经把它连上了
+                    bool already = false;
+                    foreach (int i in zoneCells[target]) if (good[i]) { already = true; break; }
+                    if (already) continue;
+                    long key = KeyOf(target);
+                    // 候选：区边上一格 a（属 target）与相邻好格 b，高差 2–6
+                    var cands = new List<Cand>();
+                    foreach (int a in zoneCells[target])
+                    {
+                        int x = a % W, z = a / W;
+                        for (int d = 0; d < 4; d++)
+                        {
+                            int nx = x + Grid.DX4[d], nz = z + Grid.DZ4[d];
+                            if (!m.InBounds(nx, nz)) continue;
+                            int b = nz * W + nx;
+                            if (!good[b] || m.Slope[a] >= 0 || m.Slope[b] >= 0) continue;
+                            int diff = m.Height[a] - m.Height[b];
+                            int ad = Math.Abs(diff);
+                            if (ad < 2 || ad > 6) continue;
+                            int top = diff > 0 ? a : b;
+                            int down = diff > 0 ? d : Opp(d);
+                            if (down == 0) continue; // 不朝北下（错切视角下会被台地挡住）
+                            cands.Add(new Cand { Top = top, Dir = down, Diff = ad, Key = Hash.Of((uint)top, rseed + (uint)down) });
+                        }
+                    }
+                    cands.Sort((p, q) => p.Diff != q.Diff ? p.Diff.CompareTo(q.Diff) : p.Key.CompareTo(q.Key));
+                    bool placed = false;
+                    int fGeom = 0, fLost = 0;
+                    foreach (var c in cands)
+                    {
+                        if (!TryRamp(m, cls, c, s.RampWidth, out var undo) && !TryRampInner(m, cls, c, s.RampWidth, out undo)) { fGeom++; continue; }
+                        var g2 = Good(m, cls, spawn);
+                        bool lost = false;
+                        int newCount = 0;
+                        for (int i = 0; i < N; i++) { if (g2[i]) newCount++; if (good[i] && !g2[i]) { lost = true; break; } }
+                        if (lost || newCount <= goodCount) { fLost++; Undo(m, undo); continue; }
+                        placed = true; good = g2; goodCount = newCount; break;
+                    }
+                    if (placed) { anyPlaced = true; continue; }
                     Debug?.AppendLine($"round {round} zone cls={zoneCls[target]} size={sizes[target]} cands={cands.Count} geomFail={fGeom} lostOrNoGain={fLost}");
                     tried.Add(key);
                     // 连不上的小盆地 / 小坑：抬到只低 1 层（能跳出来）
                     if (zoneCls[target] == Basin || (zoneCls[target] == Ground && sizes[target] < 200))
                     {
                         bool changed = false;
-                        for (int i = 0; i < N; i++)
+                        foreach (int i in zoneCells[target])
                         {
-                            if (zone[i] != target) continue;
                             int hi = int.MinValue;
                             ForN8(i, W, H, n => { if (zone[n] != target && Walkable(m, cls, n) && good[n]) hi = Math.Max(hi, m.Height[n]); });
                             if (hi != int.MinValue && m.Height[i] < hi - 1) { m.Height[i] = hi - 1; changed = true; }
                         }
-                        if (changed) tried.Remove(key);
+                        if (changed) { tried.Remove(key); anyChanged = true; }
                     }
                     if (cands.Count == 0 && zoneCls[target] != Plateau && zoneCls[target] != Plateau2 && sizes[target] < 200)
                     {
                         // 四周没有可接的邻居：填平并入旁边的台地
                         bool changed = false;
                         for (int pass2 = 0; pass2 < 2; pass2++)
-                            for (int i = 0; i < N; i++)
+                            foreach (int i in zoneCells[target])
                             {
-                                if (zone[i] != target) continue;
                                 int hi = int.MinValue; byte hc = Plateau;
                                 ForN8(i, W, H, n => { if (zone[n] != target && Walkable(m, cls, n) && m.Height[n] > hi) { hi = m.Height[n]; hc = cls[n]; } });
                                 if (hi != int.MinValue && m.Height[i] < hi) { m.Height[i] = hi; changed = true; }
                                 if (hi != int.MinValue) cls[i] = hc == Ground || hc == Basin ? Plateau : hc;
                             }
-                        if (changed) tried.Remove(key);
+                        if (changed) { tried.Remove(key); anyChanged = true; }
                     }
                 }
+                if (anyPlaced) tried.Clear();
+                if (!anyPlaced && !anyChanged) break;
             }
             // 大台地补第二个坡道
             AddSecondRamps(m, cls, s, spawn);

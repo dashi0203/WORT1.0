@@ -1,6 +1,6 @@
 # Wort 开发记录
 
-最后更新：2026-11-11 · 分支 `claude/bold-bardeen-vlwhjd`（已合并 intelligent-noether 与 focused-galileo） · 最新提交见 `git log`
+最后更新：2026-11-11（收工）· 分支 `claude/bold-bardeen-vlwhjd`（已合并 intelligent-noether 与 focused-galileo） · 最新提交见 `git log`
 
 GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
 
@@ -38,6 +38,26 @@ GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
     （沿河 6–14m、往外 2–5m，约 18–70 格），随机选一侧。所有斑块最小 18 格（负责人 2026-11-11：指一块的总面积，河边沼泽可以很小）。沼泽 Biome 约占可玩区 13–19%。预览多一张 `biome.png`。
 - 5×5 微型原型设计稿：`Tools/WorldPlanner/designs/Micro5x5_v1.json`（v0 为放射状，已被否定，留作对照）。
 - 待负责人确认：必经之路都在固定 chunk 上、随机 chunk 是挂在旁边的口袋（WorldGen 第 8 节【已定】）；规划器 chunk 标记里“过渡 / 不可通行”的含义。
+
+## 2026-11-11 收工状态（体素器 / 规划器）
+
+- **5×5 测试的基准：种子 3**（负责人中意）。`dotnet bin/Release/net8.0/TerrainPreview.dll --terrace --seed 3 --out out`。
+- **原则（负责人 2026-11-11）**：前期阶段体素器的生成结果要尽可能好，尽量少靠手改；手改留给真正的设计意图（道路、关键地点周边、特殊地形）。
+- **规划器**：`Tools/WorldPlanner/`（离线 HTML，JSON v2）。Claude 能直接出设计稿 JSON（例：`designs/Micro5x5_v1.json`），
+  也能读负责人导出的 JSON。在线版：https://claude.ai/artifact/RnsADvPeQoxyb6ejAKnkyo（导出改成复制文本）。
+- **体素器**：`TerraceField`（见上）。已做：外圈、阶梯式北高南低、随机台地 / 盆地、河、坡道、全连通、Biome 大区 + 斑块。
+  **还没做**（按顺序）：
+  1. 读规划器 JSON：Biome 大区、水系（河 / 峡谷）、负责人画的台地 / 盆地（硬约束）、地点、道路、Chunk 标记；
+  2. 道路：保证可走（穿过台地 / 盆地边界放坡道，穿过峡谷放桥 / 浅滩，单向段做跳下）+ 道路地表（tilemap 式拼块，经过台阶 / 斜坡照样显示）；
+  3. 接 Unity（TerrainLab 换成体素器，EditMode 测试加 TerraceField 的 checksum）；
+  4. 随机 chunk 刷新原型（见下“待办”）。
+- **放大测试（种子 1 / 2 / 3 / 5，8×8 与 12×12）**：台地 / 盆地 / 通道的形态按米定义，放大后观感一致；
+  坡道放置改为每轮处理所有未连通区后，12×12 生成约 6 秒，平地全可达（种子 3 的 12×12 剩一小块 48 格），偶有 1 块台地无坡道。
+  放大前要改的写死项：
+  - 沼泽大区现在只有 1 块、尺寸固定 → 由规划器的 Biome 大区给出（打碎边缘、收小），没有时按面积撒多块；
+  - 河只有 1 条、北进南出 → 由规划器的水系给出，支持多条和支流；
+  - 阶梯式底面固定 4 级铺满可玩区 → 改成“每级约 40–60m 宽、总高差受 WorldGen 32m 设计目标约束”，大图级数随之增加；
+  - 人类区只围着出生点 → 由规划器的地点 / Biome 给出。
 
 ## GDD 同步记录
 
