@@ -6,6 +6,9 @@ Unity 6000.3.8f1 + URP 17.3 的写实低魔 3D 开放世界生存 / 炼金 RPG�
 1. GDD（策划文档，Claude Docs）：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT
    仓库里的 `Docs/GDD.md` 是它的只读快照，读不到 Docs 工具时可以先看快照（注意同步日期）。
 2. `Docs/DevLog.md`：开发记录、已做的决定、未决问题、下一步。
+3. 做随机区域 / 关卡生成相关的任务时，再读《随机区域与关卡生成》（Claude Docs）：https://claude.ai/artifact/FLi4oaxFPRfPHC75a3KqcF
+   仓库快照 `Docs/RandomLevelGDD.md`；同步规则与主 GDD 相同（改了就重新导出、在 DevLog 记一笔）。
+   世界生成规格见 `Docs/WorldGen.md`（直接在仓库里编辑，不是快照）。
 
 ## 规则（来自项目负责人）
 - 用中文交流，回复和文档都写中文句子。专有术语保留英文：layout、Biome、chunk、layer、checksum 等；代码里的名字（类名、文件路径、JSON 字段）也保留英文并放在反引号里。除此以外不要中英夹杂。
