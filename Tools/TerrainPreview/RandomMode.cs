@@ -16,8 +16,8 @@ namespace Wort.Tools
         public static int Run(uint seed, int refreshes, string outDir)
         {
             Directory.CreateDirectory(outDir);
-            var baked = TerraceField.Generate(new TerraceFieldSettings { Seed = seed }, out var cls);
             var chunks = new List<(int, int)> { (3, 3) };
+            var baked = TerraceField.Generate(new TerraceFieldSettings { Seed = seed, RandomChunks = chunks }, out var cls);
             var cands = RandomRegion.AutoCandidates(baked, cls, chunks, seed);
             Console.WriteLine($"固定世界：TerraceField seed {seed}；随机 chunk (3,3)；候选出入口 {cands.Count} 个：" + string.Join(" ", cands.ConvertAll(e => $"({e.X},{e.Z})→{"北东南西"[e.Dir]}")));
             var s = new RandomRegionSettings();

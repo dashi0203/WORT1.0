@@ -19,6 +19,11 @@ namespace Wort.Generation
         public int MinRampedPlateau = 60;
         /// <summary>坡道宽（格）。</summary>
         public int RampWidth = 2;
+        /// <summary>
+        /// 随机 chunk（随机区域）。外圈不可通行高地挨着它们的那一段在烘焙时就压低、做成逐级下降（从最外圈开始融合），
+        /// 免得随机区域刷新时贴着一道离谱的高崖（负责人 2026-11-11）。
+        /// </summary>
+        public List<(int cx, int cz)> RandomChunks = new List<(int cx, int cz)>();
     }
 
     /// <summary>
@@ -318,12 +323,21 @@ namespace Wort.Generation
                     int tier = (int)Math.Floor((distB[i] + 16 * fTier.Sample(x, z)) / 13.0);
                     tier = tier < 0 ? 0 : (tier > 3 ? 3 : tier);
                     h[i] = G[i] + 8 + 3 * tier;
+                    // 挨着随机 chunk 的外圈：离随机 chunk 越近越低，每 7m 左右一级（每级 2 层），分界弯曲
+                    double dr = DistToChunks(x, z, s.RandomChunks, rs.ChunkSize);
+                    if (dr < 30)
+                    {
+                        int soft = G[i] + 4 + 2 * (int)Math.Floor((dr + 5 * fTier.Sample(x * 1.7, z * 1.7)) / 7.0);
+                        if (soft < G[i] + 4) soft = G[i] + 4;
+                        if (soft < h[i]) h[i] = soft;
+                    }
                 }
             for (int i = 0; i < N; i++)
                 if (cls[i] == Border)
                 {
                     int hi = int.MinValue;
-                    ForN8(i, W, H, n => { if (cls[n] != Border) hi = Math.Max(hi, Math.Max(h[n], map.HasWater(n) ? map.Water[n] : int.MinValue)); });
+                    // 随机 chunk 里的格子刷新时会重做，不参与“外圈比旁边高 4 层”
+                    ForN8(i, W, H, n => { if (cls[n] != Border && !InChunks(n % W, n / W, s.RandomChunks, rs.ChunkSize)) hi = Math.Max(hi, Math.Max(h[n], map.HasWater(n) ? map.Water[n] : int.MinValue)); });
                     if (hi != int.MinValue && h[i] < hi + 4) h[i] = hi + 4;
                 }
 
@@ -481,6 +495,25 @@ namespace Wort.Generation
         }
 
         // =====================================================================
+
+        static bool InChunks(int x, int z, List<(int cx, int cz)> chunks, int cs)
+        {
+            foreach (var (cx, cz) in chunks) if (x >= cx * cs && x < (cx + 1) * cs && z >= cz * cs && z < (cz + 1) * cs) return true;
+            return false;
+        }
+
+        static double DistToChunks(int x, int z, List<(int cx, int cz)> chunks, int cs)
+        {
+            double best = double.MaxValue;
+            foreach (var (cx, cz) in chunks)
+            {
+                double dx = x < cx * cs ? cx * cs - x : (x >= (cx + 1) * cs ? x - (cx + 1) * cs + 1 : 0);
+                double dz = z < cz * cs ? cz * cs - z : (z >= (cz + 1) * cs ? z - (cz + 1) * cs + 1 : 0);
+                double d = Math.Sqrt(dx * dx + dz * dz);
+                if (d < best) best = d;
+            }
+            return best;
+        }
 
         static bool IsBorderChunk(int i, int W, int H, int b0)
         {

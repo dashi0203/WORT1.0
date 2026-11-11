@@ -15,7 +15,7 @@ namespace Wort.Generation
         /// <summary>房间最短边（m）【已定 8】。</summary>
         public int MinSide = 8;
         /// <summary>房间最长边（m）【暂定】。</summary>
-        public int MaxSide = 40;
+        public int MaxSide = 50;
         /// <summary>房间大小差异度 0（均匀）– 1（悬殊）【暂定】。</summary>
         public double SizeVariance = 0.5;
         /// <summary>两个房间共享边至少多长才算相邻（m）【暂定】。</summary>
@@ -229,13 +229,16 @@ namespace Wort.Generation
             var seam = new bool[N];
             var inner = new bool[N];
             var fSeam = new Fbm(Hash.Of(seed, 11), 9, 2);
+            var fSeamBig = new Fbm(Hash.Of(seed, 12), 22, 2);
             for (int z = 0; z < H; z++)
                 for (int x = 0; x < W; x++)
                 {
                     int i = z * W + x;
                     if (!region[i]) continue;
                     // 接缝带内缘用噪声弄弯：3.5–6m
-                    double sw = s.SeamWidth - 1.25 * (1 + fSeam.Sample(x, z));
+                    // 接缝带内缘弯曲：1.5–6m，大小两层噪声（不出方框）
+                    double sw = s.SeamWidth - 2.0 * (1 + fSeamBig.Sample(x, z)) - 0.6 * (1 + fSeam.Sample(x, z));
+                    if (sw < 1.5) sw = 1.5;
                     if (distOut[i] <= sw) seam[i] = true; else inner[i] = true;
                 }
             inner = Grid.RemoveSmall(inner, W, H, 40);
@@ -301,8 +304,10 @@ namespace Wort.Generation
                 rects[pick] = a; rects.Add(b);
             }
             // 矩形编号（墙线用扭曲坐标取，弄弯）
-            var fWx = new Fbm(Hash.Of(seed, 21), 14, 3);
-            var fWz = new Fbm(Hash.Of(seed, 22), 14, 3);
+            var fWx = new Fbm(Hash.Of(seed, 21), 18, 3);
+            var fWz = new Fbm(Hash.Of(seed, 22), 18, 3);
+            var fWx2 = new Fbm(Hash.Of(seed, 23), 6, 2);
+            var fWz2 = new Fbm(Hash.Of(seed, 24), 6, 2);
             int RectAt(double x, double z)
             {
                 for (int k = 0; k < rects.Count; k++)
@@ -310,41 +315,58 @@ namespace Wort.Generation
                 return -1;
             }
             var wid = new int[N];
-            for (int i = 0; i < N; i++) wid[i] = -1;
+            var edgeDist = new double[N];
+            for (int i = 0; i < N; i++) { wid[i] = -1; edgeDist[i] = double.MaxValue; }
             for (int z = bz0; z < bz1; z++)
                 for (int x = bx0; x < bx1; x++)
                 {
                     int i = z * W + x;
                     if (!inner[i]) continue;
-                    int k = RectAt(x + 0.5 + 3.2 * fWx.Sample(x, z), z + 0.5 + 3.2 * fWz.Sample(x, z));
+                    double wx = x + 0.5 + 5.0 * fWx.Sample(x, z) + 1.3 * fWx2.Sample(x, z);
+                    double wz = z + 0.5 + 5.0 * fWz.Sample(x, z) + 1.3 * fWz2.Sample(x, z);
+                    int k = RectAt(wx, wz);
                     if (k < 0) k = RectAt(x + 0.5, z + 0.5);
                     wid[i] = k;
+                    if (k >= 0)
+                    {
+                        // 到本矩形“内部边”（和别的矩形相邻的边）的距离，在扭曲坐标里算
+                        var rk = rects[k];
+                        double dIn = double.MaxValue;
+                        if (rk.X0 > bx0) dIn = Math.Min(dIn, wx - rk.X0);
+                        if (rk.X1 < bx1) dIn = Math.Min(dIn, rk.X1 - wx);
+                        if (rk.Z0 > bz0) dIn = Math.Min(dIn, wz - rk.Z0);
+                        if (rk.Z1 < bz1) dIn = Math.Min(dIn, rk.Z1 - wz);
+                        edgeDist[i] = dIn;
+                    }
                 }
 
-            // ---------- 4. 窄墙：1–3m，沿（扭曲后的）矩形边；外圈一道墙把房间和接缝带隔开 ----------
+            // ---------- 4. 窄墙：像自然地形——宽 1–4m 起伏变化，沿扭曲后的矩形边；偶尔长出岩块；外圈一道墙把房间和接缝带隔开 ----------
             var wall = new bool[N];
-            var fWall = new Fbm(Hash.Of(seed, 31), 7, 2);
+            var fWall = new Fbm(Hash.Of(seed, 31), 9, 2);
+            var fBlob = new Fbm(Hash.Of(seed, 32), 5, 2);
+            var distSeam = Grid.DistanceInside(inner, W, H); // 到房间区外（接缝带）的距离
             for (int z = bz0; z < bz1; z++)
                 for (int x = bx0; x < bx1; x++)
                 {
                     int i = z * W + x;
                     if (!inner[i]) continue;
+                    double half = 0.6 + 1.5 * (fWall.Sample(x, z) + 1) * 0.5;      // 半宽 0.6–2.1 → 宽约 1–4m
+                    if (edgeDist[i] < half) wall[i] = true;
+                    double halfOut = 0.8 + 1.4 * (fWall.Sample(x + 91, z - 37) + 1) * 0.5;
+                    if (distSeam[i] <= halfOut + 0.5) wall[i] = true;
+                    // 岩块：墙边 3m 内偶尔鼓出来
+                    if (!wall[i] && (edgeDist[i] < half + 3 || distSeam[i] < halfOut + 3) && fBlob.Sample(x, z) > 0.55) wall[i] = true;
+                }
+            // 墙必须连续：相邻矩形之间如果扭曲后缝没盖住，按旧办法补一格
+            for (int z = bz0; z < bz1; z++)
+                for (int x = bx0; x < bx1; x++)
+                {
+                    int i = z * W + x;
+                    if (!inner[i] || wall[i]) continue;
                     for (int d = 0; d < 4; d++)
                     {
-                        int nx = x + Grid.DX4[d], nz = z + Grid.DZ4[d];
-                        int n = nz * W + nx;
-                        bool edge = !inner[n] || wid[n] > wid[i];
-                        if (!edge) continue;
-                        wall[i] = true;
-                        double v = fWall.Sample(x, z);
-                        // 加粗：2 格或 3 格
-                        if (v > 0.15 && inner[n]) wall[n] = true;
-                        if (v > 0.5)
-                        {
-                            int bxx = x - Grid.DX4[d], bzz = z - Grid.DZ4[d];
-                            int bi = bzz * W + bxx;
-                            if (inner[bi]) wall[bi] = true;
-                        }
+                        int n = (z + Grid.DZ4[d]) * W + x + Grid.DX4[d];
+                        if (inner[n] && !wall[n] && wid[n] != wid[i]) { wall[i] = true; break; }
                     }
                 }
             // 房间的角磨圆：每个矩形的房间格做一次圆形开运算，被削掉的角并进墙
@@ -567,6 +589,7 @@ namespace Wort.Generation
             var fBump = new Fbm(Hash.Of(seed, 41), 6, 2);
             var fRise = new Fbm(Hash.Of(seed, 42), 15, 2);
             var distWall = Grid.DistanceInside(Invert(wall, inner), W, H);
+            var distWall2 = Grid.DistanceInside(wall, W, H); // 墙格到墙外的距离（墙有多厚）
             for (int i = 0; i < N; i++)
             {
                 if (!region[i]) continue;
@@ -590,7 +613,8 @@ namespace Wort.Generation
                         if (n >= 0 && n < N && roomOf[n] >= 0) hi = Math.Max(hi, floor[roomOf[n]]);
                     }
                 if (hi == int.MinValue) hi = baseH;
-                h[i] = hi + (fRise.Sample(x, z) > 0 ? 3 : 2); // 比墙脚高 2–3 层（房间里的小起伏离墙 ≥ 3m）
+                // 比墙脚高 2–3 层，墙顶高低不平（宽的地方中间再高 1 层）
+                h[i] = hi + (fRise.Sample(x, z) > 0 ? 3 : 2) + (distWall2[i] >= 2 ? 1 : 0);
             }
             // 接缝带：贴外圈不可通行的地方沿用外圈高度（崖面往里退），贴固定平地的地方从邻居高度渐变到房间地面
             var near = NearestOutside(region, W, H, s.SeamWidth + 3);
@@ -600,7 +624,16 @@ namespace Wort.Generation
                 int o = near[i];
                 if (o < 0) { h[i] = baseH; continue; }
                 int hn = m.Height[o];
-                if (cls[o] == TerraceField.Border) { h[i] = hn; continue; }
+                if (clsBaked[o] == TerraceField.Border)
+                {
+                    // 贴着不可通行高地：从高地高度逐级降下来，每级 2 层，分界弯曲；最低一级仍比房间地面高 2 层（从房间爬不上来）
+                    double tt = Math.Min(1.0, distOut[i] / s.SeamWidth);
+                    int lowest = baseH + 2;
+                    double raw = lowest + (hn - lowest) * (1 - tt);
+                    int steps = (int)Math.Floor((raw - lowest) / 2.0 + 0.35 * fSeam.Sample(x0s(i, W) * 2.1, z0s(i, W) * 2.1));
+                    h[i] = Math.Min(hn, lowest + 2 * Math.Max(0, steps));
+                    continue;
+                }
                 double t = Math.Min(1.0, distOut[i] / s.SeamWidth);
                 // 从邻居高度渐变到房间地面高度（不抬到墙顶，免得从接缝带走上墙）
                 h[i] = hn + (int)Math.Floor((baseH - hn) * t + 0.5);
@@ -609,13 +642,13 @@ namespace Wort.Generation
             for (int pass = 0; pass < 4; pass++)
                 for (int i = 0; i < N; i++)
                 {
-                    if (!seam[i] || (near[i] >= 0 && cls[near[i]] == TerraceField.Border)) continue;
+                    if (!seam[i] || (near[i] >= 0 && clsBaked[near[i]] == TerraceField.Border)) continue;
                     int x = i % W, z = i / W, lo = int.MaxValue;
                     for (int d = 0; d < 4; d++)
                     {
                         int n = (z + Grid.DZ4[d]) * W + x + Grid.DX4[d];
                         if (n < 0 || n >= N || (!seam[n] && region[n])) continue;
-                        if (!region[n] && cls[n] == TerraceField.Border) continue;
+                        if (!region[n] && clsBaked[n] == TerraceField.Border) continue;
                         lo = Math.Min(lo, h[n]);
                     }
                     if (lo != int.MaxValue && h[i] > lo + 1) h[i] = lo + 1;
@@ -630,7 +663,7 @@ namespace Wort.Generation
                     for (int dx = -2; dx <= 2; dx++)
                     {
                         int n = (z + dz) * W + x + dx;
-                        if (n >= 0 && n < N && seam[n]) hs = Math.Max(hs, h[n]);
+                        if (n >= 0 && n < N && seam[n] && !(near[n] >= 0 && clsBaked[near[n]] == TerraceField.Border)) hs = Math.Max(hs, h[n]);
                     }
                 if (hs != int.MinValue && h[i] < hs + 2) h[i] = hs + 2;
             }
@@ -791,6 +824,9 @@ namespace Wort.Generation
                 + $"，危险区 {R.Danger.Count}，奖励 {R.Rewards.Count}");
             return R;
         }
+
+        static int x0s(int i, int W) => i % W;
+        static int z0s(int i, int W) => i / W;
 
         static bool[] Invert(bool[] a, bool[] within)
         {
