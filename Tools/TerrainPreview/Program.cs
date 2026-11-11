@@ -23,7 +23,7 @@ namespace Wort.Tools
             int chunks = 5;
             int refresh = 6;
             bool random = false;
-            bool cliff = false; // 崖面外观原型（CliffDressing）
+            bool cliff = false; // 地形外观方案 B（CliffMesher）
             for (int i = 0; i < args.Length - 1; i++)
             {
                 if (args[i] == "--seed") seed = uint.Parse(args[i + 1]);

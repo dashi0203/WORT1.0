@@ -85,7 +85,7 @@ namespace Wort.Generation
             }
         }
 
-        static void EmitWater(RegionVoxels rv, MeshData mesh, int x, int y, int z, int ox, int oz)
+        internal static void EmitWater(RegionVoxels rv, MeshData mesh, int x, int y, int z, int ox, int oz)
         {
             for (int f = 0; f < 6; f++)
             {
@@ -99,7 +99,7 @@ namespace Wort.Generation
             }
         }
 
-        static void EmitSlope(RegionVoxels rv, MeshData mesh, VoxelMaterial m, int up, int x, int y, int z, int ox, int oz)
+        internal static void EmitSlope(RegionVoxels rv, MeshData mesh, VoxelMaterial m, int up, int x, int y, int z, int ox, int oz)
         {
             var side = VoxelPalette.Side(m);
             int lx = x - ox, lz = z - oz;

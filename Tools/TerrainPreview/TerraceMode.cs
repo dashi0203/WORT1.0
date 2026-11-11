@@ -27,7 +27,7 @@ namespace Wort.Tools
                     var mesh = ChunkMesher.Build(voxels, cx, cz);
                     triBase += mesh.TriangleCount;
                     int ox = cx * map.Settings.ChunkSize, oz = cz * map.Settings.ChunkSize;
-                    if (cliff) mesh = CliffDressing.Apply(mesh, map, ox, oz, seed);
+                    if (cliff) mesh = CliffMesher.Build(voxels, cx, cz, seed);
                     triDressed += mesh.TriangleCount;
                     meshes.Add((mesh, ox, oz));
                 }
@@ -75,7 +75,7 @@ namespace Wort.Tools
             var r = new ShearRenderer(map, meshes);
             r.Render(0, 0, map.W, map.H, 2.0, null).Save(Path.Combine(outDir, "shear_overview.png"));
             // 局部放大（8 px/m）：可玩区中部、北侧外圈山体
-            foreach (var (name, zx, zz, vw, ppm) in new[] { ("mid", map.W / 2, map.H / 2, 80, 8.0), ("north", map.W / 2, map.H - 40, 80, 8.0), ("close", map.W / 2 - 30, map.H - 52, 28, 24.0), ("mid16", map.W / 2 - 10, map.H / 2 + 10, 48, 16.0), ("border16", 70, map.H - 70, 48, 16.0) })
+            foreach (var (name, zx, zz, vw, ppm) in new[] { ("mid", map.W / 2, map.H / 2, 80, 8.0), ("north", map.W / 2, map.H - 40, 80, 8.0), ("close", map.W / 2 - 30, map.H - 52, 28, 24.0), ("mid16", map.W / 2 - 10, map.H / 2 + 10, 48, 16.0), ("border16", 70, map.H - 70, 48, 16.0), ("macro", map.W / 2 - 16, map.H - 49, 8, 96.0) })
             {
                 int hz = map.Height[map.Index(zx, zz)];
                 r.RenderView(zx - vw / 2, zz + hz - vw * 3 / 8, vw, vw * 3 / 4, ppm, null).Save(Path.Combine(outDir, $"zoom_{name}.png"));

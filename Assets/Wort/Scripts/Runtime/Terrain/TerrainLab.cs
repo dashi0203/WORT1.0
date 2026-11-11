@@ -34,7 +34,7 @@ namespace Wort.Terrain
         [SerializeField, Tooltip("Legacy8x8 = 旧 8×8 生成器；Terrace5x5 = 体素器第一步（TerraceField，5×5，种子 3 是负责人选定的测试种子）。")]
         private GeneratorKind generator = GeneratorKind.Legacy8x8;
 
-        [SerializeField, Tooltip("崖面外观原型（CliffDressing）：崖边削角、按层错开、顶沿装饰石。只改画面，碰撞仍用原来的 1m 体素网格。")]
+        [SerializeField, Tooltip("地形外观方案 B（CliffMesher）：立方体 + 外倒角 / 内倒角、泥土顶面、边缘一圈石头。只改画面，碰撞仍用原来的 1m 体素网格。")]
         private bool cliffDressing = true;
 
         private Material[] materials;
@@ -85,7 +85,7 @@ namespace Wort.Terrain
                 for (int cx = 0; cx < settings.ChunksX; cx++)
                 {
                     var data = ChunkMesher.Build(voxels, cx, cz);
-                    var visual = cliffDressing ? CliffDressing.Apply(data, map, cx * settings.ChunkSize, cz * settings.ChunkSize, useed) : data;
+                    var visual = cliffDressing ? CliffMesher.Build(voxels, cx, cz, useed) : data;
                     triangles += visual.TriangleCount;
                     var chunk = new GameObject($"Chunk {cx},{cz}") { hideFlags = HideFlags.DontSave };
                     chunk.transform.SetParent(root.transform, false);
