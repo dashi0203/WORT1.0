@@ -33,6 +33,8 @@ namespace Wort.Generation
     public static class TerraceField
     {
         public static System.Text.StringBuilder Debug;
+        /// <summary>荒原最低海拔（层）。</summary>
+        public const int MoorMinHeight = 8;
         public const byte Ground = 0, Plateau = 1, Plateau2 = 2, Basin = 3, Border = 4;
 
         public static RegionMap Generate(TerraceFieldSettings s) => Generate(s, out _);
@@ -250,7 +252,9 @@ namespace Wort.Generation
             for (int i = 0; i < N; i++)
                 if (cls[i] == Basin)
                 {
-                    int depth = Hash.Unit(Hash.Of((uint)basinLab[i], Hash.Derive(seed, "tf.bd"))) < 0.7 ? 2 : 3;
+                    // 南部高差缓：南边盆地深 2 层，往北逐渐有 3 层的
+                    double latB = (i / W - b0) / play; latB = latB < 0 ? 0 : (latB > 1 ? 1 : latB);
+                    int depth = Hash.Unit(Hash.Of((uint)basinLab[i], Hash.Derive(seed, "tf.bd"))) < 0.7 * latB ? 3 : 2;
                     h[i] = G[i] - depth;
                 }
             for (int i = 0; i < N; i++)
@@ -263,10 +267,15 @@ namespace Wort.Generation
             // 台地：每块高 2–4 层（小块偶尔 1 层）；边缘比外面至少高 2 层
             var platLab = Grid.Label(W, H, i => cls[i] == Plateau || cls[i] == Plateau2, (a, b) => true, out var platSizes);
             var platOff = new int[platSizes.Count];
+            var platZ = new double[platSizes.Count];
+            for (int i = 0; i < N; i++) if (platLab[i] >= 0) platZ[platLab[i]] += i / W;
             for (int c = 0; c < platSizes.Count; c++)
             {
                 double r = Hash.Unit(Hash.Of((uint)c, Hash.Derive(seed, "tf.po")));
-                platOff[c] = platSizes[c] < 150 ? (r < 0.4 ? 1 : (r < 0.8 ? 2 : 3)) : (r < 0.25 ? 2 : (r < 0.6 ? 3 : 4));
+                // 南部高差缓（负责人 2026-11-11）：南边台地 2–3 层，北边 3–4 层；小块 1–2 / 1–3 层
+                double lat = (platZ[c] / platSizes[c] - b0) / play; lat = lat < 0 ? 0 : (lat > 1 ? 1 : lat);
+                platOff[c] = platSizes[c] < 150 ? 1 + (int)Math.Floor(r * (1.6 + lat) ) : 2 + (int)Math.Floor(r * 0.999 + lat * 1.2);
+                if (platOff[c] > 4) platOff[c] = 4;
             }
             for (int i = 0; i < N; i++)
                 if (cls[i] == Plateau || cls[i] == Plateau2) h[i] = G[i] + platOff[platLab[i]];
@@ -277,7 +286,12 @@ namespace Wort.Generation
                     ForN8(i, W, H, n => { if (cls[n] == Ground || cls[n] == Basin) hi = Math.Max(hi, h[n]); });
                     if (hi != int.MinValue && h[i] < hi + 2) h[i] = hi + 2;
                 }
-            for (int i = 0; i < N; i++) if (cls[i] == Plateau2) h[i] += 3;
+            for (int i = 0; i < N; i++)
+                if (cls[i] == Plateau2)
+                {
+                    double lat2 = (i / W - b0) / play;
+                    h[i] += lat2 < 0.45 ? 2 : 3; // 南部二级台地只再高 2 层
+                }
             for (int i = 0; i < N; i++)
                 if (cls[i] == Plateau2)
                 {
@@ -341,8 +355,14 @@ namespace Wort.Generation
                     int i = z * W + x;
                     if (cls[i] == Border || swamp[i]) continue;
                     bool forest = bio[i] == (byte)BiomeId.MixedForest || bio[i] == (byte)BiomeId.Conifer;
-                    if (cls[i] == Plateau2 && fMoor.Sample(x, z) > -0.05) moorP[i] = true;
-                    else if (forest && fMoor.Sample(x, z) > 0.55) moorP[i] = true;
+                    // 荒原要有海拔：8 层以上才出现，越高越容易（南部地势低，荒原自然少）
+                    int hm = h[i];
+                    if (hm >= MoorMinHeight)
+                    {
+                        double ease = 0.12 * (hm - MoorMinHeight);
+                        if (cls[i] == Plateau2 && fMoor.Sample(x, z) > 0.1 - ease) moorP[i] = true;
+                        else if (forest && fMoor.Sample(x, z) > 0.5 - ease) moorP[i] = true;
+                    }
                     if ((forest || bio[i] == (byte)BiomeId.Human) && fWet.Sample(x, z) + (cls[i] == Basin ? 0.55 : 0) > 0.6) wetP[i] = true;
                 }
             // 斑块最小 18 格（负责人 2026-11-11）
