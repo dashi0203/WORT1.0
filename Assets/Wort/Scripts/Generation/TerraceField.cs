@@ -352,6 +352,30 @@ namespace Wort.Generation
                     double conBias = (cls[i] == Plateau || cls[i] == Plateau2) ? 0.15 : 0;
                     bio[i] = (byte)(fCon.Sample(x, z) + conBias > 0.55 - 0.6 * lat ? BiomeId.Conifer : BiomeId.MixedForest);
                 }
+            // 1b) 孤立的小块森林（混交林里的针叶林、针叶林里的混交林）长大到 150–300 格，按噪声不均匀地长，边缘不规则（负责人 2026-11-11）
+            GrowSmallPatches(bio, cls, W, H, b0, (byte)BiomeId.Conifer, (byte)BiomeId.MixedForest, Hash.Derive(seed, "tf.growC"));
+            GrowSmallPatches(bio, cls, W, H, b0, (byte)BiomeId.MixedForest, (byte)BiomeId.Conifer, Hash.Derive(seed, "tf.growM"));
+            // 针叶林 / 混交林交界平滑两遍（5×5 多数决），去掉锯齿和花边
+            for (int pass = 0; pass < 2; pass++)
+            {
+                var nb = (byte[])bio.Clone();
+                for (int z = 2; z < H - 2; z++)
+                    for (int x = 2; x < W - 2; x++)
+                    {
+                        int i = z * W + x;
+                        if (cls[i] == Border || (bio[i] != (byte)BiomeId.Conifer && bio[i] != (byte)BiomeId.MixedForest)) continue;
+                        int con = 0, mix = 0;
+                        for (int dz = -2; dz <= 2; dz++)
+                            for (int dx = -2; dx <= 2; dx++)
+                            {
+                                byte v = bio[i + dz * W + dx];
+                                if (v == (byte)BiomeId.Conifer) con++; else if (v == (byte)BiomeId.MixedForest) mix++;
+                            }
+                        if (con >= 15) nb[i] = (byte)BiomeId.Conifer; else if (mix >= 15) nb[i] = (byte)BiomeId.MixedForest;
+                    }
+                bio = nb;
+            }
+
             // 2) 小斑块：二级台地顶多荒原；森林里约 6% 小块荒原、约 5% 迷你湿地（低洼的盆地更容易是湿地）
             var moorP = new bool[N];
             var wetP = new bool[N];
@@ -638,6 +662,63 @@ namespace Wort.Generation
             {
                 double tk = k[a]; k[a] = k[b]; k[b] = tk;
                 int tv = v[a]; v[a] = v[b]; v[b] = tv;
+            }
+        }
+
+        /// <summary>
+        /// 孤立小斑块（biome = patch，周围是 host）面积小于 150 格时，从斑块边缘按噪声门限向 host 里生长，
+        /// 直到 150–300 格（每块随机）。噪声门限让边缘长得不均匀，形状不规则。不长进外圈。
+        /// </summary>
+        static void GrowSmallPatches(byte[] bio, byte[] cls, int W, int H, int b0, byte patch, byte host, uint seed)
+        {
+            int N = W * H;
+            var lab = Grid.Label(W, H, i => bio[i] == patch && cls[i] != Border, (a, b) => true, out var sizes);
+            var noise = new Fbm(seed, 14, 2);
+            for (int c = 0; c < sizes.Count; c++)
+            {
+                if (sizes[c] >= 150) continue;
+                int target = 150 + (int)(Hash.Unit(Hash.Of((uint)c, seed)) * 150);
+                var frontier = new List<int>();
+                for (int i = 0; i < N; i++) if (lab[i] == c) frontier.Add(i);
+                int area = sizes[c];
+                // 只有四周全是 host（或本斑块）的才算孤立小块
+                bool isolated = true;
+                foreach (var i in frontier)
+                {
+                    int x = i % W, z = i / W;
+                    for (int d = 0; d < 4 && isolated; d++)
+                    {
+                        int nx = x + Grid.DX4[d], nz = z + Grid.DZ4[d];
+                        if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
+                        int n = nz * W + nx;
+                        if (lab[n] != c && bio[n] != host && cls[n] != Border) isolated = false;
+                    }
+                    if (!isolated) break;
+                }
+                if (!isolated) continue;
+                double gate = 0.15;
+                for (int round = 0; round < 60 && area < target; round++)
+                {
+                    var next = new List<int>();
+                    foreach (var i in frontier)
+                    {
+                        int x = i % W, z = i / W;
+                        for (int d = 0; d < 4; d++)
+                        {
+                            int nx = x + Grid.DX4[d], nz = z + Grid.DZ4[d];
+                            if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
+                            int n = nz * W + nx;
+                            if (bio[n] != host || cls[n] == Border || IsBorderChunk(n, W, H, b0)) continue;
+                            if (noise.Sample(nx, nz) < gate) continue;
+                            bio[n] = patch; lab[n] = c; area++; next.Add(n);
+                            if (area >= target) break;
+                        }
+                        if (area >= target) break;
+                    }
+                    if (next.Count == 0) { gate -= 0.15; next = frontier; }
+                    else frontier.AddRange(next);
+                    if (gate < -1.2) break;
+                }
             }
         }
 
