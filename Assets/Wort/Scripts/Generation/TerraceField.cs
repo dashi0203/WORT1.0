@@ -77,7 +77,11 @@ namespace Wort.Generation
 
             // ---------- 沼泽大区（测试用：可玩区西南一片，边缘有机）。以后由规划器的 Biome 大区给出 ----------
             double play = W - 2.0 * b0;
-            var fSw = new Fbm(Hash.Derive(seed, "tf.swamp"), 30, 3);
+            // 小而不规则（负责人 2026-11-11：大片沼泽没用）：中心约 30m 的衰减 + 扭曲噪声 + 细噪声，边缘分叉、带零星卫星小块
+            var fSw = new Fbm(Hash.Derive(seed, "tf.swamp"), 22, 3);
+            var fSwF = new Fbm(Hash.Derive(seed, "tf.swampF"), 9, 2);
+            var fSwX = new Fbm(Hash.Derive(seed, "tf.swampX"), 30, 2);
+            var fSwZ = new Fbm(Hash.Derive(seed, "tf.swampZ"), 30, 2);
             double scx = b0 + play * (0.16 + 0.12 * Hash.Unit(Hash.Derive(seed, "tf.swx")));
             double scz = b0 + play * (0.18 + 0.12 * Hash.Unit(Hash.Derive(seed, "tf.swz")));
             var swamp = new bool[N];
@@ -86,10 +90,12 @@ namespace Wort.Generation
                 {
                     int i = z * W + x;
                     if (cls[i] == Border) continue;
-                    double dx = x - scx, dz = z - scz;
-                    swamp[i] = Math.Sqrt(dx * dx + dz * dz) < 46 + 18 * fSw.Sample(x, z);
+                    double wx = x + 16 * fSwX.Sample(x, z), wz = z + 16 * fSwZ.Sample(x, z);
+                    double dx = wx - scx, dz = wz - scz;
+                    double v = 1 - Math.Sqrt(dx * dx + dz * dz) / 32.0 + 0.6 * fSw.Sample(wx, wz) + 0.25 * fSwF.Sample(x, z);
+                    swamp[i] = v > 0.35;
                 }
-            swamp = Grid.RemoveSmall(Grid.OpenRound(swamp, W, H, 3.0), W, H, 400);
+            swamp = Grid.RemoveSmall(Grid.OpenRound(swamp, W, H, 2.0), W, H, 60);
 
             // ---------- 台地候选：域扭曲 + 大中两层噪声，按覆盖率取阈值 ----------
             var fWx = new Fbm(Hash.Derive(seed, "tf.wx"), 70, 2);
@@ -443,6 +449,8 @@ namespace Wort.Generation
             map.Stats["plateausWithoutRamp(≥" + s.MinRampedPlateau + "格)"] = failedPlateaus;
             map.Stats["riverDrops"] = map.Drops.Count;
             map.Stats["swampBiomePercent"] = swampCells * 100 / playArea;
+            int swR = 0; for (int i = 0; i < N; i++) if (swamp[i]) swR++;
+            map.Stats["swampRegionPercent"] = swR * 100 / playArea;
             map.Stats["floodplainCells"] = floodCells;
             map.Stats["pondCells"] = pondCells;
             return map;
