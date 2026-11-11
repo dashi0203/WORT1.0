@@ -252,7 +252,7 @@ namespace Wort.Generation
             }
         }
 
-        /// <summary>沿崖顶边放装饰石（占位方块）。每条崖顶边（本格高、邻格低 ≥ 1 层）按风格密度抽签。</summary>
+        /// <summary>沿崖顶边放装饰石（占位方块，露出顶面 ≤ 0.2m）。每条崖顶边（本格高、邻格低 ≥ 1 层）按风格密度抽签。</summary>
         static void AddRimStones(MeshData m, RegionMap map, int ox, int oz, uint seed)
         {
             int size = map.Settings.ChunkSize;
@@ -277,7 +277,10 @@ namespace Wort.Generation
                         // 石头中心：靠这条边、略探出去
                         float cxs = lx + 0.5f + Grid.DX4[d] * (0.5f - s * 0.35f) + (Grid.DX4[d] == 0 ? along : 0);
                         float czs = lz + 0.5f + Grid.DZ4[d] * (0.5f - s * 0.35f) + (Grid.DZ4[d] == 0 ? along : 0);
-                        Stone(m, cxs, h, czs, s * 0.5f, hgt * 0.5f, s * 0.45f, r);
+                        // 大半埋进崖边：顶面只露出 0.05–0.2m，往下包住崖沿
+                        float above = 0.05f + 0.15f * (hgt / (s * 0.75f));
+                        float below = s * 0.6f;
+                        Stone(m, cxs, h - below, czs, s * 0.5f, (above + below) * 0.5f, s * 0.45f, r);
                     }
                 }
         }
