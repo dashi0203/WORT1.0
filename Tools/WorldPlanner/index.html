@@ -18,15 +18,15 @@
  </header>
  <div class="workspace">
   <aside class="sidebar left">
-   <div class="section"><div class="sectionhead">绘制工具 <span class="pill">V / B / R / C / L / P / M / H</span></div><div class="modegrid" id="modeGrid">
+   <div class="section"><div class="sectionhead">绘制工具 <span class="pill">V / B / R / C / L / T / P / M / H</span></div><div class="modegrid" id="modeGrid">
     <button data-mode="select" class="active">↖ 选择 <small>V</small></button><button data-mode="pan">✋ 平移 <small>H</small></button>
     <button data-mode="biome">▧ 生态笔刷 <small>B</small></button><button data-mode="mark">▣ Chunk 标记 <small>M</small></button>
     <button data-mode="river">〰 河流 <small>R</small></button><button data-mode="canyon">⌁ 峡谷 <small>C</small></button>
-    <button data-mode="road">⌁ 道路 <small>L</small></button><button data-mode="pin">◎ 关键地点 <small>P</small></button>
+    <button data-mode="road">⌁ 路线 <small>L</small></button><button data-mode="height">▱ 台地/盆地 <small>T</small></button><button data-mode="pin">◎ 关键地点 <small>P</small></button>
    </div></div>
    <div class="section"><div class="sectionhead">当前工具设置</div><div id="toolOptions"></div></div>
    <div class="section"><div class="sectionhead">图层可见性</div><div id="visibilityOptions"></div></div>
-   <div class="section"><div class="sectionhead">操作提示</div><p class="hint" style="margin:0">滚轮缩放；空格 / 鼠标中键拖动平移。选择模式可拖拽图钉；<span class="kbd">Delete</span> 删除选中对象；<span class="kbd">Ctrl+Z</span> 撤销。支持鼠标与触屏。</p></div>
+   <div class="section"><div class="sectionhead">操作提示</div><p class="hint" style="margin:0">滚轮缩放；空格 / 鼠标中键拖动平移。选择模式可拖动图钉和折线顶点；<span class="kbd">Delete</span> 删除选中对象；<span class="kbd">Ctrl+Z</span> 撤销。支持鼠标与触屏。</p></div>
   </aside>
   <main class="mapregion">
    <div class="maptop"><div class="mapstats"><strong id="mapTitle">16 × 16 Chunk</strong><span id="mapMeta">1024 × 1024 m</span><span id="mapCount">0 个关键地点</span></div><div class="mapcontrols"><button class="iconbtn" id="zoomOut" title="缩小">−</button><button class="iconbtn" id="zoomIn" title="放大">+</button><button id="zoomFit" title="适配画布">适应</button></div></div>
@@ -36,7 +36,7 @@
   <aside class="sidebar right">
    <div class="section"><div class="sectionhead">世界规模</div><div class="inline-input"><label>横向 Chunk<input id="worldWidth" type="number" min="4" max="48" step="1" value="16"></label><label>纵向 Chunk<input id="worldHeight" type="number" min="4" max="48" step="1" value="16"></label></div><div class="rowbtns" style="margin-top:9px"><button id="resizeBtn" class="primary">应用尺寸</button><button id="borderBtn" title="给最外围一圈 Chunk 添加不可通行标记">外围禁行</button><button id="transitionBtn" title="给第二圈 Chunk 添加过渡标记">第二圈过渡</button></div><p class="hint">尺寸以 Chunk 为单位，固定每块 64×64m。缩小世界会裁剪范围外的规划数据。</p></div>
    <div class="section"><div class="sectionhead">旅行尺度</div><div class="inline-input"><label>步行速度（m/s）<input id="moveSpeed" type="number" min="0.1" max="30" step="0.1" value="4"></label><label>游戏一天（现实分钟）<input id="dayLength" type="number" min="1" max="1440" step="1" value="24"></label></div><div id="travelStats" style="margin-top:11px"></div><p class="hint">根据规划道路的真实折线长度计算距离；不含战斗、地形阻力与停顿。</p></div>
-   <div class="section"><div class="sectionhead">对象属性</div><div id="inspector"><div class="inspectempty">选择地图上的关键地点、道路、河流或峡谷后，在这里修改属性。</div></div></div>
+   <div class="section"><div class="sectionhead">对象属性</div><div id="inspector"><div class="inspectempty">选择地图上的关键地点、路线、河流、峡谷或高差区域后，在这里修改属性。</div></div></div>
    <div class="section"><div class="sectionhead">项目文件</div><p class="hint" style="margin-top:0">所有规划数据保存在此浏览器内，可导出 JSON 交给 Claude 或生成器读取。为防止浏览器缓存清理造成丢失，请定期导出 JSON。</p><button class="danger" id="resetBtn" style="margin-top:10px;width:100%">清空当前规划</button></div>
   </aside>
  </div>
@@ -44,160 +44,257 @@
 <script>
 (()=>{
 'use strict';
-const CHUNK=64, STORAGE='wort.world.planner.v1';
+const CHUNK=64, CELL=4, STORAGE='wort.world.planner.v2', OLD_STORAGE='wort.world.planner.v1';
 const BIOMES={human:{label:'人类区',color:'#8ca77e'},wetland:{label:'湿地 / 沼泽',color:'#577f7b'},forest:{label:'森林 / 混交林',color:'#4c8066'},conifer:{label:'针叶林',color:'#38665d'},mountain:{label:'山地',color:'#93969a'},moorland:{label:'Moorland / 荒原',color:'#a08b9f'},coast:{label:'海岸区',color:'#d1b98d'}};
 const MARKERS={random:{label:'随机 Chunk',color:'#b1a2e4'},fixed:{label:'固定 Chunk',color:'#96c7a9'},transition:{label:'过渡 Chunk',color:'#e6b070'},blocked:{label:'不可通行',color:'#737b89'}};
 const PIN_TYPES={settlement:{label:'城镇 / 村庄',color:'#ebbf81'},home:{label:'住所 / 营地',color:'#b8deae'},dungeon:{label:'副本入口',color:'#df938b'},landmark:{label:'奇观 / 地标',color:'#91c9d7'},resource:{label:'资源区域',color:'#c6b2d9'},other:{label:'其他',color:'#d5d5ba'}};
-const $=id=>document.getElementById(id);const svg=$('map');
-const blank=()=>({width:16,height:16,speed:4,dayMinutes:24,tiles:{},strokes:[],roads:[],places:[]});
-const ui={mode:'select',biome:'forest',biomeSize:1,marker:'random',strokeWidth:12,roadType:'trail',oneWay:false,pinShape:'circle',pinType:'landmark',pinRadius:40,pinName:'新地点',visible:{grid:true,markers:true,strokes:true,roads:true,places:true},selected:null,draft:null,preview:null,view:null,interaction:null,space:false};
+const $=id=>document.getElementById(id), svg=$('map');
+const blank=()=>({width:16,height:16,speed:4,dayMinutes:24,tiles:{},biomeMarks:[],strokes:[],roads:[],places:[],heightZones:[]});
+const ui={mode:'select',biome:'forest',biomeSize:48,marker:'random',strokeWidth:12,roadType:'trail',routeStage:'draft',oneWay:false,heightType:'plateau',heightAmount:6,heightName:'新高差区域',pinShape:'circle',pinType:'landmark',pinRadius:40,pinName:'新地点',visible:{grid:true,biomes:true,markers:true,hydrography:true,height:true,draftRoutes:true,roads:true,places:true},selected:null,draft:null,preview:null,view:null,interaction:null,space:false};
 let state=blank(),undoStack=[],redoStack=[];
-const limit=(v,a,b)=>Math.max(a,Math.min(b,v));
-const num=(v,fallback,a,b)=>{const n=Number(v);return Number.isFinite(n)?limit(n,a,b):fallback};
-const id=()=>Math.random().toString(36).slice(2,10)+Date.now().toString(36);
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)), number=(v,f,a,b)=>{const n=Number(v);return Number.isFinite(n)?clamp(n,a,b):f};
+const uid=()=>Math.random().toString(36).slice(2,10)+Date.now().toString(36);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const clone=o=>JSON.parse(JSON.stringify(o));
-const key=(x,y)=>`${x},${y}`;
-const isInside=(x,y)=>x>=0&&y>=0&&x<state.width*CHUNK&&y<state.height*CHUNK;
-const selected=()=>{if(!ui.selected)return null;const {kind,id:uid}=ui.selected;return (kind==='pin'?state.places:kind==='road'?state.roads:state.strokes).find(x=>x.id===uid)||null};
-function normalize(raw){if(!raw||typeof raw!=='object')throw Error('不是有效的地图 JSON');if(raw.schema&&raw.schema!=='wort-world-layout')throw Error('不支持的文件类型');
- const d=blank();d.width=Math.round(num(raw.world?.columns??raw.width,16,4,48));d.height=Math.round(num(raw.world?.rows??raw.height,16,4,48));d.speed=num(raw.planning?.speedMps??raw.speed,4,.1,30);d.dayMinutes=num(raw.planning?.dayMinutes??raw.dayMinutes,24,1,1440);
- const tiles=Array.isArray(raw.chunks)?raw.chunks:Object.entries(raw.tiles||{}).map(([k,v])=>({...v,x:+k.split(',')[0],y:+k.split(',')[1]}));
- for(const t of tiles.slice(0,2400)){if(!t||!Number.isInteger(t.x)||!Number.isInteger(t.y)||t.x<0||t.y<0||t.x>=d.width||t.y>=d.height)continue;const biome=BIOMES[t.biome]?t.biome:null,zone=MARKERS[t.zone]?t.zone:null;if(biome||zone)d.tiles[key(t.x,t.y)]={biome,zone};}
- const usedIds=new Set();const safeId=v=>{let result=typeof v==='string'&&/^[a-zA-Z0-9_-]{1,90}$/.test(v)?v:id();while(usedIds.has(result))result=id();usedIds.add(result);return result;};
- const safePoint=p=>Array.isArray(p)&&p.length>=2&&Number.isFinite(+p[0])&&Number.isFinite(+p[1])?[limit(+p[0],0,d.width*CHUNK),limit(+p[1],0,d.height*CHUNK)]:null;
- const feat=raw.features||raw;
- d.places=(Array.isArray(feat.places)?feat.places:[]).slice(0,1200).map(p=>({id:safeId(p.id),name:String(p.name||'未命名').slice(0,70),category:PIN_TYPES[p.category]?p.category:'other',shape:p.shape==='square'?'square':'circle',radius:num(p.radius,35,6,400),x:num(p.x,0,0,d.width*CHUNK),y:num(p.y,0,0,d.height*CHUNK)}));
- d.roads=(Array.isArray(feat.roads)?feat.roads:[]).slice(0,1200).map(r=>({id:safeId(r.id),name:String(r.name||'道路').slice(0,70),type:r.type==='main'?'main':'trail',oneWay:!!r.oneWay,points:(Array.isArray(r.points)?r.points:[]).slice(0,5000).map(safePoint).filter(Boolean)})).filter(r=>r.points.length>=2);
- d.strokes=(Array.isArray(feat.strokes)?feat.strokes:[]).slice(0,1800).map(s=>({id:safeId(s.id),kind:s.kind==='canyon'?'canyon':'river',width:num(s.width,12,2,200),points:(Array.isArray(s.points)?s.points:[]).slice(0,5000).map(safePoint).filter(Boolean)})).filter(s=>s.points.length>=1);
- return d;}
-function toJSON(){return {schema:'wort-world-layout',version:1,chunkMeters:CHUNK,world:{columns:state.width,rows:state.height},planning:{speedMps:state.speed,dayMinutes:state.dayMinutes},chunks:Object.entries(state.tiles).map(([k,v])=>{const [x,y]=k.split(',').map(Number);return {x,y,biome:v.biome||null,zone:v.zone||null}}).sort((a,b)=>a.y-b.y||a.x-b.x),features:{places:state.places,roads:state.roads,strokes:state.strokes}};}
-function save(){try{localStorage.setItem(STORAGE,JSON.stringify(toJSON()));$('saveStatus').textContent='已自动保存在本地';}catch(e){$('saveStatus').textContent='本地保存受限，请导出 JSON';}}
+const copy=o=>JSON.parse(JSON.stringify(o));
+const key=(x,y)=>`${x},${y}`, dims=()=>({w:state.width*CHUNK,h:state.height*CHUNK});
+const inWorld=p=>p.x>=0&&p.y>=0&&p.x<state.width*CHUNK&&p.y<state.height*CHUNK;
+const near=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
+const selected=()=>{if(!ui.selected)return null;const arr={pin:state.places,road:state.roads,stroke:state.strokes,height:state.heightZones}[ui.selected.kind];return arr?.find(x=>x.id===ui.selected.id)||null};
+const safePoints=(points,d)=>Array.isArray(points)?points.slice(0,6000).filter(p=>Array.isArray(p)&&p.length>=2&&Number.isFinite(+p[0])&&Number.isFinite(+p[1])).map(p=>[number(p[0],0,0,d.width*CHUNK),number(p[1],0,0,d.height*CHUNK)]):[];
+function normalize(raw){
+ if(!raw||typeof raw!=='object'||(raw.schema&&raw.schema!=='wort-world-layout'))throw Error('不是支持的地图 JSON');
+ if(raw.version>2)throw Error('当前工具不支持更新版本的数据');
+ const d=blank(), layers=raw.layers||{}, feat=raw.features||raw;
+ d.width=Math.round(number(raw.world?.columns??raw.width,16,4,48));d.height=Math.round(number(raw.world?.rows??raw.height,16,4,48));
+ d.speed=number(raw.planning?.speedMps??raw.speed,4,.1,30);d.dayMinutes=number(raw.planning?.dayMinutes??raw.dayMinutes,24,1,1440);
+ const used=new Set(), safeId=v=>{let x=typeof v==='string'&&/^[a-zA-Z0-9_-]{1,90}$/.test(v)?v:uid();while(used.has(x))x=uid();used.add(x);return x};
+ const old=Array.isArray(raw.chunks)?raw.chunks:Object.entries(raw.tiles||{}).map(([k,v])=>({...v,x:+k.split(',')[0],y:+k.split(',')[1]}));
+ const chunks=Array.isArray(layers.chunkZones)?layers.chunkZones:old;
+ for(const t of chunks.slice(0,2500)){if(!t||!Number.isInteger(t.x)||!Number.isInteger(t.y)||t.x<0||t.y<0||t.x>=d.width||t.y>=d.height)continue;const zone=MARKERS[t.zone]?t.zone:null;if(zone)d.tiles[key(t.x,t.y)]={zone};}
+ const marks=layers.biomes?.marks;
+ if(Array.isArray(marks)){
+  d.biomeMarks=marks.slice(0,12000).map(m=>{
+   const biome=BIOMES[m.biome]?m.biome:null;
+   if(m.shape==='rect')return{id:safeId(m.id),shape:'rect',biome,x:number(m.x,0,0,d.width*CHUNK),y:number(m.y,0,0,d.height*CHUNK),w:number(m.w,64,0,d.width*CHUNK),h:number(m.h,64,0,d.height*CHUNK)};
+   return{id:safeId(m.id),shape:'stroke',biome,width:number(m.width,48,4,256),points:safePoints(m.points,d)};
+  }).filter(m=>m.shape==='rect'||m.points.length>0);
+ }else{
+  // v1 migration: convert old Chunk-filled biome cells into independent hard-edge vector rectangles.
+  for(const t of old){if(Number.isInteger(t.x)&&Number.isInteger(t.y)&&t.x>=0&&t.y>=0&&t.x<d.width&&t.y<d.height&&BIOMES[t.biome])d.biomeMarks.push({id:safeId(),shape:'rect',biome:t.biome,x:t.x*CHUNK,y:t.y*CHUNK,w:CHUNK,h:CHUNK});}
+ }
+ d.places=(Array.isArray(layers.places)?layers.places:feat.places||[]).slice(0,1200).filter(Boolean).map(p=>({id:safeId(p.id),name:String(p.name||'未命名').slice(0,70),category:PIN_TYPES[p.category]?p.category:'other',shape:p.shape==='square'?'square':'circle',radius:number(p.radius,40,6,400),x:number(p.x,0,0,d.width*CHUNK),y:number(p.y,0,0,d.height*CHUNK)}));
+ const hydro=layers.hydrography;
+ let rawStrokes=hydro?[...(hydro.rivers||[]).map(s=>({...s,kind:'river'})),...(hydro.canyons||[]).map(s=>({...s,kind:'canyon'}))]:(feat.strokes||[]);
+ d.strokes=rawStrokes.slice(0,1800).filter(Boolean).map(s=>({id:safeId(s.id),kind:s.kind==='canyon'?'canyon':'river',width:number(s.width,12,2,200),points:safePoints(s.points,d)})).filter(s=>s.points.length>0);
+ let routes=layers.routes?[...(layers.routes.draft||[]).map(r=>({...r,stage:'draft'})),...(layers.routes.final||[]).map(r=>({...r,stage:'final'}))]:(feat.roads||[]);
+ d.roads=routes.slice(0,1200).filter(Boolean).map(r=>({id:safeId(r.id),name:String(r.name||'路线').slice(0,70),type:r.type==='main'?'main':'trail',stage:r.stage==='draft'?'draft':'final',oneWay:!!r.oneWay,points:safePoints(r.points,d)})).filter(r=>r.points.length>=2);
+ d.heightZones=(layers.elevationZones||[]).slice(0,1000).filter(Boolean).map(z=>({id:safeId(z.id),name:String(z.name||'高差区域').slice(0,70),kind:z.kind==='basin'?'basin':'plateau',offsetMeters:number(z.offsetMeters,z.kind==='basin'?-6:6,-96,96),points:safePoints(z.points,d)})).filter(z=>z.points.length>=3);
+ return d;
+}
+// Exact categorical raster derived from vector hard-edge brush marks at 4 m per cell.
+// No blending, smoothing, falloff, noise or outlines; marks are ordered and later paint wins.
+function buildBiomeMask(){
+ const cols=state.width*CHUNK/CELL,rows=state.height*CHUNK/CELL,data=new Uint8Array(cols*rows);
+ const setSegment=(a,b,r,v)=>{
+  const minX=Math.max(0,Math.floor((Math.min(a[0],b[0])-r)/CELL)),maxX=Math.min(cols-1,Math.ceil((Math.max(a[0],b[0])+r)/CELL));
+  const minY=Math.max(0,Math.floor((Math.min(a[1],b[1])-r)/CELL)),maxY=Math.min(rows-1,Math.ceil((Math.max(a[1],b[1])+r)/CELL));
+  const vx=b[0]-a[0],vy=b[1]-a[1],len2=vx*vx+vy*vy,r2=r*r;
+  for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++){
+   const px=(x+.5)*CELL,py=(y+.5)*CELL;
+   const t=len2?clamp(((px-a[0])*vx+(py-a[1])*vy)/len2,0,1):0;
+   const dx=px-a[0]-t*vx,dy=py-a[1]-t*vy;
+   if(dx*dx+dy*dy<=r2)data[y*cols+x]=v;
+  }
+ };
+ for(const m of state.biomeMarks){const index=Object.keys(BIOMES).indexOf(m.biome),v=index<0?0:index+1;
+  if(m.shape==='rect'){
+   const x0=Math.max(0,Math.ceil(m.x/CELL-.5)),x1=Math.min(cols,Math.ceil((m.x+m.w)/CELL-.5));
+   const y0=Math.max(0,Math.ceil(m.y/CELL-.5)),y1=Math.min(rows,Math.ceil((m.y+m.h)/CELL-.5));
+   for(let y=y0;y<y1;y++)data.fill(v,y*cols+x0,y*cols+x1);
+  }else if(m.points?.length){const rad=m.width/2;
+   if(m.points.length===1)setSegment(m.points[0],m.points[0],rad,v);
+   else for(let j=1;j<m.points.length;j++)setSegment(m.points[j-1],m.points[j],rad,v);
+  }
+ }
+ const runs=[];let last=-1,count=0;
+ for(const v of data){if(v!==last){if(count)runs.push([last,count]);last=v;count=1;}else count++;}
+ if(count)runs.push([last,count]);
+ return{cellMeters:CELL,columns:cols,rows,encoding:'rle-row-major',codebook:['unpainted',...Object.keys(BIOMES)],runs};
+}
+function toJSON(withRaster=false){return{schema:'wort-world-layout',version:2,chunkMeters:CHUNK,world:{columns:state.width,rows:state.height},planning:{speedMps:state.speed,dayMinutes:state.dayMinutes},layers:{
+ biomes:{model:'hard-edge-categorical-mask',marks:state.biomeMarks,...(withRaster?{raster:buildBiomeMask()}: {})},
+ chunkZones:Object.entries(state.tiles).map(([k,v])=>{const [x,y]=k.split(',').map(Number);return{x,y,zone:v.zone}}).sort((a,b)=>a.y-b.y||a.x-b.x),
+ places:state.places,
+ hydrography:{rivers:state.strokes.filter(s=>s.kind==='river'),canyons:state.strokes.filter(s=>s.kind==='canyon')},
+ elevationZones:state.heightZones,
+ routes:{draft:state.roads.filter(r=>r.stage==='draft'),final:state.roads.filter(r=>r.stage==='final')}
+ }};}
+function save(){try{localStorage.setItem(STORAGE,JSON.stringify(toJSON()));$('saveStatus').textContent='已自动保存在本地';}catch(e){$('saveStatus').textContent='本地存储受限，请导出 JSON';}}
 function checkpoint(){undoStack.push(JSON.stringify(state));if(undoStack.length>80)undoStack.shift();redoStack=[];}
 function commit(){save();render();}
 function undo(){if(!undoStack.length)return;redoStack.push(JSON.stringify(state));state=JSON.parse(undoStack.pop());ui.selected=null;ui.draft=null;resetView(false);commit();}
 function redo(){if(!redoStack.length)return;undoStack.push(JSON.stringify(state));state=JSON.parse(redoStack.pop());ui.selected=null;ui.draft=null;resetView(false);commit();}
-function resetView(fit=true){if(fit||!ui.view){const margin=CHUNK*.65;ui.view={x:-margin,y:-margin,w:state.width*CHUNK+margin*2,h:state.height*CHUNK+margin*2};}else{const v=ui.view;const maxw=state.width*CHUNK+CHUNK*4;v.w=limit(v.w,CHUNK*1.5,maxw);v.h=limit(v.h,CHUNK*1.5,maxw*state.height/state.width);}}
+function resetView(fit=true){if(fit||!ui.view){const margin=CHUNK*.65;ui.view={x:-margin,y:-margin,w:state.width*CHUNK+2*margin,h:state.height*CHUNK+2*margin};}else{const v=ui.view;v.w=clamp(v.w,CHUNK*1.5,(state.width+4)*CHUNK);v.h=clamp(v.h,CHUNK*1.5,(state.height+4)*CHUNK);}}
 function setView(){const v=ui.view;svg.setAttribute('viewBox',`${v.x} ${v.y} ${v.w} ${v.h}`);}
-function toWorld(e){const p=svg.createSVGPoint();p.x=e.clientX;p.y=e.clientY;const ctm=svg.getScreenCTM();if(!ctm)return {x:0,y:0};const q=p.matrixTransform(ctm.inverse());return{x:q.x,y:q.y};}
-function posChunk(p){return {x:Math.floor(p.x/CHUNK),y:Math.floor(p.y/CHUNK)};}
-function clampPosition(p){return {x:limit(p.x,0,state.width*CHUNK),y:limit(p.y,0,state.height*CHUNK)};}
-function el(tag,attributes,text){const n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v]of Object.entries(attributes||{}))n.setAttribute(k,v);if(text!=null)n.textContent=text;return n;}
-function pathD(points){return points.map((p,i)=>(i?'L':'M')+p[0].toFixed(2)+' '+p[1].toFixed(2)).join(' ');}
-function lineLength(points){let a=0;for(let i=1;i<points.length;i++)a+=Math.hypot(points[i][0]-points[i-1][0],points[i][1]-points[i-1][1]);return a;}
+function toWorld(e){const p=svg.createSVGPoint();p.x=e.clientX;p.y=e.clientY;const ctm=svg.getScreenCTM();if(!ctm)return{x:0,y:0};const q=p.matrixTransform(ctm.inverse());return{x:q.x,y:q.y};}
+function posChunk(p){return{x:Math.floor(p.x/CHUNK),y:Math.floor(p.y/CHUNK)};}
+function bound(p){return{x:clamp(p.x,0,state.width*CHUNK),y:clamp(p.y,0,state.height*CHUNK)};}
+const pt=p=>[+p.x.toFixed(1),+p.y.toFixed(1)];
+const pathD=points=>points.map((p,i)=>(i?'L':'M')+p[0].toFixed(2)+' '+p[1].toFixed(2)).join(' ');
+const polyStr=points=>points.map(p=>p.join(',')).join(' ');
+function lineLength(points){let a=0;for(let i=1;i<points.length;i++)a+=near(points[i-1],points[i]);return a;}
 function prettyTime(s){s=Math.round(s);return s>=60?`${Math.floor(s/60)}分${String(s%60).padStart(2,'0')}秒`:`${s}秒`;}
 function travel(m){return prettyTime(m/state.speed);}
-function formattedGameTime(m){const gm=m/state.speed/60*(1440/state.dayMinutes);const h=Math.floor(gm/60),min=Math.round(gm%60);return `${h+Math.floor(min/60)}时${String(min%60).padStart(2,'0')}分`;}
-function updateMeta(){$('mapTitle').textContent=`${state.width} × ${state.height} Chunk`;$('mapMeta').textContent=`${state.width*CHUNK} × ${state.height*CHUNK} m`;$('mapCount').textContent=`${state.places.length} 地点 · ${state.roads.length} 道路 · ${Object.keys(state.tiles).filter(k=>state.tiles[k].zone==='random').length} 随机块`;
+function gameTime(m){const g=Math.round(m/state.speed/state.dayMinutes*24);return `${Math.floor(g/60)}时${String(g%60).padStart(2,'0')}分`;}
+function updateMeta(){const {w,h}=dims();$('mapTitle').textContent=`${state.width} × ${state.height} Chunk`;$('mapMeta').textContent=`${w} × ${h} m`;$('mapCount').textContent=`${state.places.length} 地点 · ${state.roads.length} 路线 · ${state.heightZones.length} 高差区`;
  $('worldWidth').value=state.width;$('worldHeight').value=state.height;$('moveSpeed').value=state.speed;$('dayLength').value=state.dayMinutes;
- $('travelStats').innerHTML=`<div class="metric"><span>横穿世界（直线）</span><strong>${travel(state.width*CHUNK)}</strong></div><div class="metric"><span>纵穿世界（直线）</span><strong>${travel(state.height*CHUNK)}</strong></div><div class="metric"><span>横穿 · 游戏内</span><strong>${formattedGameTime(state.width*CHUNK)}</strong></div>`;
+ $('travelStats').innerHTML=`<div class="metric"><span>横穿世界</span><strong>${travel(w)}</strong></div><div class="metric"><span>纵穿世界</span><strong>${travel(h)}</strong></div><div class="metric"><span>横穿 · 游戏内</span><strong>${gameTime(w)}</strong></div><div class="metric"><span>单 Chunk</span><strong>${travel(CHUNK)}</strong></div>`;
  $('undoBtn').disabled=!undoStack.length;$('redoBtn').disabled=!redoStack.length;
 }
-function renderMap(){const W=state.width*CHUNK,H=state.height*CHUNK;const parts=[];
- parts.push(`<defs><pattern id="blockedHatch" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="14" stroke="#9ea8af" stroke-opacity=".3" stroke-width="7"/></pattern><pattern id="randomDots" width="11" height="11" patternUnits="userSpaceOnUse"><circle cx="3" cy="3" r="1.6" fill="#c2b4ee" fill-opacity=".8"/></pattern></defs>`);
- parts.push(`<rect x="0" y="0" width="${W}" height="${H}" fill="#273434" stroke="#778b84" stroke-width="3"/>`);
- for(let y=0;y<state.height;y++)for(let x=0;x<state.width;x++){const t=state.tiles[key(x,y)]||{};const xx=x*CHUNK,yy=y*CHUNK;parts.push(`<rect x="${xx}" y="${yy}" width="64" height="64" fill="${BIOMES[t.biome]?.color||'#293939'}" />`);
- if(ui.visible.markers&&t.zone){const z=t.zone,fill=MARKERS[z].color; if(z==='blocked')parts.push(`<rect x="${xx}" y="${yy}" width="64" height="64" fill="#222a30" fill-opacity=".72"/><rect x="${xx}" y="${yy}" width="64" height="64" fill="url(#blockedHatch)"/>`);
+function vertexHandles(parts,kind,ob){if(!ui.selected||ui.selected.kind!==kind||ui.selected.id!==ob.id)return;
+ const len=ob.points.length,stride=Math.max(1,Math.ceil(len/80));
+ for(let i=0;i<len;i+=stride){const p=ob.points[i];parts.push(`<circle data-object="${kind}" data-id="${esc(ob.id)}" data-vertex="${i}" cx="${p[0]}" cy="${p[1]}" r="7" fill="#fff0bf" stroke="#30403c" stroke-width="2"/>`);}
+}
+function renderMap(){const {w:W,h:H}=dims(),parts=[];
+ parts.push(`<defs><pattern id="blockedHatch" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="14" stroke="#9ea8af" stroke-opacity=".3" stroke-width="7"/></pattern><pattern id="randomDots" width="11" height="11" patternUnits="userSpaceOnUse"><circle cx="3" cy="3" r="1.6" fill="#c2b4ee" fill-opacity=".8"/></pattern><clipPath id="worldClip"><rect width="${W}" height="${H}"/></clipPath></defs>`);
+ parts.push(`<rect x="0" y="0" width="${W}" height="${H}" fill="#293939" stroke="#778b84" stroke-width="3"/>`);
+ parts.push(`<g clip-path="url(#worldClip)">`);
+ if(ui.visible.biomes){for(const m of state.biomeMarks){const color=BIOMES[m.biome]?.color||'#293939';if(m.shape==='rect')parts.push(`<rect x="${m.x}" y="${m.y}" width="${m.w}" height="${m.h}" fill="${color}"/>`);
+ else if(m.points?.length){if(m.points.length===1)parts.push(`<circle cx="${m.points[0][0]}" cy="${m.points[0][1]}" r="${m.width/2}" fill="${color}"/>`);
+ else parts.push(`<path d="${pathD(m.points)}" stroke="${color}" stroke-width="${m.width}" stroke-linecap="round" stroke-linejoin="round" fill="none"/>`);}}
+ }
+ if(ui.visible.height){for(const z of state.heightZones){const selectedZone=ui.selected?.kind==='height'&&ui.selected?.id===z.id;parts.push(`<polygon data-object="height" data-id="${esc(z.id)}" points="${polyStr(z.points)}" fill="${z.kind==='basin'?'#6c9ec3':'#e4b16b'}" fill-opacity=".23" stroke="${selectedZone?'#fff2c2':z.kind==='basin'?'#70a7d8':'#e8b675'}" stroke-width="${selectedZone?4:2.5}" stroke-dasharray="${z.kind==='basin'?'8 5':'none'}"/>`);
+ const px=z.points.reduce((s,p)=>s+p[0],0)/z.points.length,py=z.points.reduce((s,p)=>s+p[1],0)/z.points.length;
+ parts.push(`<text x="${px}" y="${py}" text-anchor="middle" font-size="18" fill="#f7f7ef" paint-order="stroke" stroke="#283437" stroke-width="4" pointer-events="none">${z.offsetMeters>0?'+':''}${z.offsetMeters}m</text>`);
+ vertexHandles(parts,'height',z);}}
+ if(ui.visible.markers){for(let y=0;y<state.height;y++)for(let x=0;x<state.width;x++){const z=state.tiles[key(x,y)]?.zone;if(!z)continue;const xx=x*CHUNK,yy=y*CHUNK,fill=MARKERS[z].color;
+ if(z==='blocked')parts.push(`<rect x="${xx}" y="${yy}" width="64" height="64" fill="#222a30" fill-opacity=".72"/><rect x="${xx}" y="${yy}" width="64" height="64" fill="url(#blockedHatch)"/>`);
  else if(z==='random')parts.push(`<rect x="${xx+3}" y="${yy+3}" width="58" height="58" fill="url(#randomDots)" stroke="${fill}" stroke-width="2.5" stroke-dasharray="8 5"/>`);
  else if(z==='fixed')parts.push(`<rect x="${xx+3}" y="${yy+3}" width="58" height="58" fill="none" stroke="${fill}" stroke-width="3"/><circle cx="${xx+11}" cy="${yy+11}" r="4.5" fill="${fill}"/>`);
  else parts.push(`<rect x="${xx+3}" y="${yy+3}" width="58" height="58" fill="#d7ad67" fill-opacity=".18" stroke="${fill}" stroke-width="2.5" stroke-dasharray="5 4"/>`);
  }}
- if(ui.visible.grid){for(let x=0;x<=state.width;x++)parts.push(`<line x1="${x*CHUNK}" y1="0" x2="${x*CHUNK}" y2="${H}" stroke="#e5eee1" stroke-opacity=".25" stroke-width="1" pointer-events="none"/>`);for(let y=0;y<=state.height;y++)parts.push(`<line x1="0" y1="${y*CHUNK}" x2="${W}" y2="${y*CHUNK}" stroke="#e5eee1" stroke-opacity=".25" stroke-width="1" pointer-events="none"/>`);}
- if(ui.visible.strokes){for(const s of state.strokes){const sel=ui.selected?.id===s.id,kind=s.kind,c=kind==='river'?'#6dc5e4':'#b9855f';const d=pathD(s.points),width=s.width;
- if(kind==='canyon')parts.push(`<path data-object="stroke" data-id="${esc(s.id)}" d="${d}" fill="none" stroke="#50372b" stroke-width="${width+6}" stroke-linecap="round" stroke-linejoin="round"/>`);
- parts.push(`<path data-object="stroke" data-id="${esc(s.id)}" d="${d}" fill="none" stroke="${c}" stroke-opacity="${kind==='canyon'?.9:.85}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round" ${kind==='canyon'?'stroke-dasharray="12 5"':''}/>`);
- if(sel)parts.push(`<path d="${d}" fill="none" stroke="#f7edbc" stroke-width="2" stroke-dasharray="6 5" pointer-events="none"/>`);
- if(s.points.length===1)parts.push(`<circle data-object="stroke" data-id="${esc(s.id)}" cx="${s.points[0][0]}" cy="${s.points[0][1]}" r="${Math.max(4,width/2)}" fill="${c}"/>`);
+ if(ui.visible.hydrography){for(const s of state.strokes){const sel=ui.selected?.kind==='stroke'&&ui.selected.id===s.id,c=s.kind==='river'?'#6dc5e4':'#b9855f',d=pathD(s.points);
+ if(s.kind==='canyon')parts.push(`<path d="${d}" fill="none" stroke="#50372b" stroke-width="${s.width+5}" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>`);
+ if(s.points.length===1)parts.push(`<circle data-object="stroke" data-id="${esc(s.id)}" cx="${s.points[0][0]}" cy="${s.points[0][1]}" r="${s.width/2}" fill="${c}"/>`);
+ else parts.push(`<path data-object="stroke" data-id="${esc(s.id)}" d="${d}" fill="none" stroke="${c}" stroke-opacity=".9" stroke-width="${s.width}" stroke-linecap="round" stroke-linejoin="round"/>`);
+ if(sel)parts.push(`<path d="${d}" fill="none" stroke="#fff0bd" stroke-width="2.5" stroke-dasharray="6 5" pointer-events="none"/>`);
+ vertexHandles(parts,'stroke',s);
  }}
- if(ui.visible.roads){for(const r of state.roads){const d=pathD(r.points),sel=ui.selected?.id===r.id,c=r.type==='main'?'#eccb8f':'#eadcb8',w=r.type==='main'?7:4;
- parts.push(`<path d="${d}" fill="none" stroke="#262d29" stroke-width="${w+5}" stroke-linejoin="round" stroke-linecap="round" pointer-events="none"/><path d="${d}" fill="none" stroke="${c}" stroke-width="${w}" stroke-linejoin="round" stroke-linecap="round" ${r.type==='trail'?'stroke-dasharray="11 6"':''} pointer-events="none"/><path data-object="road" data-id="${esc(r.id)}" d="${d}" fill="none" stroke="transparent" stroke-width="18" stroke-linecap="round"/>`);
- if(r.oneWay)for(let i=1;i<r.points.length;i++){const a=r.points[i-1],b=r.points[i],angle=Math.atan2(b[1]-a[1],b[0]-a[0])*180/Math.PI,mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2;parts.push(`<path d="M -6 -5 L 5 0 L -6 5 Z" transform="translate(${mx} ${my}) rotate(${angle})" fill="#f7f1d5" stroke="#39392e" stroke-width="1" pointer-events="none"/>`);}
- if(sel)parts.push(`<path d="${d}" fill="none" stroke="#f8f2bc" stroke-width="2" stroke-dasharray="5 5" pointer-events="none"/>`);
+ for(const r of state.roads){if(!ui.visible[r.stage==='draft'?'draftRoutes':'roads'])continue;const sel=ui.selected?.kind==='road'&&ui.selected?.id===r.id,d=pathD(r.points),draft=r.stage==='draft',c=draft?'#a0b5e5':r.type==='main'?'#eccb8f':'#eadcb8',width=draft?4:r.type==='main'?7:4;
+ parts.push(`<path d="${d}" stroke="#26312f" stroke-width="${width+4}" fill="none" stroke-linejoin="round" stroke-linecap="round" pointer-events="none"/><path d="${d}" stroke="${c}" stroke-width="${width}" fill="none" stroke-linejoin="round" stroke-linecap="round" ${draft?'stroke-dasharray="12 8"':r.type==='trail'?'stroke-dasharray="11 6"':''} pointer-events="none"/><path data-object="road" data-id="${esc(r.id)}" d="${d}" stroke="transparent" stroke-width="18" fill="none"/>`);
+ if(r.oneWay)for(let i=1;i<r.points.length;i++){const a=r.points[i-1],b=r.points[i],angle=Math.atan2(b[1]-a[1],b[0]-a[0])*180/Math.PI;parts.push(`<path d="M -7 -5 L 6 0 L -7 5 Z" transform="translate(${(a[0]+b[0])/2} ${(a[1]+b[1])/2}) rotate(${angle})" fill="${c}" stroke="#27312d" pointer-events="none"/>`);}
+ if(sel)parts.push(`<path d="${d}" stroke="#fff4ba" stroke-width="2" stroke-dasharray="5 5" fill="none" pointer-events="none"/>`);
+ vertexHandles(parts,'road',r);
+ }
+ if(ui.draft?.points?.length){const points=ui.draft.points,preview=ui.preview&&inWorld(ui.preview)?[[ui.preview.x,ui.preview.y]]:[];
+ if(ui.draft.kind==='height'){const p=[...points,...preview];if(p.length>=3)parts.push(`<polygon points="${polyStr(p)}" fill="#e4b16b" fill-opacity=".16" stroke="#fff0bf" stroke-width="3" stroke-dasharray="8 6" pointer-events="none"/>`);}
+ else parts.push(`<path d="${pathD([...points,...preview])}" stroke="#ffdfa7" stroke-width="4" stroke-dasharray="10 8" fill="none" pointer-events="none"/>`);
+ for(const p of points)parts.push(`<circle cx="${p[0]}" cy="${p[1]}" r="5" fill="#ffe0a8" pointer-events="none"/>`);
+ }
+ if(ui.visible.places){for(const p of state.places){const col=PIN_TYPES[p.category]?.color||PIN_TYPES.other.color,sel=ui.selected?.kind==='pin'&&ui.selected.id===p.id,r=p.radius;
+ parts.push(p.shape==='square'?`<rect data-object="pin" data-id="${esc(p.id)}" x="${p.x-r}" y="${p.y-r}" width="${r*2}" height="${r*2}" rx="3" fill="${col}" fill-opacity=".16" stroke="${sel?'#fff5c0':col}" stroke-width="${sel?4:2.8}"/>`:`<circle data-object="pin" data-id="${esc(p.id)}" cx="${p.x}" cy="${p.y}" r="${r}" fill="${col}" fill-opacity=".16" stroke="${sel?'#fff5c0':col}" stroke-width="${sel?4:2.8}"/>`);
+ parts.push(`<circle data-object="pin" data-id="${esc(p.id)}" cx="${p.x}" cy="${p.y}" r="6" fill="${col}" stroke="#233130" stroke-width="2"/><text data-object="pin" data-id="${esc(p.id)}" x="${p.x}" y="${p.y-r-10}" fill="#f6f7eb" font-size="20" font-weight="650" text-anchor="middle" paint-order="stroke" stroke="#1a2627" stroke-width="4">${esc(p.name)}</text>`);
  }}
- if(ui.draft?.points?.length){const a=ui.draft.points,preview=ui.preview&&isInside(ui.preview.x,ui.preview.y)?[[ui.preview.x,ui.preview.y]]:[];parts.push(`<path d="${pathD([...a,...preview])}" stroke="#ffdfa7" stroke-width="4" stroke-dasharray="10 8" fill="none" stroke-linecap="round" pointer-events="none"/>`);for(const p of a)parts.push(`<circle cx="${p[0]}" cy="${p[1]}" r="5" fill="#ffe0a8" pointer-events="none"/>`);}
- if(ui.visible.places){for(const p of state.places){const t=PIN_TYPES[p.category]||PIN_TYPES.other,sel=ui.selected?.id===p.id,r=p.radius;
- parts.push(p.shape==='square'?`<rect data-object="pin" data-id="${esc(p.id)}" x="${p.x-r}" y="${p.y-r}" width="${2*r}" height="${2*r}" rx="3" fill="${t.color}" fill-opacity=".16" stroke="${sel?'#fff5c0':t.color}" stroke-width="${sel?4:2.8}"/>`:`<circle data-object="pin" data-id="${esc(p.id)}" cx="${p.x}" cy="${p.y}" r="${r}" fill="${t.color}" fill-opacity=".16" stroke="${sel?'#fff5c0':t.color}" stroke-width="${sel?4:2.8}"/>`);
- parts.push(`<circle data-object="pin" data-id="${esc(p.id)}" cx="${p.x}" cy="${p.y}" r="6" fill="${t.color}" stroke="#233130" stroke-width="2"/>`);
- parts.push(`<text data-object="pin" data-id="${esc(p.id)}" x="${p.x}" y="${p.y-r-10}" fill="#f6f7eb" font-size="20" font-weight="650" text-anchor="middle" paint-order="stroke" stroke="#1a2627" stroke-width="4" stroke-linejoin="round">${esc(p.name)}</text>`);
- }}
+ if(ui.visible.grid){for(let x=0;x<=state.width;x++)parts.push(`<line x1="${x*CHUNK}" x2="${x*CHUNK}" y1="0" y2="${H}" stroke="#e5eee1" stroke-opacity=".23" pointer-events="none"/>`);for(let y=0;y<=state.height;y++)parts.push(`<line x1="0" x2="${W}" y1="${y*CHUNK}" y2="${y*CHUNK}" stroke="#e5eee1" stroke-opacity=".23" pointer-events="none"/>`);}
+ parts.push('</g>');
+ if(ui.mode==='biome'&&ui.preview&&inWorld(ui.preview)&&!ui.interaction){parts.push(`<circle cx="${ui.preview.x}" cy="${ui.preview.y}" r="${ui.biomeSize/2}" fill="${BIOMES[ui.biome].color}" fill-opacity=".2" pointer-events="none"/>`);}
  svg.innerHTML=parts.join('');setView();svg.classList.toggle('pan',ui.mode==='pan');svg.classList.toggle('select',ui.mode==='select');svg.classList.toggle('grabbing',ui.interaction?.kind==='pan');
 }
-function renderVisibility(){$('visibilityOptions').innerHTML=[['grid','Chunk 网格'],['markers','Chunk 标记'],['strokes','河流 / 峡谷'],['roads','道路'],['places','关键地点']].map(([k,s])=>`<label class="settingrow" style="justify-content:flex-start;gap:9px"><input type="checkbox" data-visible="${k}" ${ui.visible[k]?'checked':''} style="width:auto;accent-color:#a1ceae">${s}</label>`).join('');}
+function renderVisibility(){const labs=[['grid','Chunk 网格'],['biomes','Biome 色块'],['markers','Chunk 标记'],['hydrography','河流 / 峡谷'],['height','台地 / 盆地'],['draftRoutes','初步路线'],['roads','最终道路'],['places','关键地点']];$('visibilityOptions').innerHTML=labs.map(([k,s])=>`<label class="settingrow" style="justify-content:flex-start;gap:9px"><input type="checkbox" data-visible="${k}" ${ui.visible[k]?'checked':''} style="width:auto;accent-color:#a1ceae">${s}</label>`).join('');}
 function renderOptions(){const o=$('toolOptions');const opts={
- select:`<p class="tooltitle">选择和编辑</p><p class="hint">点击地图上的图钉、路线或笔刷轨迹查看属性。拖动图钉改变位置；按 Delete 删除所选对象。</p>`,
- pan:`<p class="tooltitle">移动地图视野</p><p class="hint">按住鼠标左键或触屏拖动；滚轮缩放。绘制模式中按空格 / 鼠标中键同样可以平移。</p>`,
- biome:`<p class="tooltitle">生态类型 · Biome</p><div class="swatches">${Object.entries(BIOMES).map(([k,b])=>`<button data-biome="${k}" class="swatch ${ui.biome===k?'active':''}"><span class="dot" style="background:${b.color}"></span>${b.label}</button>`).join('')}</div><div class="dividertext">笔刷宽度</div><div class="rowbtns">${[1,3,5].map(n=>`<button data-biome-size="${n}" class="${ui.biomeSize===n?'active':''}">${n} × ${n}</button>`).join('')}</div><p class="hint">拖过 Chunk 即可涂色。Biome 与随机 / 固定标记可同时存在。按住右键拖动可清除 Biome。</p>`,
- mark:`<p class="tooltitle">直接点击 Chunk 标记</p><div class="markbuttons">${Object.entries(MARKERS).map(([k,b])=>`<button data-marker="${k}" class="${ui.marker===k?'active':''}"><span class="dot" style="background:${b.color}"></span>${b.label}</button>`).join('')}</div><p class="hint">切到“随机 Chunk”后，点一下标记，再点同一个 Chunk 取消。拖动可连续标记。其他标记也一样。</p>`,
- river:`<p class="tooltitle">河流笔刷</p><div class="settingrow"><label>宽度（米）</label><input id="strokeWidth" type="number" min="2" max="200" step="1" value="${ui.strokeWidth}"></div><p class="hint">在地图上按住拖动绘制河道中心线。松开即完成，形状和宽度写入 JSON，可供生成器参考。</p>`,
- canyon:`<p class="tooltitle">峡谷笔刷</p><div class="settingrow"><label>宽度（米）</label><input id="strokeWidth" type="number" min="2" max="200" step="1" value="${ui.strokeWidth}"></div><p class="hint">在地图上按住拖动绘制峡谷的中心线及规划宽度。此处仅做空间标注，不计算高度或体素。</p>`,
- road:`<p class="tooltitle">道路与通行方向</p><div class="settingrow"><label>道路类型</label><select id="roadType"><option value="trail" ${ui.roadType==='trail'?'selected':''}>野外小径</option><option value="main" ${ui.roadType==='main'?'selected':''}>正式道路</option></select></div><label class="settingrow" style="justify-content:flex-start;gap:9px"><input id="oneWay" type="checkbox" ${ui.oneWay?'checked':''} style="width:auto;accent-color:#a1ceae">单向通行</label><div class="rowbtns"><button id="finishRoad" class="primary" ${!ui.draft?.points?.length?'disabled':''}>完成道路 ↵</button><button id="cancelRoad" ${!ui.draft?'disabled':''}>取消 Esc</button></div><p class="hint">依次点击增加折点；双击或按 Enter 完成。单向箭头沿绘制方向。选中道路后可修改属性。</p>`,
- pin:`<p class="tooltitle">关键地点图钉</p><div class="inspectfield"><label>新地点名称</label><input id="newPinName" maxlength="70" value="${esc(ui.pinName)}"></div><div class="settingrow"><label>类别</label><select id="newPinType">${Object.entries(PIN_TYPES).map(([k,p])=>`<option value="${k}" ${ui.pinType===k?'selected':''}>${p.label}</option>`).join('')}</select></div><div class="settingrow"><label>形状</label><select id="newPinShape"><option value="circle" ${ui.pinShape==='circle'?'selected':''}>圆形</option><option value="square" ${ui.pinShape==='square'?'selected':''}>方形</option></select></div><div class="settingrow"><label>半径（米）</label><input id="newPinRadius" type="number" min="6" max="400" step="1" value="${ui.pinRadius}"></div><p class="hint">点击地图放置地点，随后用选择工具拖动和编辑。圆形半径是半径；方形半径表示中心到一条边的距离。</p>`
+ select:`<p class="tooltitle">选择与调整</p><p class="hint">点击地图对象编辑；拖动图钉移动位置。路线、河流和高差多边形选中后，可以拖动亮色顶点。Delete 删除选中对象。</p>`,
+ pan:`<p class="tooltitle">平移视野</p><p class="hint">拖动地图；滚轮缩放。其他工具下按空格或鼠标中键也可平移。</p>`,
+ biome:`<p class="tooltitle">二维 Biome 硬边界笔刷</p><div class="swatches">${Object.entries(BIOMES).map(([k,b])=>`<button data-biome="${k}" class="swatch ${ui.biome===k?'active':''}"><span class="dot" style="background:${b.color}"></span>${b.label}</button>`).join('')}</div><div class="settingrow"><label>笔刷直径（米）</label><input id="biomeSize" type="number" min="4" max="256" step="4" value="${ui.biomeSize}"></div><p class="hint">自由涂色，不吸附 Chunk，不描边、不羽化。同一位置最后一次涂刷覆盖之前颜色；右键涂刷清除。导出时附带 4m 分辨率的二值分类遮罩。</p>`,
+ mark:`<p class="tooltitle">单击 Chunk 标记</p><div class="markbuttons">${Object.entries(MARKERS).map(([k,b])=>`<button data-marker="${k}" class="${ui.marker===k?'active':''}"><span class="dot" style="background:${b.color}"></span>${b.label}</button>`).join('')}</div><p class="hint">单击标记，再点同一块取消；也可拖动连续标记。与 Biome 区域独立保存。</p>`,
+ river:`<p class="tooltitle">河流规划笔刷</p><div class="settingrow"><label>宽度（米）</label><input id="strokeWidth" type="number" min="2" max="200" value="${ui.strokeWidth}"></div><p class="hint">拖动绘制中心线，线条宽度为规划宽度；生成器以后负责河床及地形。</p>`,
+ canyon:`<p class="tooltitle">峡谷分割笔刷</p><div class="settingrow"><label>宽度（米）</label><input id="strokeWidth" type="number" min="2" max="200" value="${ui.strokeWidth}"></div><p class="hint">拖动标记峡谷的中心线和宽度。此处仅标注宏观地理分割。</p>`,
+ road:`<p class="tooltitle">路线规划</p><div class="settingrow"><label>阶段</label><select id="routeStage"><option value="draft" ${ui.routeStage==='draft'?'selected':''}>初步路线</option><option value="final" ${ui.routeStage==='final'?'selected':''}>最终道路</option></select></div><div class="settingrow"><label>类型</label><select id="roadType"><option value="trail" ${ui.roadType==='trail'?'selected':''}>小径</option><option value="main" ${ui.roadType==='main'?'selected':''}>正式道路</option></select></div><label class="settingrow" style="justify-content:flex-start;gap:9px"><input id="oneWay" type="checkbox" ${ui.oneWay?'checked':''} style="width:auto">单向通行</label><div class="rowbtns"><button id="finishDraft" class="primary" ${!ui.draft?'disabled':''}>完成 ↵</button><button id="cancelDraft" ${!ui.draft?'disabled':''}>取消 Esc</button></div><p class="hint">依次点击形成折线。初步路线与最终道路独立，可分别隐藏、编辑、导出；单向箭头沿绘制方向。</p>`,
+ height:`<p class="tooltitle">台地 / 盆地 · 高差分区</p><div class="settingrow"><label>分区类型</label><select id="heightType"><option value="plateau" ${ui.heightType==='plateau'?'selected':''}>台地（高）</option><option value="basin" ${ui.heightType==='basin'?'selected':''}>盆地（低）</option></select></div><div class="inspectfield"><label>区域名称</label><input id="heightName" maxlength="70" value="${esc(ui.heightName)}"></div><div class="settingrow"><label>相对高度（米）</label><input id="heightAmount" type="number" min="1" max="96" value="${ui.heightAmount}"></div><div class="rowbtns"><button id="finishDraft" class="primary" ${!ui.draft?'disabled':''}>封闭区域 ↵</button><button id="cancelDraft" ${!ui.draft?'disabled':''}>取消 Esc</button></div><p class="hint">沿边界依次点击 ≥3 个点，Enter / 双击封闭为多边形。高度是相对基准的规划约束，并非最终体素高度；选中后可拖动顶点。</p>`,
+ pin:`<p class="tooltitle">关键地点</p><div class="inspectfield"><label>名称</label><input id="newPinName" maxlength="70" value="${esc(ui.pinName)}"></div><div class="settingrow"><label>类型</label><select id="newPinType">${Object.entries(PIN_TYPES).map(([k,p])=>`<option value="${k}" ${ui.pinType===k?'selected':''}>${p.label}</option>`).join('')}</select></div><div class="settingrow"><label>形状</label><select id="newPinShape"><option value="circle" ${ui.pinShape==='circle'?'selected':''}>圆形</option><option value="square" ${ui.pinShape==='square'?'selected':''}>方形</option></select></div><div class="settingrow"><label>半径（米）</label><input id="newPinRadius" type="number" min="6" max="400" value="${ui.pinRadius}"></div><p class="hint">点击地图放置，可跨 Chunk；使用选择模式拖动图钉。</p>`
  };o.innerHTML=opts[ui.mode];$('modeGrid').querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===ui.mode));
- const tips={select:'选择对象并编辑；拖拽图钉移动位置。',pan:'拖动地图查看其他区域。',biome:'按住拖动涂 Biome；右键拖动清除。',mark:'点一下标记 Chunk，再点同一块取消标记。',river:'按住拖动绘制河流；松开完成。',canyon:'按住拖动绘制峡谷；松开完成。',road:'逐点绘制道路；按 Enter 或点击“完成道路”结束。',pin:'点击地图放置圆形 / 方形关键地点。'};
+ const tips={select:'选择对象；拖动图钉或选中对象的控制点。',pan:'拖动地图平移。',biome:'硬边界自由涂刷 Biome（右键擦除），不按 Chunk 划分。',mark:'点击 Chunk 标记，再点同块取消。',river:'按住拖动绘制河流。',canyon:'按住拖动绘制峡谷。',road:'点击添加路线折点；Enter / 双击完成。',height:'点击围出台地或盆地边界；Enter / 双击封闭。',pin:'点击地图放置图钉。'};
  $('actionHelp').textContent=tips[ui.mode];}
-function renderInspector(){const t=ui.selected,ob=selected(),e=$('inspector');if(!t||!ob){e.innerHTML='<div class="inspectempty">选择地图上的关键地点、道路、河流或峡谷后，在这里修改属性。</div>';return;}
- if(t.kind==='pin')e.innerHTML=`<div class="tooltitle">◉ 关键地点</div><div class="inspectfield"><label>名称</label><input data-prop="name" maxlength="70" value="${esc(ob.name)}"></div><div class="inspectfield"><label>地点类型</label><select data-prop="category">${Object.entries(PIN_TYPES).map(([k,p])=>`<option value="${k}" ${ob.category===k?'selected':''}>${p.label}</option>`).join('')}</select></div><div class="inline-input"><label>世界 X（米）<input type="number" data-prop="x" step="1" value="${Math.round(ob.x)}"></label><label>世界 Y（米）<input type="number" data-prop="y" step="1" value="${Math.round(ob.y)}"></label></div><div class="settingrow"><label>形状</label><select data-prop="shape"><option value="circle" ${ob.shape==='circle'?'selected':''}>圆形</option><option value="square" ${ob.shape==='square'?'selected':''}>方形</option></select></div><div class="settingrow"><label>半径（米）</label><input data-prop="radius" type="number" min="6" max="400" value="${ob.radius}"></div><p class="hint">覆盖区域仅作为位置规划，允许跨越多个 Chunk。</p><button class="danger" data-delete="1" style="width:100%;margin-top:10px">删除地点</button>`;
- else if(t.kind==='road')e.innerHTML=`<div class="tooltitle">⌁ 道路</div><div class="inspectfield"><label>名称</label><input data-prop="name" maxlength="70" value="${esc(ob.name)}"></div><div class="settingrow"><label>类别</label><select data-prop="type"><option value="trail" ${ob.type==='trail'?'selected':''}>野外小径</option><option value="main" ${ob.type==='main'?'selected':''}>正式道路</option></select></div><label class="inspectfield check"><input data-prop="oneWay" type="checkbox" ${ob.oneWay?'checked':''}> 单向通行（按绘制方向）</label><div class="metric"><span>线路距离</span><strong>${Math.round(lineLength(ob.points))}m</strong></div><div class="metric"><span>步行时间</span><strong>${travel(lineLength(ob.points))}</strong></div><div class="metric"><span>游戏内时间</span><strong>${formattedGameTime(lineLength(ob.points))}</strong></div><button class="danger" data-delete="1" style="width:100%;margin-top:12px">删除道路</button>`;
- else e.innerHTML=`<div class="tooltitle">${ob.kind==='river'?'〰 河流':'⌁ 峡谷'}</div><div class="settingrow"><label>规划宽度（米）</label><input data-prop="width" type="number" min="2" max="200" value="${ob.width}"></div><div class="metric"><span>轨迹长度</span><strong>${Math.round(lineLength(ob.points))}m</strong></div><button class="danger" data-delete="1" style="width:100%;margin-top:12px">删除轨迹</button>`;
+function renderInspector(){const ob=selected(),e=$('inspector');if(!ob){e.innerHTML='<div class="inspectempty">选中关键地点、路线、河流、峡谷或高差区域后，在此修改属性。</div>';return;}
+ if(ui.selected.kind==='pin')e.innerHTML=`<div class="tooltitle">◎ 关键地点</div><div class="inspectfield"><label>名称</label><input data-prop="name" value="${esc(ob.name)}"></div><div class="settingrow"><label>类型</label><select data-prop="category">${Object.entries(PIN_TYPES).map(([k,p])=>`<option value="${k}" ${ob.category===k?'selected':''}>${p.label}</option>`).join('')}</select></div><div class="inline-input"><label>X（米）<input type="number" data-prop="x" value="${Math.round(ob.x)}"></label><label>Y（米）<input type="number" data-prop="y" value="${Math.round(ob.y)}"></label></div><div class="settingrow"><label>形状</label><select data-prop="shape"><option value="circle" ${ob.shape==='circle'?'selected':''}>圆形</option><option value="square" ${ob.shape==='square'?'selected':''}>方形</option></select></div><div class="settingrow"><label>半径（米）</label><input data-prop="radius" type="number" min="6" max="400" value="${ob.radius}"></div>`;
+ else if(ui.selected.kind==='road')e.innerHTML=`<div class="tooltitle">⌁ 路线</div><div class="inspectfield"><label>名称</label><input data-prop="name" value="${esc(ob.name)}"></div><div class="settingrow"><label>阶段</label><select data-prop="stage"><option value="draft" ${ob.stage==='draft'?'selected':''}>初步路线</option><option value="final" ${ob.stage==='final'?'selected':''}>最终道路</option></select></div><div class="settingrow"><label>类型</label><select data-prop="type"><option value="trail" ${ob.type==='trail'?'selected':''}>小径</option><option value="main" ${ob.type==='main'?'selected':''}>正式道路</option></select></div><label class="inspectfield check"><input data-prop="oneWay" type="checkbox" ${ob.oneWay?'checked':''}>单向通行</label><div class="metric"><span>规划长度</span><strong>${Math.round(lineLength(ob.points))}m</strong></div><div class="metric"><span>步行时间</span><strong>${travel(lineLength(ob.points))}</strong></div><div class="metric"><span>游戏内时间</span><strong>${gameTime(lineLength(ob.points))}</strong></div><p class="hint">拖动地图上的亮色折点可以重设路线。</p>`;
+ else if(ui.selected.kind==='stroke')e.innerHTML=`<div class="tooltitle">${ob.kind==='river'?'〰 河流':'⌁ 峡谷'}</div><div class="settingrow"><label>宽度（米）</label><input data-prop="width" type="number" min="2" max="200" value="${ob.width}"></div><div class="metric"><span>中心线长度</span><strong>${Math.round(lineLength(ob.points))}m</strong></div><p class="hint">选中后可拖动亮色控制点。</p>`;
+ else e.innerHTML=`<div class="tooltitle">▱ 台地 / 盆地</div><div class="inspectfield"><label>区域名称</label><input data-prop="name" value="${esc(ob.name)}"></div><div class="settingrow"><label>分区</label><select data-prop="kind"><option value="plateau" ${ob.kind==='plateau'?'selected':''}>台地</option><option value="basin" ${ob.kind==='basin'?'selected':''}>盆地</option></select></div><div class="settingrow"><label>高度差（米）</label><input data-prop="offsetMeters" type="number" min="-96" max="96" value="${ob.offsetMeters}"></div><p class="hint">相对高度只是宏观约束，体素生成器仍可在其上叠加起伏和噪声。</p>`;
+ e.innerHTML+='<button class="danger" data-delete="1" style="width:100%;margin-top:12px">删除所选对象</button>';
 }
 function render(){updateMeta();renderMap();renderOptions();renderVisibility();renderInspector();}
-function setMode(m){if(ui.mode==='road'&&m!=='road'&&ui.draft)finishRoad();ui.mode=m;ui.interaction=null;render();}
-function paintAt(pos,erase=false){const c=posChunk(pos);if(c.x<0||c.y<0||c.x>=state.width||c.y>=state.height)return false;let changed=false;
- if(ui.mode==='biome'){const radius=Math.floor(ui.biomeSize/2);for(let j=c.y-radius;j<=c.y+radius;j++)for(let i=c.x-radius;i<=c.x+radius;i++){if(i<0||j<0||i>=state.width||j>=state.height)continue;const k=key(i,j),old=state.tiles[k]||{biome:null,zone:null},next=erase?null:ui.biome;if(old.biome!==next){old.biome=next;if(!old.biome&&!old.zone)delete state.tiles[k];else state.tiles[k]=old;changed=true;}}}
- else if(ui.mode==='mark'){const k=key(c.x,c.y),old=state.tiles[k]||{biome:null,zone:null},next=erase?null:ui.marker;if(old.zone!==next){old.zone=next;if(!old.biome&&!old.zone)delete state.tiles[k];else state.tiles[k]=old;changed=true;}}
- return changed;}
-function zoom(factor,evt){const before=evt?toWorld(evt):{x:ui.view.x+ui.view.w/2,y:ui.view.y+ui.view.h/2};const v=ui.view;const newW=limit(v.w*factor,CHUNK*1.5,(state.width+4)*CHUNK),ratio=newW/v.w;v.w=newW;v.h*=ratio;setView();const after=evt?toWorld(evt):{x:v.x+v.w/2,y:v.y+v.h/2};v.x+=before.x-after.x;v.y+=before.y-after.y;setView();}
-function finishRoad(){if(ui.draft?.points?.length>=2){checkpoint();state.roads.push({id:id(),name:'新道路',type:ui.roadType,oneWay:ui.oneWay,points:ui.draft.points});ui.selected={kind:'road',id:state.roads[state.roads.length-1].id};save();}ui.draft=null;ui.preview=null;render();}
-function deleteSelected(){if(!ui.selected)return;const ob=selected();if(!ob)return;checkpoint();const arr=ui.selected.kind==='pin'?state.places:ui.selected.kind==='road'?state.roads:state.strokes;arr.splice(arr.findIndex(x=>x.id===ob.id),1);ui.selected=null;commit();}
-function addPointToRoad(p){const point=[Math.round(p.x*10)/10,Math.round(p.y*10)/10];if(!ui.draft){ui.draft={points:[point]};}else{const last=ui.draft.points.at(-1);if(Math.hypot(last[0]-point[0],last[1]-point[1])>4)ui.draft.points.push(point);}renderMap();renderOptions();}
-function pointerDown(e){if(e.button!==0&&e.button!==1&&e.button!==2)return;const pos=toWorld(e),obj=e.target.closest?.('[data-object]');if(e.button===1||ui.space||ui.mode==='pan'){ui.interaction={kind:'pan',lastX:e.clientX,lastY:e.clientY};svg.setPointerCapture(e.pointerId);renderMap();return;}
- if(e.button===2&&ui.mode!=='biome'&&ui.mode!=='mark')return;
- if(ui.mode==='select'||ui.mode==='pin'){if(obj&&e.button===0){ui.selected={kind:obj.dataset.object,id:obj.dataset.id};if(ui.mode==='select'&&obj.dataset.object==='pin'){const p=selected();ui.interaction={kind:'movePin',offsetX:p.x-pos.x,offsetY:p.y-pos.y,checkpointed:false};svg.setPointerCapture(e.pointerId);}render();return;}
- if(ui.mode==='select'){ui.selected=null;renderInspector();return;}
- if(!isInside(pos.x,pos.y)||e.button!==0)return;checkpoint();const p={id:id(),name:ui.pinName.trim()||'新地点',category:ui.pinType,shape:ui.pinShape,radius:ui.pinRadius,x:+pos.x.toFixed(1),y:+pos.y.toFixed(1)};state.places.push(p);ui.selected={kind:'pin',id:p.id};commit();return;}
- if(!isInside(pos.x,pos.y))return;
- if(ui.mode==='biome'||ui.mode==='mark'){checkpoint();let erase=e.button===2;if(ui.mode==='mark'&&!erase){const c=posChunk(pos);erase=state.tiles[key(c.x,c.y)]?.zone===ui.marker;}ui.interaction={kind:'paint',erase,seen:new Set()};svg.setPointerCapture(e.pointerId);if(paintAt(pos,erase))renderMap();return;}
- if(ui.mode==='river'||ui.mode==='canyon'){checkpoint();const p=clampPosition(pos),stroke={id:id(),kind:ui.mode,width:ui.strokeWidth,points:[[+p.x.toFixed(1),+p.y.toFixed(1)]]};state.strokes.push(stroke);ui.interaction={kind:'stroke',id:stroke.id};svg.setPointerCapture(e.pointerId);renderMap();return;}
- if(ui.mode==='road'){if(e.detail>=2){finishRoad();return;}addPointToRoad(pos);return;}}
-function pointerMove(e){const pos=toWorld(e),c=posChunk(pos);$('cursorInfo').textContent=isInside(pos.x,pos.y)?`Chunk [${c.x}, ${c.y}] · 世界 [${Math.round(pos.x)}, ${Math.round(pos.y)}] m`:'地图坐标：范围外';
- const i=ui.interaction;if(!i){if(ui.mode==='road'&&ui.draft){ui.preview=pos;renderMap();}return;}
- if(i.kind==='pan'){const scale=svg.getScreenCTM()?.a||1;ui.view.x-=(e.clientX-i.lastX)/scale;ui.view.y-=(e.clientY-i.lastY)/scale;i.lastX=e.clientX;i.lastY=e.clientY;setView();return;}
- if(i.kind==='paint'){if(isInside(pos.x,pos.y)&&paintAt(pos,i.erase))renderMap();return;}
- if(i.kind==='stroke'){const s=state.strokes.find(s=>s.id===i.id);if(!s)return;const p=clampPosition(pos),last=s.points.at(-1);if(Math.hypot(last[0]-p.x,last[1]-p.y)>Math.max(2,s.width/3)){s.points.push([+p.x.toFixed(1),+p.y.toFixed(1)]);renderMap();}return;}
- if(i.kind==='movePin'){const p=selected();if(!p)return;if(!i.checkpointed){checkpoint();i.checkpointed=true;}p.x=+limit(pos.x+i.offsetX,0,state.width*CHUNK).toFixed(1);p.y=+limit(pos.y+i.offsetY,0,state.height*CHUNK).toFixed(1);renderMap();return;}}
-function pointerUp(e){const i=ui.interaction;if(!i)return;if(svg.hasPointerCapture(e.pointerId))svg.releasePointerCapture(e.pointerId);ui.interaction=null;if(i.kind==='paint'||i.kind==='stroke'||(i.kind==='movePin'&&i.checkpointed))commit();else renderMap();}
-svg.addEventListener('pointerdown',pointerDown);svg.addEventListener('pointermove',pointerMove);svg.addEventListener('pointerup',pointerUp);svg.addEventListener('pointercancel',pointerUp);svg.addEventListener('contextmenu',e=>e.preventDefault());svg.addEventListener('wheel',e=>{e.preventDefault();zoom(e.deltaY<0?.83:1.2,e);},{passive:false});svg.addEventListener('dblclick',e=>{if(ui.mode==='road'){e.preventDefault();finishRoad();}});
+function finishDraft(){if(!ui.draft)return;const {kind,points}=ui.draft;
+ if(kind==='road'&&points.length>=2){checkpoint();const x={id:uid(),name:ui.routeStage==='draft'?'初步路线':'最终道路',stage:ui.routeStage,type:ui.roadType,oneWay:ui.oneWay,points:copy(points)};state.roads.push(x);ui.selected={kind:'road',id:x.id};save();}
+ if(kind==='height'&&points.length>=3){checkpoint();const x={id:uid(),name:ui.heightName.trim()||'新高差区域',kind:ui.heightType,offsetMeters:(ui.heightType==='basin'?-1:1)*ui.heightAmount,points:copy(points)};state.heightZones.push(x);ui.selected={kind:'height',id:x.id};save();}
+ ui.draft=null;ui.preview=null;render();}
+function setMode(m){if(ui.draft&&ui.mode!==m)finishDraft();ui.mode=m;ui.interaction=null;ui.preview=null;render();}
+function markAt(p,erase=false){const c=posChunk(p);if(c.x<0||c.y<0||c.x>=state.width||c.y>=state.height)return false;const k=key(c.x,c.y),old=state.tiles[k]?.zone||null,next=erase?null:ui.marker;if(old===next)return false;if(next)state.tiles[k]={zone:next};else delete state.tiles[k];return true;}
+function zoom(factor,e){const before=e?toWorld(e):{x:ui.view.x+ui.view.w/2,y:ui.view.y+ui.view.h/2},v=ui.view,newW=clamp(v.w*factor,CHUNK*1.5,(state.width+4)*CHUNK),scale=newW/v.w;v.w=newW;v.h*=scale;setView();const after=e?toWorld(e):{x:v.x+v.w/2,y:v.y+v.h/2};v.x+=before.x-after.x;v.y+=before.y-after.y;setView();}
+function removeSelected(){const ob=selected();if(!ob)return;checkpoint();const arr={pin:state.places,road:state.roads,stroke:state.strokes,height:state.heightZones}[ui.selected.kind];arr.splice(arr.findIndex(x=>x.id===ob.id),1);ui.selected=null;commit();}
+function addDraftPoint(kind,p){const newPt=pt(p);if(!ui.draft||ui.draft.kind!==kind)ui.draft={kind,points:[newPt]};else if(near(ui.draft.points.at(-1),newPt)>4)ui.draft.points.push(newPt);renderMap();renderOptions();}
+function pointerDown(e){if(![0,1,2].includes(e.button))return;const pos=toWorld(e),target=e.target.closest?.('[data-object]');
+ if(e.button===1||ui.space||ui.mode==='pan'){ui.interaction={kind:'pan',lastX:e.clientX,lastY:e.clientY};svg.setPointerCapture(e.pointerId);renderMap();return;}
+ if(e.button===2&&!['biome','mark'].includes(ui.mode))return;
+ if(ui.mode==='select'||ui.mode==='pin'){
+  if(target&&e.button===0){ui.selected={kind:target.dataset.object,id:target.dataset.id};const ob=selected();if(ui.mode==='select'){
+   if(target.dataset.vertex!=null&&ob?.points){ui.interaction={kind:'vertex',index:+target.dataset.vertex,checkpointed:false};svg.setPointerCapture(e.pointerId);}
+   else if(target.dataset.object==='pin'&&ob){ui.interaction={kind:'movePin',offsetX:ob.x-pos.x,offsetY:ob.y-pos.y,checkpointed:false};svg.setPointerCapture(e.pointerId);}
+  }render();return;}
+  if(ui.mode==='select'){ui.selected=null;renderInspector();renderMap();return;}
+  if(!inWorld(pos)||e.button!==0)return;checkpoint();const p={id:uid(),name:ui.pinName.trim()||'新地点',category:ui.pinType,shape:ui.pinShape,radius:ui.pinRadius,...bound(pos)};state.places.push(p);ui.selected={kind:'pin',id:p.id};commit();return;
+ }
+ if(!inWorld(pos))return;
+ if(ui.mode==='biome'){
+  checkpoint();const mark={id:uid(),shape:'stroke',biome:e.button===2?null:ui.biome,width:ui.biomeSize,points:[pt(pos)]};state.biomeMarks.push(mark);ui.interaction={kind:'biome',id:mark.id};svg.setPointerCapture(e.pointerId);renderMap();return;
+ }
+ if(ui.mode==='mark'){
+  checkpoint();const c=posChunk(pos),erase=e.button===2||state.tiles[key(c.x,c.y)]?.zone===ui.marker;ui.interaction={kind:'mark',erase};svg.setPointerCapture(e.pointerId);if(markAt(pos,erase))renderMap();return;
+ }
+ if(['river','canyon'].includes(ui.mode)){
+  checkpoint();const item={id:uid(),kind:ui.mode,width:ui.strokeWidth,points:[pt(pos)]};state.strokes.push(item);ui.interaction={kind:'stroke',id:item.id};svg.setPointerCapture(e.pointerId);renderMap();return;
+ }
+ if(ui.mode==='road'||ui.mode==='height'){if(e.detail>=2){finishDraft();return;}addDraftPoint(ui.mode,pos);return;}
+}
+function pointerMove(e){const pos=toWorld(e),c=posChunk(pos);$('cursorInfo').textContent=inWorld(pos)?`Chunk [${c.x}, ${c.y}] · 世界 [${Math.round(pos.x)}, ${Math.round(pos.y)}] m`:'地图坐标：范围外';
+ const i=ui.interaction;if(!i){if(ui.draft){ui.preview=pos;renderMap();}else if(ui.mode==='biome'){ui.preview=pos;renderMap();}return;}
+ if(i.kind==='pan'){const m=svg.getBoundingClientRect(),scale=m.width/ui.view.w;ui.view.x-=(e.clientX-i.lastX)/scale;ui.view.y-=(e.clientY-i.lastY)/scale;i.lastX=e.clientX;i.lastY=e.clientY;setView();return;}
+ if(i.kind==='mark'){if(inWorld(pos)&&markAt(pos,i.erase))renderMap();return;}
+ if(i.kind==='stroke'||i.kind==='biome'){const item=i.kind==='biome'?state.biomeMarks.find(s=>s.id===i.id):state.strokes.find(s=>s.id===i.id);if(!item)return;const p=pt(bound(pos)),last=item.points.at(-1),step=i.kind==='biome'?Math.max(2,item.width/6):Math.max(2,item.width/3);if(near(last,p)>=step){item.points.push(p);renderMap();}return;}
+ if(i.kind==='movePin'){const ob=selected();if(!ob)return;if(!i.checkpointed){checkpoint();i.checkpointed=true;}ob.x=+clamp(pos.x+i.offsetX,0,state.width*CHUNK).toFixed(1);ob.y=+clamp(pos.y+i.offsetY,0,state.height*CHUNK).toFixed(1);renderMap();return;}
+ if(i.kind==='vertex'){const ob=selected();if(!ob?.points?.[i.index])return;if(!i.checkpointed){checkpoint();i.checkpointed=true;}ob.points[i.index]=pt(bound(pos));renderMap();return;}
+}
+function pointerUp(e){const i=ui.interaction;if(!i)return;if(svg.hasPointerCapture(e.pointerId))svg.releasePointerCapture(e.pointerId);ui.interaction=null;if(['mark','stroke','biome'].includes(i.kind)||i.checkpointed)commit();else renderMap();}
+svg.addEventListener('pointerdown',pointerDown);svg.addEventListener('pointermove',pointerMove);svg.addEventListener('pointerup',pointerUp);svg.addEventListener('pointercancel',pointerUp);svg.addEventListener('contextmenu',e=>e.preventDefault());svg.addEventListener('wheel',e=>{e.preventDefault();zoom(e.deltaY<0?.83:1.2,e);},{passive:false});svg.addEventListener('pointerleave',()=>{if(!ui.interaction){ui.preview=null;renderMap();}});
+svg.addEventListener('dblclick',e=>{if(['road','height'].includes(ui.mode)){e.preventDefault();finishDraft();}});
 $('modeGrid').addEventListener('click',e=>{const b=e.target.closest('[data-mode]');if(b)setMode(b.dataset.mode);});
-$('toolOptions').addEventListener('click',e=>{const a=e.target.closest('[data-biome],[data-biome-size],[data-marker],#finishRoad,#cancelRoad');if(!a)return;if(a.dataset.biome)ui.biome=a.dataset.biome;else if(a.dataset.biomeSize)ui.biomeSize=+a.dataset.biomeSize;else if(a.dataset.marker)ui.marker=a.dataset.marker;else if(a.id==='finishRoad'){finishRoad();return;}else if(a.id==='cancelRoad'){ui.draft=null;ui.preview=null;}renderOptions();if(a.id==='cancelRoad')renderMap();});
-$('toolOptions').addEventListener('input',e=>{const t=e.target;if(t.id==='newPinName')ui.pinName=t.value.slice(0,70);else if(t.id==='strokeWidth')ui.strokeWidth=num(t.value,12,2,200);else if(t.id==='newPinRadius')ui.pinRadius=num(t.value,40,6,400);});
-$('toolOptions').addEventListener('change',e=>{const {id:id0,value,checked}=e.target;if(id0==='strokeWidth')ui.strokeWidth=num(value,12,2,200);else if(id0==='roadType')ui.roadType=value;else if(id0==='oneWay')ui.oneWay=checked;else if(id0==='newPinType')ui.pinType=value;else if(id0==='newPinShape')ui.pinShape=value;else if(id0==='newPinRadius')ui.pinRadius=num(value,40,6,400);else if(id0==='newPinName')ui.pinName=value.slice(0,70);});
+$('toolOptions').addEventListener('click',e=>{const a=e.target.closest('[data-biome],[data-marker],#finishDraft,#cancelDraft');if(!a)return;if(a.dataset.biome)ui.biome=a.dataset.biome;else if(a.dataset.marker)ui.marker=a.dataset.marker;else if(a.id==='finishDraft'){finishDraft();return;}else if(a.id==='cancelDraft'){ui.draft=null;ui.preview=null;renderMap();}renderOptions();renderMap();});
+$('toolOptions').addEventListener('input',e=>{const t=e.target;if(t.id==='newPinName')ui.pinName=t.value.slice(0,70);else if(t.id==='heightName')ui.heightName=t.value.slice(0,70);else if(t.id==='strokeWidth')ui.strokeWidth=number(t.value,12,2,200);else if(t.id==='biomeSize')ui.biomeSize=number(t.value,48,4,256);else if(t.id==='heightAmount')ui.heightAmount=number(t.value,6,1,96);else if(t.id==='newPinRadius')ui.pinRadius=number(t.value,40,6,400);});
+$('toolOptions').addEventListener('change',e=>{const t=e.target;const v=t.value;if(t.id==='newPinName')ui.pinName=v.slice(0,70);else if(t.id==='heightName')ui.heightName=v.slice(0,70);else if(t.id==='strokeWidth')ui.strokeWidth=number(v,12,2,200);else if(t.id==='biomeSize')ui.biomeSize=number(v,48,4,256);else if(t.id==='heightAmount')ui.heightAmount=number(v,6,1,96);else if(t.id==='roadType')ui.roadType=v;else if(t.id==='routeStage')ui.routeStage=v;else if(t.id==='oneWay')ui.oneWay=t.checked;else if(t.id==='heightType')ui.heightType=v;else if(t.id==='newPinType')ui.pinType=v;else if(t.id==='newPinShape')ui.pinShape=v;else if(t.id==='newPinRadius')ui.pinRadius=number(v,40,6,400);});
 $('visibilityOptions').addEventListener('change',e=>{if(e.target.dataset.visible){ui.visible[e.target.dataset.visible]=e.target.checked;renderMap();}});
-$('inspector').addEventListener('change',e=>{const p=e.target.dataset.prop,ob=selected();if(!p||!ob)return;checkpoint();const value=e.target.type==='checkbox'?e.target.checked:e.target.value;
- if(p==='radius')ob.radius=num(value,40,6,400);else if(p==='width')ob.width=num(value,12,2,200);else if(p==='x')ob.x=num(value,ob.x,0,state.width*CHUNK);else if(p==='y')ob.y=num(value,ob.y,0,state.height*CHUNK);else if(p==='name')ob.name=value.slice(0,70).trim()||'未命名';else if(p==='category')ob.category=PIN_TYPES[value]?value:'other';else if(p==='shape')ob.shape=value==='square'?'square':'circle';else if(p==='type')ob.type=value==='main'?'main':'trail';else if(p==='oneWay')ob.oneWay=!!value;commit();});
-$('inspector').addEventListener('click',e=>{if(e.target.closest('[data-delete]'))deleteSelected();});
-function resize(){const w=Math.round(num($('worldWidth').value,state.width,4,48)),h=Math.round(num($('worldHeight').value,state.height,4,48));if(w===state.width&&h===state.height)return;
- if((w<state.width||h<state.height)&&!confirm(`缩小地图到 ${w} × ${h} 会删除地图范围外的标记和地点，继续吗？`)){updateMeta();return;}
- checkpoint();state.width=w;state.height=h;for(const k of Object.keys(state.tiles)){const [x,y]=k.split(',').map(Number);if(x>=w||y>=h)delete state.tiles[k];}state.places=state.places.filter(p=>p.x<=w*CHUNK&&p.y<=h*CHUNK);
- // Do not silently fold paths onto new borders: remove out-of-range vertices, keeping only valid segments.
- for(const collection of [state.roads,state.strokes])for(const r of collection){r.points=r.points.filter(p=>p[0]>=0&&p[1]>=0&&p[0]<=w*CHUNK&&p[1]<=h*CHUNK);}state.roads=state.roads.filter(r=>r.points.length>=2);state.strokes=state.strokes.filter(r=>r.points.length>=1);
+$('inspector').addEventListener('change',e=>{const prop=e.target.dataset.prop,ob=selected();if(!prop||!ob)return;checkpoint();const v=e.target.type==='checkbox'?e.target.checked:e.target.value;
+ if(prop==='name')ob.name=String(v).slice(0,70).trim()||'未命名';else if(prop==='radius')ob.radius=number(v,ob.radius,6,400);else if(prop==='width')ob.width=number(v,ob.width,2,200);else if(prop==='x')ob.x=number(v,ob.x,0,state.width*CHUNK);else if(prop==='y')ob.y=number(v,ob.y,0,state.height*CHUNK);else if(prop==='category')ob.category=PIN_TYPES[v]?v:'other';else if(prop==='shape')ob.shape=v==='square'?'square':'circle';else if(prop==='type')ob.type=v==='main'?'main':'trail';else if(prop==='stage')ob.stage=v==='draft'?'draft':'final';else if(prop==='oneWay')ob.oneWay=!!v;else if(prop==='kind'){ob.kind=v==='basin'?'basin':'plateau';ob.offsetMeters=Math.abs(ob.offsetMeters)*(ob.kind==='basin'?-1:1);}else if(prop==='offsetMeters')ob.offsetMeters=number(v,ob.offsetMeters,-96,96);commit();});
+$('inspector').addEventListener('click',e=>{if(e.target.closest('[data-delete]'))removeSelected();});
+function resize(){const w=Math.round(number($('worldWidth').value,state.width,4,48)),h=Math.round(number($('worldHeight').value,state.height,4,48));if(w===state.width&&h===state.height)return;
+ if((w<state.width||h<state.height)&&!confirm(`缩小到 ${w} × ${h} 会裁剪地图范围外数据，继续吗？`)){updateMeta();return;}
+ checkpoint();state.width=w;state.height=h;for(const k of Object.keys(state.tiles)){const [x,y]=k.split(',').map(Number);if(x>=w||y>=h)delete state.tiles[k];}
+ state.places=state.places.filter(p=>p.x<=w*CHUNK&&p.y<=h*CHUNK);
+ for(const o of state.biomeMarks){if(o.shape==='rect'){o.w=Math.max(0,Math.min(o.w,w*CHUNK-o.x));o.h=Math.max(0,Math.min(o.h,h*CHUNK-o.y));}else o.points=o.points.filter(p=>p[0]>=0&&p[1]>=0&&p[0]<=w*CHUNK&&p[1]<=h*CHUNK);}
+ state.biomeMarks=state.biomeMarks.filter(o=>o.shape==='rect'?o.x<w*CHUNK&&o.y<h*CHUNK&&o.w>0&&o.h>0:o.points.length>0);
+ for(const arr of [state.roads,state.strokes,state.heightZones])for(const o of arr){o.points=o.points.filter(p=>p[0]>=0&&p[1]>=0&&p[0]<=w*CHUNK&&p[1]<=h*CHUNK);}
+ state.roads=state.roads.filter(o=>o.points.length>=2);state.strokes=state.strokes.filter(o=>o.points.length>=1);state.heightZones=state.heightZones.filter(o=>o.points.length>=3);
  ui.selected=null;ui.draft=null;resetView(true);commit();}
 $('resizeBtn').addEventListener('click',resize);
-function edgeRing(level,zone){const w=state.width,h=state.height;if(w<=2*level||h<=2*level)return;checkpoint();for(let y=level;y<h-level;y++)for(let x=level;x<w-level;x++){if(x!==level&&y!==level&&x!==w-level-1&&y!==h-level-1)continue;const k=key(x,y),tile=state.tiles[k]||{biome:null,zone:null};tile.zone=zone;state.tiles[k]=tile;}commit();}
-$('borderBtn').addEventListener('click',()=>edgeRing(0,'blocked'));
-$('transitionBtn').addEventListener('click',()=>edgeRing(1,'transition'));
-$('moveSpeed').addEventListener('change',e=>{checkpoint();state.speed=num(e.target.value,4,.1,30);commit();});$('dayLength').addEventListener('change',e=>{checkpoint();state.dayMinutes=num(e.target.value,24,1,1440);commit();});
-$('zoomFit').addEventListener('click',()=>{resetView(true);renderMap();});$('zoomIn').addEventListener('click',()=>zoom(.8));$('zoomOut').addEventListener('click',()=>zoom(1.25));
-$('undoBtn').addEventListener('click',undo);$('redoBtn').addEventListener('click',redo);
-function download(name,blob){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);}
-$('exportBtn').addEventListener('click',()=>download('wort-world-layout.json',new Blob([JSON.stringify(toJSON(),null,2)],{type:'application/json;charset=utf-8'})));
-$('importBtn').addEventListener('click',()=>$('fileInput').click());$('fileInput').addEventListener('change',async e=>{const file=e.target.files?.[0];e.target.value='';if(!file)return;try{const raw=JSON.parse(await file.text()),next=normalize(raw);if(!confirm('导入会替换当前规划（可以撤销）。继续吗？'))return;checkpoint();state=next;ui.selected=null;ui.draft=null;resetView(true);commit();}catch(err){alert('导入失败：'+err.message);}});
-$('pngBtn').addEventListener('click',()=>{const image=new Image();image.onload=()=>{try{const W=state.width*CHUNK,H=state.height*CHUNK,scale=Math.min(3,4000/Math.max(W,H)),canvas=document.createElement('canvas');canvas.width=Math.ceil(W*scale);canvas.height=Math.ceil(H*scale);const ctx=canvas.getContext('2d');ctx.fillStyle='#243433';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(image,0,0,canvas.width,canvas.height);canvas.toBlob(file=>{if(file)download('wort-world-layout.png',file);else alert('PNG 导出失败');},'image/png');}catch(error){alert('PNG 导出失败：'+error.message);}};image.onerror=()=>{alert('PNG 渲染失败');}; // Render whole world independently of current viewport.
- const orig=svg.getAttribute('viewBox'),originalWidth=svg.getAttribute('width'),originalHeight=svg.getAttribute('height');svg.setAttribute('viewBox',`0 0 ${state.width*CHUNK} ${state.height*CHUNK}`);svg.setAttribute('width',String(state.width*CHUNK));svg.setAttribute('height',String(state.height*CHUNK));const full=new XMLSerializer().serializeToString(svg);svg.setAttribute('viewBox',orig);if(originalWidth===null)svg.removeAttribute('width');else svg.setAttribute('width',originalWidth);if(originalHeight===null)svg.removeAttribute('height');else svg.setAttribute('height',originalHeight);const fullUrl=URL.createObjectURL(new Blob([full],{type:'image/svg+xml;charset=utf-8'}));image.onload=((old)=>function(){URL.revokeObjectURL(fullUrl);old();})(image.onload);image.onerror=((old)=>function(){URL.revokeObjectURL(fullUrl);old();})(image.onerror);image.src=fullUrl;
- });
-$('resetBtn').addEventListener('click',()=>{if(!confirm('确认清空当前所有规划？可以撤销，但建议先导出 JSON 备份。'))return;checkpoint();state=blank();ui.selected=null;ui.draft=null;resetView(true);commit();});
-document.addEventListener('keydown',e=>{const typing=e.target.matches('input,textarea,select,[contenteditable]');if(e.code==='Space'&&!typing){ui.space=true;e.preventDefault();return;}if(typing)return;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo();return;}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='y'){e.preventDefault();redo();return;}if(e.key==='Escape'){if(ui.draft){ui.draft=null;ui.preview=null;render();}else{ui.selected=null;renderInspector();}return;}if(e.key==='Enter'&&ui.mode==='road'){finishRoad();return;}if((e.key==='Delete'||e.key==='Backspace')&&ui.selected){e.preventDefault();deleteSelected();return;}const k={v:'select',h:'pan',b:'biome',m:'mark',r:'river',c:'canyon',l:'road',p:'pin'}[e.key.toLowerCase()];if(k)setMode(k);});
-document.addEventListener('keyup',e=>{if(e.code==='Space')ui.space=false;});window.addEventListener('blur',()=>{ui.space=false;});
-try{const raw=localStorage.getItem(STORAGE);if(raw)state=normalize(JSON.parse(raw));}catch(e){console.warn('无法读取本地保存',e);}resetView(true);render();
+function edgeRing(level,zone){const w=state.width,h=state.height;if(w<=2*level||h<=2*level)return;checkpoint();for(let y=level;y<h-level;y++)for(let x=level;x<w-level;x++){if(x!==level&&y!==level&&x!==w-level-1&&y!==h-level-1)continue;state.tiles[key(x,y)]={zone};}commit();}
+$('borderBtn').addEventListener('click',()=>edgeRing(0,'blocked'));$('transitionBtn').addEventListener('click',()=>edgeRing(1,'transition'));
+$('moveSpeed').addEventListener('change',e=>{checkpoint();state.speed=number(e.target.value,4,.1,30);commit();});$('dayLength').addEventListener('change',e=>{checkpoint();state.dayMinutes=number(e.target.value,24,1,1440);commit();});
+$('zoomFit').addEventListener('click',()=>{resetView(true);renderMap();});$('zoomIn').addEventListener('click',()=>zoom(.8));$('zoomOut').addEventListener('click',()=>zoom(1.25));$('undoBtn').addEventListener('click',undo);$('redoBtn').addEventListener('click',redo);
+function download(name,blob){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),3000);}
+$('exportBtn').addEventListener('click',()=>{try{download('wort-world-layout-v2.json',new Blob([JSON.stringify(toJSON(true),null,2)],{type:'application/json;charset=utf-8'}));}catch(e){alert('JSON 导出失败：'+e.message);}});
+$('importBtn').addEventListener('click',()=>$('fileInput').click());$('fileInput').addEventListener('change',async e=>{const file=e.target.files?.[0];e.target.value='';if(!file)return;try{const next=normalize(JSON.parse(await file.text()));if(!confirm('导入会覆盖当前规划（可以撤销）。继续吗？'))return;checkpoint();state=next;ui.selected=null;ui.draft=null;resetView(true);commit();}catch(err){alert('导入失败：'+err.message);}});
+$('pngBtn').addEventListener('click',()=>{const image=new Image();image.onload=()=>{try{const {w,h}=dims(),scale=Math.min(3,4000/Math.max(w,h)),canvas=document.createElement('canvas');canvas.width=Math.ceil(w*scale);canvas.height=Math.ceil(h*scale);const ctx=canvas.getContext('2d');ctx.fillStyle='#293939';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(image,0,0,canvas.width,canvas.height);canvas.toBlob(file=>{if(file)download('wort-world-overview.png',file);else alert('PNG 导出失败');},'image/png');}catch(error){alert('PNG 导出失败：'+error.message);}};image.onerror=()=>alert('PNG 渲染失败');const {w,h}=dims(),orig=svg.getAttribute('viewBox'),oldW=svg.getAttribute('width'),oldH=svg.getAttribute('height');svg.setAttribute('viewBox',`0 0 ${w} ${h}`);svg.setAttribute('width',String(w));svg.setAttribute('height',String(h));const xml=new XMLSerializer().serializeToString(svg);svg.setAttribute('viewBox',orig);if(oldW==null)svg.removeAttribute('width');else svg.setAttribute('width',oldW);if(oldH==null)svg.removeAttribute('height');else svg.setAttribute('height',oldH);const url=URL.createObjectURL(new Blob([xml],{type:'image/svg+xml;charset=utf-8'}));image.onload=((f)=>function(){URL.revokeObjectURL(url);f();})(image.onload);image.onerror=((f)=>function(){URL.revokeObjectURL(url);f();})(image.onerror);image.src=url;});
+$('resetBtn').addEventListener('click',()=>{if(!confirm('清空所有规划？建议先导出 JSON 备份。'))return;checkpoint();state=blank();ui.selected=null;ui.draft=null;resetView(true);commit();});
+document.addEventListener('keydown',e=>{const typing=e.target.matches('input,textarea,select,[contenteditable]');if(e.code==='Space'&&!typing){ui.space=true;e.preventDefault();return;}if(typing)return;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo();return;}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='y'){e.preventDefault();redo();return;}if(e.key==='Escape'){if(ui.draft){ui.draft=null;ui.preview=null;render();}else{ui.selected=null;renderInspector();renderMap();}return;}if(e.key==='Enter'&&['road','height'].includes(ui.mode)){finishDraft();return;}if((e.key==='Delete'||e.key==='Backspace')&&ui.selected){e.preventDefault();removeSelected();return;}const mode={v:'select',h:'pan',b:'biome',m:'mark',r:'river',c:'canyon',l:'road',p:'pin',t:'height'}[e.key.toLowerCase()];if(mode)setMode(mode);});
+document.addEventListener('keyup',e=>{if(e.code==='Space')ui.space=false;});window.addEventListener('blur',()=>ui.space=false);
+try{const stored=localStorage.getItem(STORAGE)||localStorage.getItem(OLD_STORAGE);if(stored)state=normalize(JSON.parse(stored));}catch(e){console.warn('无法读取本地保存',e);}resetView(true);render();
 })();
 </script>
 </body>
