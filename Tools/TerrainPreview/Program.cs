@@ -9,6 +9,7 @@ namespace Wort.Tools
     /// <summary>
     /// 用法：dotnet run -c Release -- [--seed N] [--out DIR]
     ///       dotnet run -c Release -- --layout ../../Assets/Wort/Data/Layout/Test8x8.json [--out DIR]（layout 管线，见 LayoutMode）
+    ///       加 --debug：打开统一调试输出（生成核心的 GenDebug.Log、各模式的统计、高度 dump），不影响生成结果。
     /// 输出：biome.png / height.png（俯视）、shear_overview.png、shear_*.png（1080p 相机视野，orthoSize 9.5，shear 1）。
     /// </summary>
     public static class Program
@@ -30,7 +31,7 @@ namespace Wort.Tools
                 if (args[i] == "--chunks") chunks = int.Parse(args[i + 1]);
                 if (args[i] == "--refresh") refresh = int.Parse(args[i + 1]);
             }
-            foreach (var a in args) { if (a == "--terrace") terrace = true; if (a == "--random") random = true; }
+            foreach (var a in args) { if (a == "--terrace") terrace = true; if (a == "--random") random = true; if (a == "--debug") GenDebug.Log = new System.Text.StringBuilder(); }
             if (random) return RandomMode.Run(seed, refresh, outDir);
             if (terrace) return TerraceMode.Run(seed, outDir, chunks);
             if (layout != null) return LayoutMode.Run(layout, outDir);

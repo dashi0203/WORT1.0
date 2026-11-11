@@ -29,14 +29,10 @@ namespace Wort.Tools
                 var r = RandomRegion.Refresh(baked, cls, chunks, cands, seed, 1, k, s);
                 long ms = sw.ElapsedMilliseconds;
                 if (!r.Ok) fails++;
-                Console.WriteLine($"刷新 {k + 1}：{(r.Ok ? "通过" : "失败")}，尝试 {r.Attempts} 次，{ms}ms，出入口 " + string.Join(" ", r.Entrances.ConvertAll(e => e.Open ? "开" : "封")));
+                Console.WriteLine($"刷新 {k + 1}：{(r.Ok ? "通过" : "失败")}，尝试 {r.Attempts} 次，{ms}ms，出入口 " + string.Join(" ", r.Entrances.ConvertAll(e => e.Open ? "开" : "封")) + $"，checksum 0x{r.Map.Checksum():X8}");
+                if (GenDebug.On) File.WriteAllBytes(Path.Combine(outDir, $"heights_{k + 1}.bin"), System.Linq.Enumerable.SelectMany(r.Map.Height, v => BitConverter.GetBytes(v)).ToArray()); // 每格高度（int32 小端），清理 / 重构时逐格比对用
                 foreach (var line in r.Report) Console.WriteLine("  " + line);
-                if (k == 0 && Environment.GetEnvironmentVariable("EDGE_DUMP") != null)
-                {
-                    var mm = r.Map; int Wd = mm.W;
-                    for (int zz = 259; zz >= 250; zz--) { var sb = new System.Text.StringBuilder($"z{zz}:"); for (int xx = 200; xx < 240; xx += 2) sb.Append($"{mm.Height[zz * Wd + xx],3}"); Console.WriteLine(sb); }
-                    Console.WriteLine("east x 250..259 at z=220:" + string.Join(",", System.Linq.Enumerable.Range(250, 10).Select(xx => mm.Height[220 * Wd + xx])));
-                }
+                if (GenDebug.On && GenDebug.Log.Length > 0) { Console.Write(GenDebug.Log); GenDebug.Log.Clear(); }
                 Draw(r, baked, r.Classes ?? cls).Save(Path.Combine(outDir, $"refresh_{k + 1}.png"));
                 Relief(r, r.Classes ?? cls).Save(Path.Combine(outDir, $"relief_{k + 1}.png"));
                 Shear(r).Save(Path.Combine(outDir, $"shear_{k + 1}.png"));

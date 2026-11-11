@@ -37,7 +37,6 @@ namespace Wort.Generation
     /// </summary>
     public static class TerraceField
     {
-        public static System.Text.StringBuilder Debug;
         /// <summary>荒原最低海拔（层）。</summary>
         public const int MoorMinHeight = 8;
         public const byte Ground = 0, Plateau = 1, Plateau2 = 2, Basin = 3, Border = 4;
@@ -1014,7 +1013,7 @@ namespace Wort.Generation
                         placed = true; good = g2; goodCount = newCount; break;
                     }
                     if (placed) { anyPlaced = true; continue; }
-                    Debug?.AppendLine($"round {round} zone cls={zoneCls[target]} size={sizes[target]} cands={cands.Count} geomFail={fGeom} lostOrNoGain={fLost}");
+                    GenDebug.Log?.AppendLine($"round {round} zone cls={zoneCls[target]} size={sizes[target]} cands={cands.Count} geomFail={fGeom} lostOrNoGain={fLost}");
                     tried.Add(key);
                     // 连不上的小盆地 / 小坑：抬到只低 1 层（能跳出来）
                     if (zoneCls[target] == Basin || (zoneCls[target] == Ground && sizes[target] < 200))

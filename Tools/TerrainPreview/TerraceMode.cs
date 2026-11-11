@@ -16,7 +16,6 @@ namespace Wort.Tools
         {
             Directory.CreateDirectory(outDir);
             var sw = Stopwatch.StartNew();
-            if (Environment.GetEnvironmentVariable("DEBUG_UNREACH") != null) TerraceField.Debug = new System.Text.StringBuilder();
             var map = TerraceField.Generate(new TerraceFieldSettings { Seed = seed, Chunks = chunks }, out var cls);
             long tA = sw.ElapsedMilliseconds;
             var voxels = new RegionVoxels(map);
@@ -28,12 +27,12 @@ namespace Wort.Tools
             Console.WriteLine($"terrace seed {seed}: 生成 {tA}ms, 体素 + 网格 {tB - tA}ms");
             foreach (var kv in map.Stats) Console.WriteLine($"  {kv.Key} = {kv.Value}");
             Console.WriteLine($"  checksum = 0x{map.Checksum():X8}");
-            if (Environment.GetEnvironmentVariable("DEBUG_UNREACH") != null)
+            if (GenDebug.On)
             {
                 var cnt = new int[5]; var hs = new SortedDictionary<int,int>();
                 for (int i = 0; i < cls.Length; i++) if (map.Has(i, CellFlags.Unreachable)) { cnt[cls[i]]++; hs[map.Height[i]] = hs.GetValueOrDefault(map.Height[i]) + 1; }
                 Console.WriteLine("  unreachable by class: " + string.Join(",", cnt) + " heights: " + string.Join(" ", hs));
-                Console.Write(TerraceField.Debug);
+                Console.Write(GenDebug.Log);
                 Console.WriteLine($"  spawn h={map.Height[map.Index(map.SpawnX,map.SpawnZ)]}");
                 var lab = Grid.Label(map.W, map.H, i => cls[i] == TerraceField.Ground, (a, b) => true, out var sz);
                 var l2 = new List<int>(sz); l2.Sort(); l2.Reverse();
@@ -43,7 +42,7 @@ namespace Wort.Tools
                 Console.WriteLine("  unreachable ground by comp size: " + string.Join(" ", ul));
             }
 
-            if (Environment.GetEnvironmentVariable("BAND_STATS") != null)
+            if (GenDebug.On)
             {
                 int b0 = 64;
                 int bandH = (map.H - 2 * b0) / 3;

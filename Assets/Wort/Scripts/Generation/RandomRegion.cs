@@ -210,10 +210,16 @@ namespace Wort.Generation
             var rng = new Rng(seed);
             var region = RegionMask(m, cls, chunks);
             R.InRegion = region;
+            // 计算窗口：随机区域外扩 12 格（接缝、跳跃半径都在里面）；只在窗口里循环，世界再大耗时也不变
+            int wx0 = W, wz0 = H, wx1 = 0, wz1 = 0;
+            for (int z = 0; z < H; z++) for (int x = 0; x < W; x++) if (region[z * W + x]) { if (x < wx0) wx0 = x; if (z < wz0) wz0 = z; if (x > wx1) wx1 = x; if (z > wz1) wz1 = z; }
+            wx0 = Math.Max(0, wx0 - 12); wz0 = Math.Max(0, wz0 - 12); wx1 = Math.Min(W - 1, wx1 + 12); wz1 = Math.Min(H - 1, wz1 + 12);
+            var win = new int[(wx1 - wx0 + 1) * (wz1 - wz0 + 1)];
+            { int k = 0; for (int z = wz0; z <= wz1; z++) for (int x = wx0; x <= wx1; x++) win[k++] = z * W + x; }
             // 区域里的格子重新生成，不再算外圈（Border）；外面的格子保持原分类
             var clsBaked = cls;
             cls = (byte[])cls.Clone();
-            for (int i = 0; i < N; i++) if (region[i]) cls[i] = TerraceField.Ground;
+            foreach (int i in win) if (region[i]) cls[i] = TerraceField.Ground;
             R.Classes = cls;
 
             // ---------- 1. 抽开放的出入口 ----------
@@ -230,16 +236,14 @@ namespace Wort.Generation
             }
 
             // ---------- 2. 接缝带：离区域边 ≤ SeamWidth 的格；房间区 = 其余 ----------
-            var notRegion = new bool[N];
-            for (int i = 0; i < N; i++) notRegion[i] = !region[i];
             var distOut = Grid.DistanceInside(region, W, H); // 到区域外最近格的距离
             var seam = new bool[N];
             var inner = new bool[N];
             var fSeam = new Fbm(Hash.Of(seed, 11), 9, 2);
             var fSeamBig = new Fbm(Hash.Of(seed, 12), 22, 2);
             var fSeamMid = new Fbm(Hash.Of(seed, 16), 11, 2);
-            for (int z = 0; z < H; z++)
-                for (int x = 0; x < W; x++)
+            for (int z = wz0; z <= wz1; z++)
+                for (int x = wx0; x <= wx1; x++)
                 {
                     int i = z * W + x;
                     if (!region[i]) continue;
@@ -258,14 +262,14 @@ namespace Wort.Generation
             var mass = new bool[N];
             {
                 int ix0 = W, iz0 = H, ix1 = 0, iz1 = 0, cntIn = 0;
-                for (int i = 0; i < N; i++) if (inner[i]) { int x = i % W, z = i / W; ix0 = Math.Min(ix0, x); iz0 = Math.Min(iz0, z); ix1 = Math.Max(ix1, x); iz1 = Math.Max(iz1, z); cntIn++; }
+                foreach (int i in win) if (inner[i]) { int x = i % W, z = i / W; ix0 = Math.Min(ix0, x); iz0 = Math.Min(iz0, z); ix1 = Math.Max(ix1, x); iz1 = Math.Max(iz1, z); cntIn++; }
                 double ccx = ix0 + (ix1 - ix0) * (0.3 + 0.4 * rng.Next()), ccz = iz0 + (iz1 - iz0) * (0.3 + 0.4 * rng.Next());
                 double rad = 0.5 * Math.Min(ix1 - ix0, iz1 - iz0) + 1;
                 var fBA = new Fbm(Hash.Of(seed, 14), 30, 3);
                 var fBB = new Fbm(Hash.Of(seed, 15), 12, 2);
                 var bv = new double[N];
                 var vals = new List<double>();
-                for (int i = 0; i < N; i++)
+                foreach (int i in win)
                 {
                     if (!inner[i]) continue;
                     int x = i % W, z = i / W;
@@ -276,23 +280,23 @@ namespace Wort.Generation
                 vals.Sort();
                 double thr = vals.Count > 0 ? vals[(int)((1 - s.RoomAreaShare) * (vals.Count - 1))] : 0;
                 var blob = new bool[N];
-                for (int i = 0; i < N; i++) blob[i] = inner[i] && bv[i] > thr;
+                foreach (int i in win) blob[i] = inner[i] && bv[i] > thr;
                 blob = Grid.OpenRound(blob, W, H, 3.0);
                 var bl = Grid.Label(W, H, i => blob[i], (a2, b2) => true, out var bsz);
                 int bigC = 0; for (int c = 1; c < bsz.Count; c++) if (bsz[c] > bsz[bigC]) bigC = c;
-                for (int i = 0; i < N; i++)
+                foreach (int i in win)
                 {
                     bool keep = blob[i] && bl[i] == bigC;
                     if (inner[i] && !keep) mass[i] = true;
                     inner[i] = keep;
                 }
             }
-            for (int i = 0; i < N; i++) if (region[i] && !inner[i] && !mass[i]) seam[i] = true;
+            foreach (int i in win) if (region[i] && !inner[i] && !mass[i]) seam[i] = true;
             R.Seam = seam;
 
             // ---------- 3. 切房间（按房间区的总面积） ----------
             int area = 0, bx0 = W, bz0 = H, bx1 = 0, bz1 = 0;
-            for (int i = 0; i < N; i++)
+            foreach (int i in win)
                 if (inner[i])
                 {
                     area++;
@@ -474,7 +478,7 @@ namespace Wort.Generation
             // 房间的角磨圆：每个矩形的房间格做一次圆形开运算，被削掉的角并进墙
             {
                 var free = new bool[N];
-                for (int i = 0; i < N; i++) free[i] = inner[i] && !wall[i];
+                foreach (int i in win) free[i] = inner[i] && !wall[i];
                 for (int k = 0; k < rects.Count; k++)
                 {
                     var one = new bool[N];
@@ -495,7 +499,7 @@ namespace Wort.Generation
             // 每个矩形取最大的一块当房间
             var bestComp = new int[rects.Count];
             for (int k = 0; k < rects.Count; k++) bestComp[k] = -1;
-            for (int i = 0; i < N; i++)
+            foreach (int i in win)
             {
                 if (lab[i] < 0) continue;
                 int k = wid[i];
@@ -509,7 +513,7 @@ namespace Wort.Generation
                 rectToRoom[k] = R.Rooms.Count;
                 R.Rooms.Add(new RegionRoom { X0 = rects[k].X0, Z0 = rects[k].Z0, X1 = rects[k].X1, Z1 = rects[k].Z1, Area = lsz[bestComp[k]] });
             }
-            for (int i = 0; i < N; i++)
+            foreach (int i in win)
             {
                 if (lab[i] < 0) continue;
                 int k = wid[i];
@@ -524,7 +528,7 @@ namespace Wort.Generation
             // ---------- 5. 相邻关系：墙两侧各是哪个房间、能开口的长度 ----------
             // 分隔格：墙格，半径 2 内同时有两个不同房间的格
             var sepCells = new Dictionary<long, List<int>>();
-            for (int i = 0; i < N; i++)
+            foreach (int i in win)
             {
                 if (!wall[i] || !inner[i]) continue;
                 int x = i % W, z = i / W;
@@ -659,7 +663,7 @@ namespace Wort.Generation
             var fFloor = new Fbm(Hash.Of(seed, 43), 24, 2);
             var Ff = new double[N];
             var fl = new int[N];
-            for (int i = 0; i < N; i++)
+            foreach (int i in win)
             {
                 if (!region[i]) continue;
                 int x = i % W, z = i / W;
@@ -674,7 +678,7 @@ namespace Wort.Generation
             }
             // 相邻格最多差 1 层（几遍松弛）
             for (int pass = 0; pass < 4; pass++)
-                for (int i = 0; i < N; i++)
+                foreach (int i in win)
                 {
                     if (!region[i]) continue;
                     int x = i % W, z = i / W;
@@ -688,13 +692,13 @@ namespace Wort.Generation
             int baseH;
             {
                 long sum = 0; int cnt = 0;
-                for (int i = 0; i < N; i++) if (inner[i]) { sum += fl[i]; cnt++; }
+                foreach (int i in win) if (inner[i]) { sum += fl[i]; cnt++; }
                 baseH = cnt > 0 ? (int)Math.Floor(sum / (double)cnt + 0.5) : m.Height[R.Entrances[openIdx[0]].Z * W + R.Entrances[openIdx[0]].X];
             }
             var floor = new int[nr];
             {
                 var fs = new long[nr]; var fc = new int[nr];
-                for (int i = 0; i < N; i++) if (roomOf[i] >= 0) { fs[roomOf[i]] += fl[i]; fc[roomOf[i]]++; }
+                foreach (int i in win) if (roomOf[i] >= 0) { fs[roomOf[i]] += fl[i]; fc[roomOf[i]]++; }
                 for (int k = 0; k < nr; k++) floor[k] = fc[k] > 0 ? (int)Math.Floor(fs[k] / (double)fc[k] + 0.5) : baseH;
             }
             var depth = GraphDist(nr, R.Edges, entRoom[openIdx[0]]);
@@ -706,7 +710,7 @@ namespace Wort.Generation
             var fRise = new Fbm(Hash.Of(seed, 42), 15, 2);
             var distWall = Grid.DistanceInside(Invert(wall, inner), W, H);
             var distWall2 = Grid.DistanceInside(wall, W, H); // 墙格到墙外的距离（墙有多厚）
-            for (int i = 0; i < N; i++)
+            foreach (int i in win)
             {
                 if (!region[i]) continue;
                 m.Slope[i] = -1;
@@ -718,7 +722,7 @@ namespace Wort.Generation
                     h[i] = fl[i] + (distWall[i] >= 3 && fBump.Sample(x, z) > 0.5 ? 1 : 0);
                 }
             }
-            for (int i = 0; i < N; i++)
+            foreach (int i in win)
             {
                 if (!wall[i] || !inner[i]) continue;
                 int x = i % W, z = i / W, hi = int.MinValue;
@@ -734,10 +738,7 @@ namespace Wort.Generation
             }
             // 外围山体（有机轮廓切掉的那一圈）：从房间一侧往外每 ~2.5m 升 1 层，起点比房间高 2–3 层，最高 +6
             {
-                var notRoomArea = new bool[N];
-                for (int i = 0; i < N; i++) notRoomArea[i] = !(inner[i]);
-                var dFromRooms = Grid.DistanceInside(notRoomArea, W, H);
-                for (int i = 0; i < N; i++)
+                foreach (int i in win)
                 {
                     if (!mass[i]) continue;
                     int x = i % W, z = i / W;
@@ -750,7 +751,7 @@ namespace Wort.Generation
             }
             // 接缝带：贴外圈不可通行的地方沿用外圈高度（崖面往里退），贴固定平地的地方从邻居高度渐变到房间地面
             var near = NearestOutside(region, W, H, s.SeamWidth + 3);
-            for (int i = 0; i < N; i++)
+            foreach (int i in win)
             {
                 if (!seam[i]) continue;
                 int o = near[i];
@@ -778,7 +779,7 @@ namespace Wort.Generation
             }
             // 融合区每格最多 1 层（贴外圈高地的台阶不动）
             for (int pass = 0; pass < 8; pass++)
-                for (int i = 0; i < N; i++)
+                foreach (int i in win)
                 {
                     if (!seam[i] || (near[i] >= 0 && clsBaked[near[i]] == TerraceField.Border)) continue;
                     int x = i % W, z = i / W, lo = int.MinValue, hi2 = int.MaxValue;
@@ -794,7 +795,7 @@ namespace Wort.Generation
                     if (hi2 != int.MaxValue && h[i] > hi2) h[i] = hi2;
                 }
             // 房间区外沿那道墙要比旁边能走进来的融合区高 ≥ 2 层（从融合区爬不上墙）
-            for (int i = 0; i < N; i++)
+            foreach (int i in win)
             {
                 if (!wall[i] || !(inner[i] || mass[i])) continue;
                 int x = i % W, z = i / W, hs = int.MinValue;
@@ -882,7 +883,7 @@ namespace Wort.Generation
             // 开口 / 通道南侧 3 格内的墙压到最低（比两侧地面和接缝带高 2 层），减少错切视角下的遮挡；其余靠遮挡虚化（GDD）
             {
                 var opening = OpeningMask(m, roomOf, wall, inner, corridor, N);
-                for (int i = 0; i < N; i++)
+                foreach (int i in win)
                 {
                     if (!opening[i]) continue;
                     int x = i % W, z = i / W;
@@ -909,7 +910,7 @@ namespace Wort.Generation
             {
                 var fScree = new Fbm(Hash.Of(seed, 61), 5, 2);
                 var hc = (int[])h.Clone();
-                for (int i = 0; i < N; i++)
+                foreach (int i in win)
                 {
                     if (roomOf[i] < 0 || m.HasWater(i) || corridor[i]) continue;
                     int x = i % W, z = i / W, top = int.MinValue;
@@ -927,7 +928,7 @@ namespace Wort.Generation
                 // 山体朝外的崖脚（接缝带里能走进来的部分）：偶尔长 1 层高的小台地，打破光滑的长崖面。
                 // 只放在崖比崖脚高 ≥ 3 层的地方；之后的跳跃安全会再把附近的崖顶抬到比它高 ≥ 2 层（负责人 2026-11-11）
                 var fLedge = new Fbm(Hash.Of(seed, 62), 4, 2);
-                for (int i = 0; i < N; i++)
+                foreach (int i in win)
                 {
                     if (!seam[i] || corridor[i] || m.HasWater(i)) continue;
                     if (near[i] >= 0 && clsBaked[near[i]] == TerraceField.Border) continue;
@@ -943,7 +944,7 @@ namespace Wort.Generation
                     h[i] = hc[i] + 1; m.Flags[i] |= CellFlags.Scree;
                 }
                 // 崖脚贴着 chunk 外面的固定地面时（接缝带太窄），在山体最外一圈里偶尔挖出 1 层高的小台地（固定格不动）
-                for (int i = 0; i < N; i++)
+                foreach (int i in win)
                 {
                     if (!(mass[i] || (wall[i] && !corridor[i])) || !region[i]) continue;
                     if (seam[i]) continue;
@@ -1038,7 +1039,7 @@ namespace Wort.Generation
             R.Grass = grass; R.Rock = rock;
 
             // Biome：房间沿用所在大区；墙顶按针叶林（以后接植物层）
-            for (int i = 0; i < N; i++)
+            foreach (int i in win)
                 if (region[i] && wall[i] && inner[i])
                 {
                     for (int b = 0; b < m.Weights.Length; b++) m.Weights[b][i] = 0;
@@ -1048,7 +1049,7 @@ namespace Wort.Generation
             // ---------- 12b. 跳跃安全（GDD 第 5 节）：墙 / 山体 / 贴高地的台阶，顶面比周围 JumpReach+1 格内所有能站的地方高 ≥ JumpUp+1 ----------
             var noStand = new bool[N];
             var ringSeamM = new bool[N];
-            for (int i = 0; i < N; i++)
+            foreach (int i in win)
             {
                 if (!region[i]) continue;
                 bool ringSeam = seam[i] && near[i] >= 0 && clsBaked[near[i]] == TerraceField.Border;
@@ -1060,7 +1061,7 @@ namespace Wort.Generation
                 int rr = (int)Math.Ceiling(s.JumpReach) + 1;
                 var hc = (int[])h.Clone();
                 for (int i = 0; i < N; i++) req[i] = int.MinValue;
-                for (int i = 0; i < N; i++)
+                foreach (int i in win)
                 {
                     if (!noStand[i]) continue;
                     int x = i % W, z = i / W, top = int.MinValue;
@@ -1082,7 +1083,7 @@ namespace Wort.Generation
                 for (int pass = 0; pass < 3; pass++)
                 {
                     var hp = (int[])h.Clone();
-                    for (int i = 0; i < N; i++)
+                    foreach (int i in win)
                     {
                         if (!noStand[i] || m.Has(i, CellFlags.Spire) || ringSeamM[i]) continue; // 贴外圈的台阶不平滑（否则沿 chunk 边出直崖）
                         int x = i % W, z = i / W, sum = 0, cnt = 0;
@@ -1099,7 +1100,7 @@ namespace Wort.Generation
                     }
                 }
                 for (int pass = 0; pass < 2; pass++)
-                    for (int i = 0; i < N; i++)
+                    foreach (int i in win)
                     {
                         if (!noStand[i] || m.Has(i, CellFlags.Spire) || ringSeamM[i]) continue;
                         int x = i % W, z = i / W, hiN = int.MinValue, loN = int.MaxValue, nn = 0;
@@ -1116,7 +1117,7 @@ namespace Wort.Generation
             }
             // 削掉孤立的高格：比 8 个邻居都高的墙 / 山体格（含石柱单格），压到邻居最高值（不低于跳跃安全要求）
             for (int pass = 0; pass < 2; pass++)
-                for (int i = 0; i < N; i++)
+                foreach (int i in win)
                 {
                     if (!noStand[i] || ringSeamM[i]) continue;
                     int x = i % W, z = i / W, mx = int.MinValue, higherOrEq = 0;
@@ -1140,7 +1141,7 @@ namespace Wort.Generation
             for (int pass = 0; pass < 10; pass++)
             {
                 bool changed = false;
-                for (int i = 0; i < N; i++)
+                foreach (int i in win)
                 {
                     if (!noStand[i]) continue;
                     int x = i % W, z = i / W, best = h[i];
@@ -1311,9 +1312,12 @@ namespace Wort.Generation
         }
 
         /// <summary>可达性：forward = 从 starts 出发能到的格；reverse = 能走到 starts 的格。blocked 里的格不能走。</summary>
-        internal static bool[] Reach(RegionMap m, byte[] cls, IEnumerable<int> starts, bool[] blocked, bool reverse)
+        internal static bool[] Reach(RegionMap m, byte[] cls, IEnumerable<int> starts, bool[] blocked, bool reverse,
+            int rx0 = 0, int rz0 = 0, int rx1 = int.MaxValue, int rz1 = int.MaxValue)
         {
             int W = m.W, H = m.H;
+            // 只在 [rx0, rx1] × [rz0, rz1] 里搜（校验用：随机区域外扩一个 chunk）
+            if (rx1 > W - 1) rx1 = W - 1; if (rz1 > H - 1) rz1 = H - 1;
             var seen = new bool[W * H];
             var st = new Stack<int>();
             foreach (int s0 in starts) { if (s0 < 0) continue; seen[s0] = true; st.Push(s0); }
@@ -1323,7 +1327,7 @@ namespace Wort.Generation
                 for (int d = 0; d < 4; d++)
                 {
                     int nx = x + Grid.DX4[d], nz = z + Grid.DZ4[d];
-                    if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
+                    if (nx < rx0 || nz < rz0 || nx > rx1 || nz > rz1) continue;
                     int n = nz * W + nx;
                     if (seen[n] || (blocked != null && blocked[n])) continue;
                     bool ok = reverse
@@ -1338,7 +1342,7 @@ namespace Wort.Generation
                 {
                     var (jx, jz) = JumpOffsets[k];
                     int nx = x + jx, nz = z + jz;
-                    if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
+                    if (nx < rx0 || nz < rz0 || nx > rx1 || nz > rz1) continue;
                     int n = nz * W + nx;
                     if (seen[n] || (blocked != null && blocked[n])) continue;
                     if (!TerraceField.Walkable(m, cls, n)) continue;
@@ -1405,8 +1409,13 @@ namespace Wort.Generation
             var closed = new List<int>();
             foreach (var e in R.Entrances) (e.Open ? opens : closed).Add(e.Z * W + e.X);
             bool ok = true;
-            var fwd = Reach(m, cls, new[] { opens[0] }, null, false);
-            var back = Reach(m, cls, new[] { opens[0] }, null, true);
+            // 搜索范围：随机区域外扩一个 chunk
+            int vx0 = W, vz0 = m.H, vx1 = 0, vz1 = 0;
+            for (int i = 0; i < N; i++) if (region[i]) { int x = i % W, z = i / W; if (x < vx0) vx0 = x; if (z < vz0) vz0 = z; if (x > vx1) vx1 = x; if (z > vz1) vz1 = z; }
+            int cs = m.Settings.ChunkSize;
+            vx0 = Math.Max(0, vx0 - cs); vz0 = Math.Max(0, vz0 - cs); vx1 += cs; vz1 += cs;
+            var fwd = Reach(m, cls, new[] { opens[0] }, null, false, vx0, vz0, vx1, vz1);
+            var back = Reach(m, cls, new[] { opens[0] }, null, true, vx0, vz0, vx1, vz1);
             // 1. 开放出入口互通
             foreach (int o in opens) if (!fwd[o] || !back[o]) { ok = false; lines.Add("[失败] 开放的出入口之间不通"); break; }
             // 2. 能走到的地方都能出去
@@ -1420,7 +1429,7 @@ namespace Wort.Generation
             if (trapped > 0)
             {
                 ok = false; lines.Add($"[失败] {trapped} 格进得去出不来");
-                if (Environment.GetEnvironmentVariable("RR_DEBUG") != null)
+                if (GenDebug.On)
                     for (int i = 0; i < N; i++)
                         if (region[i] && fwd[i] && !back[i])
                         {
@@ -1447,7 +1456,7 @@ namespace Wort.Generation
             var block = new bool[N];
             for (int i = 0; i < N; i++) block[i] = corridor[i];
             var starts = new List<int>(opens); starts.AddRange(closed);
-            var outside = Reach(m, cls, starts, block, false);
+            var outside = Reach(m, cls, starts, block, false, vx0, vz0, vx1, vz1);
             int leak = 0;
             for (int i = 0; i < N; i++) if (outside[i] && R.RoomOf[i] >= 0) leak++;
             if (leak > 0) { ok = false; lines.Add($"[失败] 不经出入口也能进房间（{leak} 格）"); }
