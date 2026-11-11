@@ -268,16 +268,31 @@ namespace Wort.Generation
                 bool canV = r0.W >= 2 * s.MinSide, canH = r0.H >= 2 * s.MinSide;
                 bool vertical = canV && (!canH || r0.W > r0.H || (r0.W == r0.H && rng.Next() < 0.5));
                 int len = vertical ? r0.W : r0.H;
-                double tt = 0.5 + (rng.Next() - 0.5) * (0.3 + 0.7 * s.SizeVariance);
-                int cut = s.MinSide + (int)Math.Floor((len - 2 * s.MinSide) * tt + 0.5);
+                int cut = 0;
+                for (int tryCut = 0; tryCut < 8; tryCut++)
+                {
+                    double tt = 0.5 + (rng.Next() - 0.5) * (0.3 + 0.7 * s.SizeVariance);
+                    cut = s.MinSide + (int)Math.Floor((len - 2 * s.MinSide) * tt + 0.5);
+                    // 刀口不能落在出入口通道的延长线上（两侧各留 4m），否则通道会顺着墙走
+                    int line = (vertical ? r0.X0 : r0.Z0) + cut;
+                    bool hit = false;
+                    foreach (var e in R.Entrances)
+                    {
+                        bool corridorAlongCut = vertical ? (e.Dir == 0 || e.Dir == 2) : (e.Dir == 1 || e.Dir == 3);
+                        if (!corridorAlongCut) continue;
+                        int axis = vertical ? e.X : e.Z;
+                        if (Math.Abs(line - axis) <= 4) { hit = true; break; }
+                    }
+                    if (!hit) break;
+                }
                 Rect a = r0, b = r0;
                 if (vertical) { a.X1 = r0.X0 + cut; b.X0 = r0.X0 + cut; }
                 else { a.Z1 = r0.Z0 + cut; b.Z0 = r0.Z0 + cut; }
                 rects[pick] = a; rects.Add(b);
             }
             // 矩形编号（墙线用扭曲坐标取，弄弯）
-            var fWx = new Fbm(Hash.Of(seed, 21), 10, 2);
-            var fWz = new Fbm(Hash.Of(seed, 22), 10, 2);
+            var fWx = new Fbm(Hash.Of(seed, 21), 14, 3);
+            var fWz = new Fbm(Hash.Of(seed, 22), 14, 3);
             int RectAt(double x, double z)
             {
                 for (int k = 0; k < rects.Count; k++)
@@ -291,7 +306,7 @@ namespace Wort.Generation
                 {
                     int i = z * W + x;
                     if (!inner[i]) continue;
-                    int k = RectAt(x + 0.5 + 1.6 * fWx.Sample(x, z), z + 0.5 + 1.6 * fWz.Sample(x, z));
+                    int k = RectAt(x + 0.5 + 3.2 * fWx.Sample(x, z), z + 0.5 + 3.2 * fWz.Sample(x, z));
                     if (k < 0) k = RectAt(x + 0.5, z + 0.5);
                     wid[i] = k;
                 }
@@ -322,6 +337,23 @@ namespace Wort.Generation
                         }
                     }
                 }
+            // 房间的角磨圆：每个矩形的房间格做一次圆形开运算，被削掉的角并进墙
+            {
+                var free = new bool[N];
+                for (int i = 0; i < N; i++) free[i] = inner[i] && !wall[i];
+                for (int k = 0; k < rects.Count; k++)
+                {
+                    var one = new bool[N];
+                    var rk = rects[k];
+                    for (int z = Math.Max(0, rk.Z0 - 4); z < Math.Min(H, rk.Z1 + 4); z++)
+                        for (int x = Math.Max(0, rk.X0 - 4); x < Math.Min(W, rk.X1 + 4); x++)
+                        { int i = z * W + x; one[i] = free[i] && wid[i] == k; }
+                    var opened = Grid.OpenRound(one, W, H, 2.5);
+                    for (int z = Math.Max(0, rk.Z0 - 4); z < Math.Min(H, rk.Z1 + 4); z++)
+                        for (int x = Math.Max(0, rk.X0 - 4); x < Math.Min(W, rk.X1 + 4); x++)
+                        { int i = z * W + x; if (one[i] && !opened[i]) wall[i] = true; }
+                }
+            }
             // 房间格 = 房间区里不是墙的格；按矩形编号分房间，太小的（< 30 格）并进墙
             var roomOf = new int[N];
             for (int i = 0; i < N; i++) roomOf[i] = -1;
@@ -643,6 +675,32 @@ namespace Wort.Generation
                 }
             }
             R.Corridor = corridor;
+
+            // 开口 / 通道南侧 3 格内的墙压到最低（比两侧地面和接缝带高 2 层），减少错切视角下的遮挡；其余靠遮挡虚化（GDD）
+            {
+                var opening = OpeningMask(m, roomOf, wall, inner, corridor, N);
+                for (int i = 0; i < N; i++)
+                {
+                    if (!opening[i]) continue;
+                    int x = i % W, z = i / W;
+                    for (int dz = 1; dz <= 3; dz++)
+                        for (int dx = -1; dx <= 1; dx++)
+                        {
+                            int n = (z - dz) * W + x + dx;
+                            if (n < 0 || n >= N || !wall[n] || !inner[n] || corridor[n]) continue;
+                            int nx = n % W, nz = n / W, lo = int.MinValue;
+                            for (int qz = -3; qz <= 3; qz++)
+                                for (int qx = -3; qx <= 3; qx++)
+                                {
+                                    int q = (nz + qz) * W + nx + qx;
+                                    if (q < 0 || q >= N) continue;
+                                    if (roomOf[q] >= 0) lo = Math.Max(lo, floor[roomOf[q]] + 1); // 房间小起伏 +1
+                                    if (seam[q] || corridor[q] || opening[q]) lo = Math.Max(lo, h[q]);
+                                }
+                            if (lo != int.MinValue && h[n] > lo + 2) h[n] = lo + 2;
+                        }
+                }
+            }
 
             // ---------- 12. 房间内部：浅水（1 层）、石块（1–2 层）、草丛 ----------
             var grass = new bool[N];

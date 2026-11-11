@@ -31,6 +31,8 @@ namespace Wort.Tools
                 Console.WriteLine($"刷新 {k + 1}：{(r.Ok ? "通过" : "失败")}，尝试 {r.Attempts} 次，{ms}ms，出入口 " + string.Join(" ", r.Entrances.ConvertAll(e => e.Open ? "开" : "封")));
                 foreach (var line in r.Report) Console.WriteLine("  " + line);
                 Draw(r, baked, cls).Save(Path.Combine(outDir, $"refresh_{k + 1}.png"));
+                Relief(r, cls).Save(Path.Combine(outDir, $"relief_{k + 1}.png"));
+                Shear(r).Save(Path.Combine(outDir, $"shear_{k + 1}.png"));
             }
             return fails == 0 ? 0 : 2;
         }
@@ -119,6 +121,71 @@ namespace Wort.Tools
                         for (int w = -2; w <= 2; w++) { img.Set((int)cx + t, (int)cy + t + w, 0xE02020); img.Set((int)cx + t, (int)cy - t + w, 0xE02020); }
             }
             return img;
+        }
+
+        const int X0 = 192 - 16, Z0 = 192 - 16, Size = 64 + 32;
+
+        /// <summary>台地图：按高度上色（越高越深），高差 ≥ 2 描黑边，1 层描浅边。</summary>
+        static Image Relief(RandomRegionResult r, byte[] cls)
+        {
+            var m = r.Map;
+            const int S = 7;
+            int W = m.W, lo = int.MaxValue, hi = int.MinValue;
+            for (int z = Z0; z < Z0 + Size; z++) for (int x = X0; x < X0 + Size; x++) { int h = m.Height[z * W + x]; lo = Math.Min(lo, h); hi = Math.Max(hi, h); }
+            var img = new Image(Size * S, Size * S);
+            for (int z = Z0; z < Z0 + Size; z++)
+                for (int x = X0; x < X0 + Size; x++)
+                {
+                    int i = z * W + x, h = m.Height[i];
+                    double t = (h - lo) / (double)Math.Max(1, hi - lo);
+                    uint col = Image.Mix(0xD8C3A0, 0x2A1C12, Math.Sqrt(t));
+                    if (m.HasWater(i)) col = 0x4A8FC8;
+                    int py0 = (Z0 + Size - 1 - z) * S, px0 = (x - X0) * S;
+                    for (int py = 0; py < S; py++) for (int px = 0; px < S; px++) img.Set(px0 + px, py0 + py, col);
+                    for (int d = 0; d < 4; d++)
+                    {
+                        int nx = x + Grid.DX4[d], nz = z + Grid.DZ4[d];
+                        if (!m.InBounds(nx, nz)) continue;
+                        int dh = h - m.Height[nz * W + nx];
+                        if (dh <= 0) continue;
+                        uint lc = dh >= 2 ? 0x000000u : 0x8A7458u;
+                        for (int t2 = 0; t2 < S; t2++)
+                        {
+                            if (d == 0) img.Set(px0 + t2, py0, lc);
+                            else if (d == 2) img.Set(px0 + t2, py0 + S - 1, lc);
+                            else if (d == 1) img.Set(px0 + S - 1, py0 + t2, lc);
+                            else img.Set(px0, py0 + t2, lc);
+                        }
+                    }
+                }
+            for (int t = 0; t < Size * S; t++)
+                foreach (int c in new[] { 192, 256 })
+                {
+                    int px = (c - X0) * S, py = (Z0 + Size - c) * S;
+                    if (px >= 0 && px < img.Width) img.Blend(px, t, 0x40A0FF, 0.6);
+                    if (py >= 0 && py < img.Height) img.Blend(t, py, 0x40A0FF, 0.6);
+                }
+            foreach (var e in r.Entrances)
+            {
+                double cx = (e.X + 0.5 - X0) * S, cy = (Z0 + Size - e.Z - 0.5) * S;
+                img.Disc(cx, cy, 8, 0xFFFFFF); img.Disc(cx, cy, 5.5, e.Open ? 0x30C040u : 0xE02020u);
+            }
+            return img;
+        }
+
+        /// <summary>错切相机（与游戏一致：从南往北看，shear 1），区域 + 外圈 16m，6 px/m。</summary>
+        static Image Shear(RandomRegionResult r)
+        {
+            var m = r.Map;
+            var voxels = new RegionVoxels(m);
+            var meshes = new List<(MeshData mesh, int ox, int oz)>();
+            for (int cz = 2; cz <= 4; cz++)
+                for (int cx = 2; cx <= 4; cx++)
+                    meshes.Add((ChunkMesher.Build(voxels, cx, cz), cx * 64, cz * 64));
+            var sr = new ShearRenderer(m, meshes);
+            int maxH = 0;
+            for (int z = Z0; z < Z0 + Size; z++) for (int x = X0; x < X0 + Size; x++) maxH = Math.Max(maxH, m.Height[z * m.W + x]);
+            return sr.RenderView(X0, Z0, Size, Size + maxH, 6.0, null);
         }
 
         static void Star(Image img, double cx, double cy, double r, uint c)
