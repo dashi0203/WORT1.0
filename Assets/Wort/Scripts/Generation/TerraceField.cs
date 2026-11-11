@@ -161,6 +161,12 @@ namespace Wort.Generation
             plateau = Grid.RemoveSmall(Grid.OpenRound(plateau, W, H, 1.5), W, H, 4);
             EnforceCorridor(plateau, basin, cls, riverMask, W, H);
 
+            // 随机 chunk 周围 10m 内不放台地（烘焙时就把挨着随机区域的固定地形放平，免得随机区域边上出现离谱的高差）
+            if (s.RandomChunks.Count > 0)
+                for (int z = 0; z < H; z++)
+                    for (int x = 0; x < W; x++)
+                        if (DistToChunks(x, z, s.RandomChunks, rs.ChunkSize) <= 10) plateau[z * W + x] = false;
+
             // ---------- 二级台地：大块台地内部再叠一级 ----------
             var distP = Grid.DistanceInside(plateau, W, H);
             var fT2 = new Fbm(Hash.Derive(seed, "tf.t2"), 45, 3);
@@ -193,7 +199,8 @@ namespace Wort.Generation
             double frac = Math.Min(0.9, s.BasinCoverage * interior / Math.Max(1, gvals.Count));
             double thrB = QuantileOf(gvals, 1 - frac);
             for (int i = 0; i < N; i++)
-                basin[i] = cls[i] != Border && !plateau[i] && !swamp[i] && dRiver[i] > HalfWidth(i) + 5 && bn[i] > thrB;
+                basin[i] = cls[i] != Border && !plateau[i] && !swamp[i] && dRiver[i] > HalfWidth(i) + 5 && bn[i] > thrB
+                    && (s.RandomChunks.Count == 0 || DistToChunks(i % W, i / W, s.RandomChunks, rs.ChunkSize) > 10);
             basin = Grid.OpenRound(basin, W, H, 1.0);
             for (int pass = 0; pass < 2; pass++)
             {

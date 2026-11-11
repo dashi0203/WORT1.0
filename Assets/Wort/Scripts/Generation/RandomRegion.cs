@@ -728,7 +728,7 @@ namespace Wort.Generation
                     }
                 if (hi == int.MinValue) hi = fl[i];
                 // 比墙脚高 2–3 层，墙顶高低不平（宽的地方中间再高 1 层）
-                h[i] = hi + 2 + Math.Min(2, Hill(x, z, 7.0, Hash.Of(seed, 45)) + (distWall2[i] >= 2 ? 1 : 0));
+                h[i] = hi + 2 + (distWall2[i] >= 3 ? 1 : 0);
             }
             // 外围山体（有机轮廓切掉的那一圈）：从房间一侧往外每 ~2.5m 升 1 层，起点比房间高 2–3 层，最高 +6
             {
@@ -740,10 +740,9 @@ namespace Wort.Generation
                     if (!mass[i]) continue;
                     int x = i % W, z = i / W;
                     // 山包：Voronoi 单元一个包，单元中心高、边上低（鞍部）；离房间越远整体越高一点
-                    int hill = Hill(x, z, 9.0, Hash.Of(seed, 44));
-                    int rise = 2 + hill + (int)Math.Floor(Math.Max(0, dFromRooms[i] - 2) / 4.0);
-                    if (rise > 7) rise = 7;
-                    h[i] = fl[i] + rise;
+                    // 大尺度山包：只差 0–1 层（顶面成片，不碎）
+                    int hill = Hill(x, z, 16.0, Hash.Of(seed, 44)) >= 2 ? 1 : 0;
+                    h[i] = fl[i] + 2 + hill;
                     wall[i] = true;
                 }
             }
@@ -923,7 +922,7 @@ namespace Wort.Generation
                 }
                 // 石柱：外围山体 / 贴高地的接缝带里，台阶边上随机立 1–2m 粗的柱子，比所在台阶高 2–3 层（看得到、上不去，不影响通行）
                 int pillars = 0;
-                for (int tries = 0; tries < 400 && pillars < 10; tries++)
+                for (int tries = 0; tries < 400 && pillars < 5; tries++)
                 {
                     int x = bx0 - 6 + rng.Range(0, Math.Max(1, bx1 - bx0 + 12)), z = bz0 - 6 + rng.Range(0, Math.Max(1, bz1 - bz0 + 12));
                     if (!m.InBounds(x, z)) continue;
@@ -1017,6 +1016,8 @@ namespace Wort.Generation
             {
                 int rr = (int)Math.Ceiling(s.JumpReach) + 1;
                 var hc = (int[])h.Clone();
+                var req = new int[N];
+                for (int i = 0; i < N; i++) req[i] = int.MinValue;
                 for (int i = 0; i < N; i++)
                 {
                     if (!noStand[i]) continue;
@@ -1032,8 +1033,44 @@ namespace Wort.Generation
                             if (!TerraceField.Walkable(m, cls, n)) continue;
                             top = Math.Max(top, hc[n] + (m.Slope[n] >= 0 ? 1 : 0));
                         }
-                    if (top != int.MinValue && h[i] < top + s.JumpUp + 1) h[i] = top + s.JumpUp + 1;
+                    req[i] = top == int.MinValue ? int.MinValue : top + s.JumpUp + 1;
+                    if (top != int.MinValue && h[i] < req[i]) h[i] = req[i];
                 }
+                // 墙顶 / 山体顶平滑：5×5 平均取整（不低于跳跃安全要求），再去掉孤立的单格凸起 / 凹坑 → 顶面成片
+                for (int pass = 0; pass < 3; pass++)
+                {
+                    var hp = (int[])h.Clone();
+                    for (int i = 0; i < N; i++)
+                    {
+                        if (!noStand[i] || m.Has(i, CellFlags.Spire)) continue;
+                        int x = i % W, z = i / W, sum = 0, cnt = 0;
+                        for (int dz = -2; dz <= 2; dz++)
+                            for (int dx = -2; dx <= 2; dx++)
+                            {
+                                int n = (z + dz) * W + x + dx;
+                                if (n < 0 || n >= N || !noStand[n] || m.Has(n, CellFlags.Spire)) continue;
+                                sum += hp[n]; cnt++;
+                            }
+                        int v = (int)Math.Floor(sum / (double)cnt + 0.5);
+                        if (req[i] != int.MinValue && v < req[i]) v = req[i];
+                        h[i] = v;
+                    }
+                }
+                for (int pass = 0; pass < 2; pass++)
+                    for (int i = 0; i < N; i++)
+                    {
+                        if (!noStand[i] || m.Has(i, CellFlags.Spire)) continue;
+                        int x = i % W, z = i / W, hiN = int.MinValue, loN = int.MaxValue, nn = 0;
+                        for (int d = 0; d < 4; d++)
+                        {
+                            int n = (z + Grid.DZ4[d]) * W + x + Grid.DX4[d];
+                            if (n < 0 || n >= N || !noStand[n]) continue;
+                            hiN = Math.Max(hiN, h[n]); loN = Math.Min(loN, h[n]); nn++;
+                        }
+                        if (nn < 2) continue;
+                        if (h[i] > hiN) h[i] = Math.Max(hiN, req[i] == int.MinValue ? hiN : req[i]);
+                        else if (h[i] < loN) h[i] = loN;
+                    }
             }
             R.NoStand = noStand;
 
