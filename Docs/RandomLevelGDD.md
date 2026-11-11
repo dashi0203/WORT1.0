@@ -2,7 +2,7 @@
 
 > **只读快照，不要直接编辑本文件。**
 > 编辑源（唯一）：https://claude.ai/artifact/FLi4oaxFPRfPHC75a3KqcF（Claude Docs）
-> 同步日期：2026-11-11 · 源文档版本：rev 23
+> 同步日期：2026-11-11 · 源文档版本：rev 22
 > 文档有改动时，重新导出覆盖本文件，并在 `Docs/DevLog.md` 的“GDD 同步记录”里记一笔。
 
 Nov 11, 2026 · @Jacques Luna
