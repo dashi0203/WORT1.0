@@ -99,7 +99,6 @@ namespace Wort.Terrain
             int triangles = 0;
             for (int cz = 0; cz < settings.ChunksZ; cz++)
                 for (int cx = 0; cx < settings.ChunksX; cx++)
-                {
                     triangles += BuildChunk(root.transform, map, voxels, cx, cz, useed);
             sw.Stop();
             LastMap = map;
@@ -110,7 +109,8 @@ namespace Wort.Terrain
             map.Stats.TryGetValue("ramps", out int ramps);
             if (CanRefreshRandom)
                 Debug.Log($"[TerrainLab] {LastRefreshReport}", this);
-            Debug.Log($"[TerrainLab] seed {seed}  checksum 0x{map.Checksum():X8}  {sw.ElapsedMilliseconds} ms  " +
+            string what = CanRefreshRandom ? "含随机区域的地图" : "固定世界";
+            Debug.Log($"[TerrainLab] seed {seed}  {what} checksum 0x{map.Checksum():X8}  {sw.ElapsedMilliseconds} ms  " +
                       $"triangles {triangles}  ramps {ramps}  slopes {slope / 10f:0.0}%  spawn ({map.SpawnX}, {map.SpawnZ})", this);
         }
 

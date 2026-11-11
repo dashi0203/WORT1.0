@@ -212,8 +212,6 @@ namespace Wort.Generation
                     k0 = k1;
                 }
                 {
-                    int y = h - 1;
-                    bool top = true;
                     float y1 = h - Bevel;
                     var endInset = new[] { Inset(kindA[nSlab - 1]), Inset(kindB[nSlab - 1]) };
                     var endKind = new[] { kindA[nSlab - 1], kindB[nSlab - 1] };
