@@ -18,7 +18,7 @@ namespace Wort.Generation
     {
         public const float Bevel = 0.1f;   // 外倒角（顶边、外角竖边）
         public const float Fillet = 0.04f; // 内倒角（凹角）
-        public const float Bulge = 0.3f;   // 侧面往外鼓（m，Voronoi 石块中心处）
+        public const float Bulge = 0.26f;  // 侧面往外鼓（m，Voronoi 石块中心处）
         const float RimIn = 0.12f, RimOut = 0.5f, RimNoise = 0.1f; // 顶面融合：离崖边 ≤ RimIn 全岩石，≥ RimOut 全泥土
 
         // 子网格：融合材质的地面都放在 Soil 里（着色器按 Blend 混合两张贴图）
