@@ -184,6 +184,8 @@ function posChunk(p){return{x:Math.floor(p.x/CHUNK),y:Math.floor(p.y/CHUNK)};}
 function bound(p){return{x:clamp(p.x,0,state.width*CHUNK),y:clamp(p.y,0,state.height*CHUNK)};}
 const pt=p=>[+p.x.toFixed(1),+p.y.toFixed(1)];
 const pathD=points=>points.map((p,i)=>(i?'L':'M')+p[0].toFixed(2)+' '+p[1].toFixed(2)).join(' ');
+// Smooth curve through control points (Catmull-Rom -> cubic Bezier). Display only; used for routes and rivers/canyons.
+const smoothD=points=>{if(points.length<3)return pathD(points);const f=v=>v.toFixed(2);let d='M'+f(points[0][0])+' '+f(points[0][1]);for(let i=0;i<points.length-1;i++){const p0=points[Math.max(0,i-1)],p1=points[i],p2=points[i+1],p3=points[Math.min(points.length-1,i+2)];d+=' C'+f(p1[0]+(p2[0]-p0[0])/6)+' '+f(p1[1]+(p2[1]-p0[1])/6)+' '+f(p2[0]-(p3[0]-p1[0])/6)+' '+f(p2[1]-(p3[1]-p1[1])/6)+' '+f(p2[0])+' '+f(p2[1]);}return d;};
 const polyStr=points=>points.map(p=>p.join(',')).join(' ');
 function lineLength(points){let a=0;for(let i=1;i<points.length;i++)a+=near(points[i-1],points[i]);return a;}
 function prettyTime(s){s=Math.round(s);return s>=60?`${Math.floor(s/60)}分${String(s%60).padStart(2,'0')}秒`:`${s}秒`;}
@@ -216,14 +218,14 @@ function renderMap(){const {w:W,h:H}=dims(),parts=[];
  else if(z==='fixed')parts.push(`<rect x="${xx+3}" y="${yy+3}" width="58" height="58" fill="none" stroke="${fill}" stroke-width="3"/><circle cx="${xx+11}" cy="${yy+11}" r="4.5" fill="${fill}"/>`);
  else parts.push(`<rect x="${xx+3}" y="${yy+3}" width="58" height="58" fill="#d7ad67" fill-opacity=".18" stroke="${fill}" stroke-width="2.5" stroke-dasharray="5 4"/>`);
  }}
- if(ui.visible.hydrography){for(const s of [...state.strokes].sort((a,b)=>(a.kind==='river')-(b.kind==='river'))){const sel=ui.selected?.kind==='stroke'&&ui.selected.id===s.id,c=s.kind==='river'?'#6dc5e4':'#b9855f',d=pathD(s.points);
+ if(ui.visible.hydrography){for(const s of [...state.strokes].sort((a,b)=>(a.kind==='river')-(b.kind==='river'))){const sel=ui.selected?.kind==='stroke'&&ui.selected.id===s.id,c=s.kind==='river'?'#6dc5e4':'#b9855f',d=smoothD(s.points);
  if(s.kind==='canyon')parts.push(`<path d="${d}" fill="none" stroke="#50372b" stroke-width="${s.width+5}" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>`);
  if(s.points.length===1)parts.push(`<circle data-object="stroke" data-id="${esc(s.id)}" cx="${s.points[0][0]}" cy="${s.points[0][1]}" r="${s.width/2}" fill="${c}"/>`);
  else parts.push(`<path data-object="stroke" data-id="${esc(s.id)}" d="${d}" fill="none" stroke="${c}" stroke-opacity=".9" stroke-width="${s.width}" stroke-linecap="round" stroke-linejoin="round"/>`);
  if(sel)parts.push(`<path d="${d}" fill="none" stroke="#fff0bd" stroke-width="2.5" stroke-dasharray="6 5" pointer-events="none"/>`);
  vertexHandles(parts,'stroke',s);
  }}
- for(const r of state.roads){if(!ui.visible[r.stage==='draft'?'draftRoutes':'roads'])continue;const sel=ui.selected?.kind==='road'&&ui.selected?.id===r.id,d=pathD(r.points),draft=r.stage==='draft',c=draft?'#a0b5e5':r.type==='main'?'#eccb8f':'#eadcb8',width=draft?4:r.type==='main'?7:4;
+ for(const r of state.roads){if(!ui.visible[r.stage==='draft'?'draftRoutes':'roads'])continue;const sel=ui.selected?.kind==='road'&&ui.selected?.id===r.id,d=smoothD(r.points),draft=r.stage==='draft',c=draft?'#a0b5e5':r.type==='main'?'#eccb8f':'#eadcb8',width=draft?4:r.type==='main'?7:4;
  parts.push(`<path d="${d}" stroke="#26312f" stroke-width="${width+4}" fill="none" stroke-linejoin="round" stroke-linecap="round" pointer-events="none"/><path d="${d}" stroke="${c}" stroke-width="${width}" fill="none" stroke-linejoin="round" stroke-linecap="round" ${draft?'stroke-dasharray="12 8"':r.type==='trail'?'stroke-dasharray="11 6"':''} pointer-events="none"/><path data-object="road" data-id="${esc(r.id)}" d="${d}" stroke="transparent" stroke-width="18" fill="none"/>`);
  if(r.oneWay)for(let i=1;i<r.points.length;i++){const a=r.points[i-1],b=r.points[i],angle=Math.atan2(b[1]-a[1],b[0]-a[0])*180/Math.PI;parts.push(`<path d="M -7 -5 L 6 0 L -7 5 Z" transform="translate(${(a[0]+b[0])/2} ${(a[1]+b[1])/2}) rotate(${angle})" fill="${c}" stroke="#27312d" pointer-events="none"/>`);}
  if(sel)parts.push(`<path d="${d}" stroke="#fff4ba" stroke-width="2" stroke-dasharray="5 5" fill="none" pointer-events="none"/>`);
