@@ -23,6 +23,7 @@ namespace Wort.Tools
             int chunks = 5;
             int refresh = 6;
             bool random = false;
+            bool cliff = false; // 崖面外观原型（CliffDressing）
             for (int i = 0; i < args.Length - 1; i++)
             {
                 if (args[i] == "--seed") seed = uint.Parse(args[i + 1]);
@@ -31,9 +32,9 @@ namespace Wort.Tools
                 if (args[i] == "--chunks") chunks = int.Parse(args[i + 1]);
                 if (args[i] == "--refresh") refresh = int.Parse(args[i + 1]);
             }
-            foreach (var a in args) { if (a == "--terrace") terrace = true; if (a == "--random") random = true; if (a == "--debug") GenDebug.Log = new System.Text.StringBuilder(); }
+            foreach (var a in args) { if (a == "--terrace") terrace = true; if (a == "--random") random = true; if (a == "--debug") GenDebug.Log = new System.Text.StringBuilder(); if (a == "--cliff") cliff = true; }
             if (random) return RandomMode.Run(seed, refresh, outDir);
-            if (terrace) return TerraceMode.Run(seed, outDir, chunks);
+            if (terrace) return TerraceMode.Run(seed, outDir, chunks, cliff);
             if (layout != null) return LayoutMode.Run(layout, outDir);
             Directory.CreateDirectory(outDir);
 

@@ -32,20 +32,20 @@ git lfs pull
 
 ## 3. 切换到开发分支
 
-云端会话推送的分支以每次会话指定的为准，当前是 `claude/intelligent-noether-7f0v7r`。
+云端会话推送的分支以每次会话指定的为准，当前是 `claude/bold-bardeen-vlwhjd`。
 
 ```bash
-git fetch origin claude/intelligent-noether-7f0v7r
+git fetch origin claude/bold-bardeen-vlwhjd
 ```
 
 ```bash
-git switch claude/intelligent-noether-7f0v7r
+git switch claude/bold-bardeen-vlwhjd
 ```
 
 之后云端每次推送新内容，在本地拉取：
 
 ```bash
-git pull origin claude/intelligent-noether-7f0v7r
+git pull origin claude/bold-bardeen-vlwhjd
 ```
 
 ## 4. 用 Unity 打开
@@ -68,6 +68,10 @@ git pull origin claude/intelligent-noether-7f0v7r
 **自动测试**：Window → General → Test Runner → EditMode → Run All。`GenerationTests.MatchesCloudPreview` 会自动比对上面两个 checksum。
 `LayoutTests` 测 layout 管线（Docs/WorldGen.md）：8×8 测试 layout 的 checksum 应为 `0x8C73CCB3`，检查全部通过，盆地能进能出，没有斜坡体素，挖坑的反例要报错。
 layout 管线目前只在云端预览和测试里用，TerrainLab 场景还是旧生成器。
+
+**体素器 5×5 与崖面外观**：Terrain Lab 的 Inspector 里 `Generator` 选 `Terrace5x5`、`Seed` 填 3，生成后 checksum 应为 `0x30884FC1`。
+`Cliff Dressing` 勾上时显示崖面外观原型（削角、岩层、沿石、崖面嵌石、崖脚碎石，规则见 `Docs/TerrainArtGDD.md`），取消勾选是原来的方块；
+碰撞始终用原来的方块网格（勾上时是一个不渲染的 `Collider` 子物体）。反馈时请附开关前后的截图。
 
 ## 6. 本地改动约定
 

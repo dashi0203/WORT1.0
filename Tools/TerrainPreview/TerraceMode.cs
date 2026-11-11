@@ -12,7 +12,7 @@ namespace Wort.Tools
     /// </summary>
     static class TerraceMode
     {
-        public static int Run(uint seed, string outDir, int chunks = 5)
+        public static int Run(uint seed, string outDir, int chunks = 5, bool cliff = false)
         {
             Directory.CreateDirectory(outDir);
             var sw = Stopwatch.StartNew();
@@ -22,7 +22,12 @@ namespace Wort.Tools
             var meshes = new List<(MeshData mesh, int ox, int oz)>();
             for (int cz = 0; cz < map.Settings.ChunksZ; cz++)
                 for (int cx = 0; cx < map.Settings.ChunksX; cx++)
-                    meshes.Add((ChunkMesher.Build(voxels, cx, cz), cx * map.Settings.ChunkSize, cz * map.Settings.ChunkSize));
+                    {
+                    var mesh = ChunkMesher.Build(voxels, cx, cz);
+                    int ox = cx * map.Settings.ChunkSize, oz = cz * map.Settings.ChunkSize;
+                    if (cliff) mesh = CliffDressing.Apply(mesh, map, ox, oz, seed);
+                    meshes.Add((mesh, ox, oz));
+                }
             long tB = sw.ElapsedMilliseconds;
             Console.WriteLine($"terrace seed {seed}: 生成 {tA}ms, 体素 + 网格 {tB - tA}ms");
             foreach (var kv in map.Stats) Console.WriteLine($"  {kv.Key} = {kv.Value}");
@@ -65,6 +70,12 @@ namespace Wort.Tools
             Maps.Biome(map).Save(Path.Combine(outDir, "biome.png"));
             var r = new ShearRenderer(map, meshes);
             r.Render(0, 0, map.W, map.H, 2.0, null).Save(Path.Combine(outDir, "shear_overview.png"));
+            // 局部放大（8 px/m）：可玩区中部、北侧外圈山体
+            foreach (var (name, zx, zz, vw, ppm) in new[] { ("mid", map.W / 2, map.H / 2, 80, 8.0), ("north", map.W / 2, map.H - 40, 80, 8.0), ("close", map.W / 2 - 30, map.H - 52, 28, 24.0) })
+            {
+                int hz = map.Height[map.Index(zx, zz)];
+                r.RenderView(zx - vw / 2, zz + hz - vw * 3 / 8, vw, vw * 3 / 4, ppm, null).Save(Path.Combine(outDir, $"zoom_{name}.png"));
+            }
             return 0;
         }
 

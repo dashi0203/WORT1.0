@@ -29,6 +29,14 @@ namespace Wort.Terrain
         [SerializeField, Tooltip("给地形加 MeshCollider（水面不加）。")]
         private bool addColliders = true;
 
+        public enum GeneratorKind { Legacy8x8, Terrace5x5 }
+
+        [SerializeField, Tooltip("Legacy8x8 = 旧 8×8 生成器；Terrace5x5 = 体素器第一步（TerraceField，5×5，种子 3 是负责人选定的测试种子）。")]
+        private GeneratorKind generator = GeneratorKind.Legacy8x8;
+
+        [SerializeField, Tooltip("崖面外观原型（CliffDressing）：崖边削角、按层错开、顶沿装饰石。只改画面，碰撞仍用原来的 1m 体素网格。")]
+        private bool cliffDressing = true;
+
         private Material[] materials;
 
         public int Seed
@@ -62,8 +70,11 @@ namespace Wort.Terrain
         {
             Clear();
             var sw = Stopwatch.StartNew();
-            var settings = new RegionSettings { Seed = unchecked((uint)seed) };
-            var map = RegionGenerator.Generate(settings);
+            uint useed = unchecked((uint)seed);
+            var map = generator == GeneratorKind.Terrace5x5
+                ? TerraceField.Generate(new TerraceFieldSettings { Seed = useed }, out _)
+                : RegionGenerator.Generate(new RegionSettings { Seed = useed });
+            var settings = map.Settings;
             var voxels = new RegionVoxels(map);
             EnsureMaterials();
 
@@ -74,13 +85,16 @@ namespace Wort.Terrain
                 for (int cx = 0; cx < settings.ChunksX; cx++)
                 {
                     var data = ChunkMesher.Build(voxels, cx, cz);
-                    triangles += data.TriangleCount;
+                    var visual = cliffDressing ? CliffDressing.Apply(data, map, cx * settings.ChunkSize, cz * settings.ChunkSize, useed) : data;
+                    triangles += visual.TriangleCount;
                     var chunk = new GameObject($"Chunk {cx},{cz}") { hideFlags = HideFlags.DontSave };
                     chunk.transform.SetParent(root.transform, false);
                     chunk.transform.localPosition = new Vector3(cx * settings.ChunkSize, 0f, cz * settings.ChunkSize);
                     chunk.isStatic = true;
-                    AddPart(chunk, "Ground", data, false, addColliders);
-                    AddPart(chunk, "Water", data, true, false);
+                    AddPart(chunk, "Ground", visual, false, addColliders && !cliffDressing);
+                    AddPart(chunk, "Water", visual, true, false);
+                    if (addColliders && cliffDressing)
+                        AddCollider(chunk, data); // 碰撞用未变形的体素网格（玩法规则按 1m 格）
                 }
             sw.Stop();
             LastMap = map;
@@ -119,6 +133,19 @@ namespace Wort.Terrain
             renderer.shadowCastingMode = water ? ShadowCastingMode.Off : ShadowCastingMode.On;
             if (collider)
                 go.AddComponent<MeshCollider>().sharedMesh = mesh;
+        }
+
+        private void AddCollider(GameObject chunk, MeshData data)
+        {
+            var mesh = BuildMesh(data, false, out _);
+            if (mesh == null)
+                return;
+            mesh.name = $"{chunk.name} Collider";
+            var go = new GameObject("Collider") { hideFlags = HideFlags.DontSave };
+            go.transform.SetParent(chunk.transform, false);
+            go.isStatic = true;
+            go.AddComponent<MeshFilter>().sharedMesh = mesh; // 只为 Clear() 能找到并销毁网格；没有 MeshRenderer，不渲染
+            go.AddComponent<MeshCollider>().sharedMesh = mesh;
         }
 
         /// <summary>MeshData → Mesh。water 为 true 时只取水面子网格，否则取除水以外的全部。</summary>
