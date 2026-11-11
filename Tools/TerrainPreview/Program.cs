@@ -20,14 +20,18 @@ namespace Wort.Tools
             string layout = null;
             bool terrace = false;
             int chunks = 5;
+            int refresh = 6;
+            bool random = false;
             for (int i = 0; i < args.Length - 1; i++)
             {
                 if (args[i] == "--seed") seed = uint.Parse(args[i + 1]);
                 if (args[i] == "--out") outDir = args[i + 1];
                 if (args[i] == "--layout") layout = args[i + 1];
                 if (args[i] == "--chunks") chunks = int.Parse(args[i + 1]);
+                if (args[i] == "--refresh") refresh = int.Parse(args[i + 1]);
             }
-            foreach (var a in args) if (a == "--terrace") terrace = true;
+            foreach (var a in args) { if (a == "--terrace") terrace = true; if (a == "--random") random = true; }
+            if (random) return RandomMode.Run(seed, refresh, outDir);
             if (terrace) return TerraceMode.Run(seed, outDir, chunks);
             if (layout != null) return LayoutMode.Run(layout, outDir);
             Directory.CreateDirectory(outDir);

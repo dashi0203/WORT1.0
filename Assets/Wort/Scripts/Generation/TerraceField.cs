@@ -819,17 +819,17 @@ namespace Wort.Generation
 
         // ---------------- 通行与坡道 ----------------
 
-        static int Opp(int d) => (d + 2) & 3;
+        internal static int Opp(int d) => (d + 2) & 3;
 
         /// <summary>从格 i 向方向 d 那条边上的站立高度。斜坡：上坡侧 h+1，下坡侧 h，侧边按 h+1。</summary>
-        static int EdgeH(RegionMap m, int i, int d)
+        internal static int EdgeH(RegionMap m, int i, int d)
         {
             int s = m.Slope[i];
             if (s < 0) return m.Height[i];
             return d == Opp(s) ? m.Height[i] : m.Height[i] + 1;
         }
 
-        static bool Walkable(RegionMap m, byte[] cls, int i)
+        internal static bool Walkable(RegionMap m, byte[] cls, int i)
         {
             if (cls[i] == Border) return false;
             if (m.Water[i] != RegionMap.NoWater && m.Water[i] - m.Height[i] >= 2) return false;
@@ -837,7 +837,7 @@ namespace Wort.Generation
         }
 
         /// <summary>a → b（方向 d）能不能走：往上最多 1 层，往下最多 6 层（7 层以上必死）。</summary>
-        static bool CanMove(RegionMap m, byte[] cls, int a, int b, int d)
+        internal static bool CanMove(RegionMap m, byte[] cls, int a, int b, int d)
         {
             if (!Walkable(m, cls, b)) return false;
             int diff = EdgeH(m, b, Opp(d)) - EdgeH(m, a, d);
