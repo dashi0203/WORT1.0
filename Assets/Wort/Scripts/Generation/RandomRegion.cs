@@ -57,6 +57,8 @@ namespace Wort.Generation
     public sealed class RandomRegionResult
     {
         public RegionMap Map;
+        /// <summary>刷新后的格子分类（区域里的格子都是 Ground，外面沿用烘焙）。</summary>
+        public byte[] Classes;
         public bool[] InRegion, Seam, Wall, Corridor, Grass, Rock;
         public int[] RoomOf;
         public List<RegionRoom> Rooms = new List<RegionRoom>();
@@ -108,7 +110,10 @@ namespace Wort.Generation
             return m;
         }
 
-        /// <summary>随机区域的格子：所给 chunk 里，除去外圈不可通行、河 / 水体。</summary>
+        /// <summary>
+        /// 随机区域的格子：所给 chunk 里的全部格子（只除去河 / 水体）。chunk 里原来的地形（包括伸进来的外圈高地）
+        /// 都会被重新生成；和外面固定 chunk 的融合只靠接缝带（负责人 2026-11-11）。
+        /// </summary>
         public static bool[] RegionMask(RegionMap m, byte[] cls, IList<(int cx, int cz)> chunks)
         {
             int W = m.W, cs = m.Settings.ChunkSize;
@@ -118,7 +123,7 @@ namespace Wort.Generation
                     for (int x = cx * cs; x < (cx + 1) * cs; x++)
                     {
                         int i = z * W + x;
-                        if (cls[i] == TerraceField.Border || m.HasWater(i) || m.Has(i, CellFlags.River)) continue;
+                        if (m.HasWater(i) || m.Has(i, CellFlags.River)) continue;
                         mask[i] = true;
                     }
             return mask;
@@ -198,6 +203,11 @@ namespace Wort.Generation
             var rng = new Rng(seed);
             var region = RegionMask(m, cls, chunks);
             R.InRegion = region;
+            // 区域里的格子重新生成，不再算外圈（Border）；外面的格子保持原分类
+            var clsBaked = cls;
+            cls = (byte[])cls.Clone();
+            for (int i = 0; i < N; i++) if (region[i]) cls[i] = TerraceField.Ground;
+            R.Classes = cls;
 
             // ---------- 1. 抽开放的出入口 ----------
             int nc = candidates.Count;
