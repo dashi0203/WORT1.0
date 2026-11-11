@@ -18,6 +18,7 @@ namespace Wort.Generation
     {
         public const float Bevel = 0.1f;   // 外倒角（顶边、外角竖边）
         public const float Fillet = 0.04f; // 内倒角（凹角）
+        public const float FootFlare = 0.14f; // 崖脚横截面往外扩（m，贴地处最大，0.7m 以上为 0）
         public const float Bulge = 0.26f;  // 侧面往外鼓（m，Voronoi 石块中心处）
         const float RimIn = 0.12f, RimOut = 0.5f, RimNoise = 0.1f; // 顶面融合：离崖边 ≤ RimIn 全岩石，≥ RimOut 全泥土
 
@@ -291,14 +292,16 @@ namespace Wort.Generation
                         float jy = ((hsh & 0xFF) / 255f - 0.5f) * 0.44f * step;
                         float ju = end ? 0 : (((hsh >> 8) & 0xFF) / 255f - 0.5f) * 0.12f;
                         Y += jy; along += ju; X += tx * ju; Z += tz * ju;
-                        float v = Vor(along, Y, (uint)(plane * 977 + 3));
-                        float q = 1 - v * 1.4f; q = q < 0 ? 0 : q;
-                        float off = Bulge * (0.15f + 0.85f * q * q); // 石块中心鼓得多、石块之间凹下去，起伏更分明
+                        // 两层 Voronoi：大块（2.2m 一格）决定整体凸起，小块（0.8m）在上面加细节；大块占主导，小凸起合并成大凸起
+                        float qb = 1 - Vor(along, Y, (uint)(plane * 977 + 3), 2.2f) * 1.6f; qb = qb < 0 ? 0 : qb;
+                        float qs = 1 - Vor(along, Y, (uint)(plane * 977 + 11), 0.8f) * 1.4f; qs = qs < 0 ? 0 : qs;
+                        float off = Bulge * (0.08f + 0.6f * qb + 0.32f * qs * qs);
+                        if (ground) { float ft = 1 - (Y - y0) / 0.7f; if (ft > 0) off += FootFlare * ft * ft; } // 崖脚往外扩
                         X += nx * off; Z += nz * off;
                     }
                     else if (r == 0 && ground && !end)
                     {
-                        X += nx * 0.08f; Z += nz * 0.08f; // 崖脚往外撇
+                        X += nx * FootFlare; Z += nz * FootFlare; // 崖脚往外扩
                     }
                     px[k] = X; py[k] = Y; pz[k] = Z;
                 }
@@ -311,10 +314,9 @@ namespace Wort.Generation
                 }
         }
 
-        /// <summary>Voronoi F1（格 0.8m，每格一个随机点），返回到最近点的距离 / 0.8，约 0–0.8。只用开方，结果确定。</summary>
-        static float Vor(float u, float v, uint seed)
+        /// <summary>Voronoi F1（格 G 米，每格一个随机点），返回到最近点的距离 / G，约 0–0.8。只用开方，结果确定。</summary>
+        static float Vor(float u, float v, uint seed, float G)
         {
-            const float G = 0.8f;
             int gu = (int)Math.Floor(u / G), gv = (int)Math.Floor(v / G);
             float best = 9;
             for (int j = -1; j <= 1; j++)
