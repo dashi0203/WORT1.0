@@ -9,15 +9,15 @@ namespace Wort.Generation
         /// <summary>接缝带向内宽度（m），≤ 6【已定】。</summary>
         public int SeamWidth = 6;
         /// <summary>房间平均面积（m²），决定房间数【暂定】。</summary>
-        public double AvgRoomArea = 800;
+        public double AvgRoomArea = 500;
         /// <summary>房间数浮动（±比例）【暂定】。</summary>
         public double RoomCountJitter = 0.2;
         /// <summary>房间最短边（m）【已定 8】。</summary>
-        public int MinSide = 8;
+        public int MinSide = 6;
         /// <summary>房间最长边（m）【暂定】。</summary>
         public int MaxSide = 50;
         /// <summary>房间大小差异度 0（均匀）– 1（悬殊）【暂定】。</summary>
-        public double SizeVariance = 0.5;
+        public double SizeVariance = 0.8;
         /// <summary>两个房间共享边至少多长才算相邻（m）【暂定】。</summary>
         public int MinSharedEdge = 6;
         /// <summary>通路最窄（m）【已定 3】。</summary>
@@ -757,7 +757,9 @@ namespace Wort.Generation
                 if (clsBaked[o] == TerraceField.Border)
                 {
                     // 贴着不可通行高地：从高地高度逐级降下来，每级 2 层，分界弯曲；最低一级仍比房间地面高 2 层（从房间爬不上来）
-                    double tt = Math.Min(1.0, distOut[i] / s.SeamWidth);
+                    // 距离加噪声扭曲，台阶线不和 chunk 边平行
+                    double dw = distOut[i] + 2.5 * fSeamBig.Sample(i % W * 1.3, i / W * 1.3) + 1.2 * fSeam.Sample(i % W, i / W);
+                    double tt = dw / s.SeamWidth; tt = tt < 0 ? 0 : (tt > 1 ? 1 : tt);
                     int lowest = fl[i] + 3; // 和贴平地那一侧的脊顶一样高，连成一圈
                     double raw = lowest + (hn - lowest) * (1 - tt);
                     // 等高线错落：细噪声把台阶边打碎
@@ -933,8 +935,8 @@ namespace Wort.Generation
                     bool edge = false;
                     for (int d = 0; d < 4; d++) { int n = (z + Grid.DZ4[d]) * W + x + Grid.DX4[d]; if (region[n] && h[n] <= h[i] - 2) edge = true; }
                     if (!edge) continue;
-                    double rr = 0.8 + rng.Next() * 0.9;
-                    int ph = h[i] + 2 + (rng.Next() < 0.5 ? 1 : 0);
+                    double rr = 1.1 + rng.Next() * 0.7;
+                    int ph = h[i] + 2;
                     for (int dz = -2; dz <= 2; dz++)
                         for (int dx = -2; dx <= 2; dx++)
                         {
@@ -1007,16 +1009,18 @@ namespace Wort.Generation
 
             // ---------- 12b. 跳跃安全（GDD 第 5 节）：墙 / 山体 / 贴高地的台阶，顶面比周围 JumpReach+1 格内所有能站的地方高 ≥ JumpUp+1 ----------
             var noStand = new bool[N];
+            var ringSeamM = new bool[N];
             for (int i = 0; i < N; i++)
             {
                 if (!region[i]) continue;
                 bool ringSeam = seam[i] && near[i] >= 0 && clsBaked[near[i]] == TerraceField.Border;
+                ringSeamM[i] = ringSeam;
                 if ((wall[i] && !corridor[i]) || mass[i] || ringSeam) noStand[i] = true;
             }
+            var req = new int[N];
             {
                 int rr = (int)Math.Ceiling(s.JumpReach) + 1;
                 var hc = (int[])h.Clone();
-                var req = new int[N];
                 for (int i = 0; i < N; i++) req[i] = int.MinValue;
                 for (int i = 0; i < N; i++)
                 {
@@ -1042,7 +1046,7 @@ namespace Wort.Generation
                     var hp = (int[])h.Clone();
                     for (int i = 0; i < N; i++)
                     {
-                        if (!noStand[i] || m.Has(i, CellFlags.Spire)) continue;
+                        if (!noStand[i] || m.Has(i, CellFlags.Spire) || ringSeamM[i]) continue; // 贴外圈的台阶不平滑（否则沿 chunk 边出直崖）
                         int x = i % W, z = i / W, sum = 0, cnt = 0;
                         for (int dz = -2; dz <= 2; dz++)
                             for (int dx = -2; dx <= 2; dx++)
@@ -1059,7 +1063,7 @@ namespace Wort.Generation
                 for (int pass = 0; pass < 2; pass++)
                     for (int i = 0; i < N; i++)
                     {
-                        if (!noStand[i] || m.Has(i, CellFlags.Spire)) continue;
+                        if (!noStand[i] || m.Has(i, CellFlags.Spire) || ringSeamM[i]) continue;
                         int x = i % W, z = i / W, hiN = int.MinValue, loN = int.MaxValue, nn = 0;
                         for (int d = 0; d < 4; d++)
                         {
@@ -1071,6 +1075,52 @@ namespace Wort.Generation
                         if (h[i] > hiN) h[i] = Math.Max(hiN, req[i] == int.MinValue ? hiN : req[i]);
                         else if (h[i] < loN) h[i] = loN;
                     }
+            }
+            // 削掉孤立的高格：比 8 个邻居都高的墙 / 山体格（含石柱单格），压到邻居最高值（不低于跳跃安全要求）
+            for (int pass = 0; pass < 2; pass++)
+                for (int i = 0; i < N; i++)
+                {
+                    if (!noStand[i] || ringSeamM[i]) continue;
+                    int x = i % W, z = i / W, mx = int.MinValue, higherOrEq = 0;
+                    for (int dz = -1; dz <= 1; dz++)
+                        for (int dx = -1; dx <= 1; dx++)
+                        {
+                            if (dx == 0 && dz == 0) continue;
+                            int n = (z + dz) * W + x + dx;
+                            if (n < 0 || n >= N) continue;
+                            mx = Math.Max(mx, h[n]);
+                            if (h[n] >= h[i]) higherOrEq++;
+                        }
+                    if (higherOrEq == 0 && mx != int.MinValue)
+                    {
+                        int v = mx;
+                        if (req[i] != int.MinValue && v < req[i]) v = req[i];
+                        h[i] = v;
+                    }
+                }
+            // 贴外圈不可通行高地的山体：从外圈高度往里每格最多降 1 层（外圈的山坡顺势延伸进来，不沿 chunk 边出直崖）；只往上补，不压低
+            for (int pass = 0; pass < 10; pass++)
+            {
+                bool changed = false;
+                for (int i = 0; i < N; i++)
+                {
+                    if (!noStand[i]) continue;
+                    int x = i % W, z = i / W, best = h[i];
+                    // 降坡起点往里错开 0–4 格（噪声），等高线不和 chunk 边平行
+                    bool hold = fSeamBig.Sample(x * 1.6 + 7, z * 1.6 - 3) > 0.1 && distOut[i] <= 2 + 3 * (fSeam.Sample(x * 0.7, z * 0.7) + 1);
+                    for (int d = 0; d < 4; d++)
+                    {
+                        int n = (z + Grid.DZ4[d]) * W + x + Grid.DX4[d];
+                        if (n < 0 || n >= N) continue;
+                        bool src = (!region[n] && clsBaked[n] == TerraceField.Border) || noStand[n];
+                        if (!src) continue;
+                        int cand = h[n] - (hold && !region[n] ? 0 : (hold ? 0 : 1));
+                        if (hold && region[n] && !noStand[n]) cand = h[n] - 1;
+                        if (cand > best) best = cand;
+                    }
+                    if (best > h[i]) { h[i] = best; changed = true; }
+                }
+                if (!changed) break;
             }
             R.NoStand = noStand;
 

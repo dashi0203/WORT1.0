@@ -334,7 +334,7 @@ namespace Wort.Generation
                     double dr = DistToChunks(x, z, s.RandomChunks, rs.ChunkSize);
                     if (dr < 30)
                     {
-                        int soft = G[i] + 4 + 2 * (int)Math.Floor((dr + 5 * fTier.Sample(x * 1.7, z * 1.7)) / 7.0);
+                        int soft = G[i] + 4 + 2 * (int)Math.Floor((dr + 9 * fTier.Sample(x * 0.8 + 31, z * 0.8 - 17) + 3 * fTier.Sample(x * 2.1, z * 2.1)) / 7.0); // 台阶线弯曲，不和 chunk 边平行
                         if (soft < G[i] + 4) soft = G[i] + 4;
                         if (soft < h[i]) h[i] = soft;
                     }

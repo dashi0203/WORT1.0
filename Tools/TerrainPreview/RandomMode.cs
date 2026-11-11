@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using Wort.Generation;
 
 namespace Wort.Tools
@@ -30,6 +31,12 @@ namespace Wort.Tools
                 if (!r.Ok) fails++;
                 Console.WriteLine($"刷新 {k + 1}：{(r.Ok ? "通过" : "失败")}，尝试 {r.Attempts} 次，{ms}ms，出入口 " + string.Join(" ", r.Entrances.ConvertAll(e => e.Open ? "开" : "封")));
                 foreach (var line in r.Report) Console.WriteLine("  " + line);
+                if (k == 0 && Environment.GetEnvironmentVariable("EDGE_DUMP") != null)
+                {
+                    var mm = r.Map; int Wd = mm.W;
+                    for (int zz = 259; zz >= 250; zz--) { var sb = new System.Text.StringBuilder($"z{zz}:"); for (int xx = 200; xx < 240; xx += 2) sb.Append($"{mm.Height[zz * Wd + xx],3}"); Console.WriteLine(sb); }
+                    Console.WriteLine("east x 250..259 at z=220:" + string.Join(",", System.Linq.Enumerable.Range(250, 10).Select(xx => mm.Height[220 * Wd + xx])));
+                }
                 Draw(r, baked, r.Classes ?? cls).Save(Path.Combine(outDir, $"refresh_{k + 1}.png"));
                 Relief(r, r.Classes ?? cls).Save(Path.Combine(outDir, $"relief_{k + 1}.png"));
                 Shear(r).Save(Path.Combine(outDir, $"shear_{k + 1}.png"));
