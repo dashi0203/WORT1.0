@@ -52,7 +52,7 @@ namespace Wort.Tools
                     int h = m.Height[i];
                     uint col;
                     if (cls[i] == TerraceField.Border) col = 0x2E2118;
-                    else if (reg && r.Wall[i] && !r.Corridor[i] && !r.Seam[i] && !m.Has(i, CellFlags.Spire)) col = Image.Mix(0x3A2A1C, 0x5A4A30, 0.15 * ((h % 3)));
+                    else if (reg && r.NoStand != null && r.NoStand[i] && !m.Has(i, CellFlags.Spire)) col = Image.Scale(0x5C6A44, 0.78 + 0.06 * (h % 5)); // 山体 / 墙：林木覆盖的山包，按高度深浅
                     else
                     {
                         // 地面：按高度微调明暗

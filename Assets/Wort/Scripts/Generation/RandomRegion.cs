@@ -38,6 +38,11 @@ namespace Wort.Generation
         public int MaxAttempts = 24;
         /// <summary>房间形状：true = 自然地形（Voronoi 多边形房间）；false = 地牢（矩形房间）（负责人 2026-11-11）。</summary>
         public bool NaturalRooms = true;
+        /// <summary>房间区占（接缝带以内）面积的比例，其余是山体【暂定】。</summary>
+        public double RoomAreaShare = 0.62;
+        /// <summary>主角跳跃：水平最远（格）、最多能跳上几层（GDD 第 5 节【已定】：2–3.2 格、1 层多）。</summary>
+        public double JumpReach = 3.2;
+        public int JumpUp = 1;
     }
 
     /// <summary>候选出入口：放在随机区域外面（固定 chunk 一侧）紧贴共享边的格子上，Dir = 朝区域里走的方向。</summary>
@@ -61,7 +66,7 @@ namespace Wort.Generation
         public RegionMap Map;
         /// <summary>刷新后的格子分类（区域里的格子都是 Ground，外面沿用烘焙）。</summary>
         public byte[] Classes;
-        public bool[] InRegion, Seam, Wall, Corridor, Grass, Rock;
+        public bool[] InRegion, Seam, Wall, Corridor, Grass, Rock, NoStand;
         public int[] RoomOf;
         public List<RegionRoom> Rooms = new List<RegionRoom>();
         public List<(int a, int b)> Edges = new List<(int a, int b)>();
@@ -239,14 +244,47 @@ namespace Wort.Generation
                     if (!region[i]) continue;
                     // 接缝带内缘用噪声弄弯：3.5–6m
                     // 接缝带内缘弯曲：1.5–6m，大小两层噪声（不出方框）
-                    double sw = s.SeamWidth - 2.0 * (1 + fSeamBig.Sample(x, z)) - 0.6 * (1 + fSeam.Sample(x, z));
-                    if (sw < 1.5) sw = 1.5;
+                    // 接缝带宽窄不一：1–6m（大小两层噪声），有的地方山体几乎贴着 chunk 边
+                    double sv = 0.5 + 0.9 * fSeamBig.Sample(x, z) + 0.25 * fSeam.Sample(x, z);
+                    sv = sv < 0 ? 0 : (sv > 1 ? 1 : sv);
+                    double sw = 1 + (s.SeamWidth - 1) * sv;
                     if (distOut[i] <= sw) seam[i] = true; else inner[i] = true;
                 }
             inner = Grid.RemoveSmall(inner, W, H, 40);
             // 房间区整体轮廓：四角磨圆（圆形开运算），不再是方的；磨掉的部分并进接缝带（融合区）
-            var mass = new bool[N]; // 保留变量：不再切外围山体（负责人 2026-11-11：墙太多）
-            inner = Grid.RemoveSmall(Grid.OpenRound(inner, W, H, 7.0), W, H, 60);
+            // 房间区外轮廓：大尺度噪声团块（可凹可凸、可以偏向一边），其余是山体；山体像自然的山包（负责人 2026-11-11）
+            var mass = new bool[N];
+            {
+                int ix0 = W, iz0 = H, ix1 = 0, iz1 = 0, cntIn = 0;
+                for (int i = 0; i < N; i++) if (inner[i]) { int x = i % W, z = i / W; ix0 = Math.Min(ix0, x); iz0 = Math.Min(iz0, z); ix1 = Math.Max(ix1, x); iz1 = Math.Max(iz1, z); cntIn++; }
+                double ccx = ix0 + (ix1 - ix0) * (0.3 + 0.4 * rng.Next()), ccz = iz0 + (iz1 - iz0) * (0.3 + 0.4 * rng.Next());
+                double rad = 0.5 * Math.Min(ix1 - ix0, iz1 - iz0) + 1;
+                var fBA = new Fbm(Hash.Of(seed, 14), 30, 3);
+                var fBB = new Fbm(Hash.Of(seed, 15), 12, 2);
+                var bv = new double[N];
+                var vals = new List<double>();
+                for (int i = 0; i < N; i++)
+                {
+                    if (!inner[i]) continue;
+                    int x = i % W, z = i / W;
+                    double dx = x - ccx, dz = z - ccz;
+                    bv[i] = 1 - 0.9 * Math.Sqrt(dx * dx + dz * dz) / rad + 0.75 * fBA.Sample(x, z) + 0.2 * fBB.Sample(x, z);
+                    vals.Add(bv[i]);
+                }
+                vals.Sort();
+                double thr = vals.Count > 0 ? vals[(int)((1 - s.RoomAreaShare) * (vals.Count - 1))] : 0;
+                var blob = new bool[N];
+                for (int i = 0; i < N; i++) blob[i] = inner[i] && bv[i] > thr;
+                blob = Grid.OpenRound(blob, W, H, 3.0);
+                var bl = Grid.Label(W, H, i => blob[i], (a2, b2) => true, out var bsz);
+                int bigC = 0; for (int c = 1; c < bsz.Count; c++) if (bsz[c] > bsz[bigC]) bigC = c;
+                for (int i = 0; i < N; i++)
+                {
+                    bool keep = blob[i] && bl[i] == bigC;
+                    if (inner[i] && !keep) mass[i] = true;
+                    inner[i] = keep;
+                }
+            }
             for (int i = 0; i < N; i++) if (region[i] && !inner[i] && !mass[i]) seam[i] = true;
             R.Seam = seam;
 
@@ -529,7 +567,7 @@ namespace Wort.Generation
                 entRoom[k] = -1;
                 var path = new List<int>();
                 int x = e.X, z = e.Z;
-                for (int step = 0; step < 40; step++)
+                for (int step = 0; step < 80; step++)
                 {
                     x += Grid.DX4[e.Dir]; z += Grid.DZ4[e.Dir];
                     if (!m.InBounds(x, z)) break;
@@ -690,7 +728,7 @@ namespace Wort.Generation
                     }
                 if (hi == int.MinValue) hi = fl[i];
                 // 比墙脚高 2–3 层，墙顶高低不平（宽的地方中间再高 1 层）
-                h[i] = hi + (fRise.Sample(x, z) > 0 ? 3 : 2) + (distWall2[i] >= 2 ? 1 : 0);
+                h[i] = hi + 2 + Math.Min(2, Hill(x, z, 7.0, Hash.Of(seed, 45)) + (distWall2[i] >= 2 ? 1 : 0));
             }
             // 外围山体（有机轮廓切掉的那一圈）：从房间一侧往外每 ~2.5m 升 1 层，起点比房间高 2–3 层，最高 +6
             {
@@ -701,8 +739,10 @@ namespace Wort.Generation
                 {
                     if (!mass[i]) continue;
                     int x = i % W, z = i / W;
-                    int rise = 2 + (fRise.Sample(x, z) > 0 ? 1 : 0) + (int)Math.Floor(Math.Max(0, dFromRooms[i] - 1) / 2.5);
-                    if (rise > 6) rise = 6;
+                    // 山包：Voronoi 单元一个包，单元中心高、边上低（鞍部）；离房间越远整体越高一点
+                    int hill = Hill(x, z, 9.0, Hash.Of(seed, 44));
+                    int rise = 2 + hill + (int)Math.Floor(Math.Max(0, dFromRooms[i] - 2) / 4.0);
+                    if (rise > 7) rise = 7;
                     h[i] = fl[i] + rise;
                     wall[i] = true;
                 }
@@ -941,7 +981,7 @@ namespace Wort.Generation
                     {
                         int x = room.X0 + rng.Range(0, Math.Max(1, room.X1 - room.X0)), z = room.Z0 + rng.Range(0, Math.Max(1, room.Z1 - room.Z0));
                         int i = z * W + x;
-                        if (roomOf[i] != k || distWall[i] < 4 || distOpen[i] < 5 || m.HasWater(i)) continue;
+                        if (roomOf[i] != k || distWall[i] < 5 || distOpen[i] < 5 || m.HasWater(i)) continue;
                         double rr = 1 + rng.Next() * 1.2;
                         int rh = fl[i] + (rng.Next() < 0.5 ? 1 : 2);
                         for (int dz = -2; dz <= 2; dz++)
@@ -965,6 +1005,37 @@ namespace Wort.Generation
                     for (int b = 0; b < m.Weights.Length; b++) m.Weights[b][i] = 0;
                     m.Biome[i] = (byte)BiomeId.Conifer; m.Weights[(int)BiomeId.Conifer][i] = 1;
                 }
+
+            // ---------- 12b. 跳跃安全（GDD 第 5 节）：墙 / 山体 / 贴高地的台阶，顶面比周围 JumpReach+1 格内所有能站的地方高 ≥ JumpUp+1 ----------
+            var noStand = new bool[N];
+            for (int i = 0; i < N; i++)
+            {
+                if (!region[i]) continue;
+                bool ringSeam = seam[i] && near[i] >= 0 && clsBaked[near[i]] == TerraceField.Border;
+                if ((wall[i] && !corridor[i]) || mass[i] || ringSeam) noStand[i] = true;
+            }
+            {
+                int rr = (int)Math.Ceiling(s.JumpReach) + 1;
+                var hc = (int[])h.Clone();
+                for (int i = 0; i < N; i++)
+                {
+                    if (!noStand[i]) continue;
+                    int x = i % W, z = i / W, top = int.MinValue;
+                    for (int dz = -rr; dz <= rr; dz++)
+                        for (int dx = -rr; dx <= rr; dx++)
+                        {
+                            if (dx * dx + dz * dz > rr * rr) continue;
+                            int nx = x + dx, nz = z + dz;
+                            if (!m.InBounds(nx, nz)) continue;
+                            int n = nz * W + nx;
+                            if (noStand[n] || (!region[n] && clsBaked[n] == TerraceField.Border)) continue;
+                            if (!TerraceField.Walkable(m, cls, n)) continue;
+                            top = Math.Max(top, hc[n] + (m.Slope[n] >= 0 ? 1 : 0));
+                        }
+                    if (top != int.MinValue && h[i] < top + s.JumpUp + 1) h[i] = top + s.JumpUp + 1;
+                }
+            }
+            R.NoStand = noStand;
 
             // ---------- 13. 校验 ----------
             var ok = Validate(m, cls, R, region, inner, corridor, out var lines);
@@ -1136,8 +1207,69 @@ namespace Wort.Generation
                     if (!ok) continue;
                     seen[n] = true; st.Push(n);
                 }
+                // 跳跃（GDD 第 5 节）：水平 ≤ 3.2 格、最多高 1 层、落差 ≤ 6，中间没有比起跳点高 1 层以上的东西挡着
+                if (!TerraceField.Walkable(m, cls, i)) continue;
+                for (int k = 0; k < JumpOffsets.Length; k++)
+                {
+                    var (jx, jz) = JumpOffsets[k];
+                    int nx = x + jx, nz = z + jz;
+                    if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
+                    int n = nz * W + nx;
+                    if (seen[n] || (blocked != null && blocked[n])) continue;
+                    if (!TerraceField.Walkable(m, cls, n)) continue;
+                    int from = reverse ? n : i, to = reverse ? i : n;
+                    int hf = m.Height[from] + (m.Slope[from] >= 0 ? 1 : 0), ht = m.Height[to] + (m.Slope[to] >= 0 ? 1 : 0);
+                    if (ht > hf + 1 || ht < hf - 6) continue;
+                    // 中间格的遮挡
+                    bool clear = true;
+                    int steps = Math.Max(Math.Abs(jx), Math.Abs(jz)) * 2;
+                    for (int t = 1; t < steps && clear; t++)
+                    {
+                        int cx = x + (int)Math.Floor(jx * t / (double)steps + 0.5), cz = z + (int)Math.Floor(jz * t / (double)steps + 0.5);
+                        int c = cz * W + cx;
+                        if (c == i || c == n) continue;
+                        if (m.Height[c] > hf + 1) clear = false;
+                    }
+                    if (!clear) continue;
+                    seen[n] = true; st.Push(n);
+                }
             }
             return seen;
+        }
+
+        /// <summary>跳跃落点偏移：水平距离在 (1.5, 3.2] 之间（相邻格由走路处理）。</summary>
+        static readonly (int, int)[] JumpOffsets = BuildJumpOffsets(3.2);
+        static (int, int)[] BuildJumpOffsets(double reach)
+        {
+            var l = new List<(int, int)>();
+            int r = (int)Math.Ceiling(reach);
+            for (int dz = -r; dz <= r; dz++)
+                for (int dx = -r; dx <= r; dx++)
+                {
+                    int d2 = dx * dx + dz * dz;
+                    if (d2 <= 2 || d2 > reach * reach) continue;
+                    l.Add((dx, dz));
+                }
+            return l.ToArray();
+        }
+
+        /// <summary>Voronoi 山包：格子大小 cell，每格一个抖动点；离最近点越近越高，返回 0–2 层。</summary>
+        static int Hill(int x, int z, double cell, uint seed)
+        {
+            int gx = (int)Math.Floor(x / cell), gz = (int)Math.Floor(z / cell);
+            double best = double.MaxValue;
+            for (int oz = -1; oz <= 1; oz++)
+                for (int ox = -1; ox <= 1; ox++)
+                {
+                    int cx = gx + ox, cz = gz + oz;
+                    uint hsh = Hash.Of(cx, cz, seed);
+                    double px = (cx + 0.15 + 0.7 * Hash.Unit(hsh)) * cell, pz = (cz + 0.15 + 0.7 * Hash.Unit(Hash.Mix(hsh))) * cell;
+                    double dx = x + 0.5 - px, dz = z + 0.5 - pz, d = dx * dx + dz * dz;
+                    if (d < best) best = d;
+                }
+            double f = 1 - Math.Sqrt(best) / (cell * 0.6);
+            int v = (int)Math.Floor(2.6 * f + 0.5);
+            return v < 0 ? 0 : (v > 2 ? 2 : v);
         }
 
         static bool Validate(RegionMap m, byte[] cls, RandomRegionResult R, bool[] region, bool[] inner, bool[] corridor, out List<string> lines)
@@ -1179,6 +1311,13 @@ namespace Wort.Generation
             for (int i = 0; i < N; i++) if (R.RoomOf[i] >= 0 && fwd[i]) roomReached[R.RoomOf[i]] = true;
             int lostRooms = 0; foreach (bool b in roomReached) if (!b) lostRooms++;
             if (lostRooms > 0) { ok = false; lines.Add($"[失败] {lostRooms} 个房间走不到"); }
+            // 2b. 墙 / 山体 / 贴高地的台阶，任何一格都不能被够到（含跳跃）
+            if (R.NoStand != null)
+            {
+                int onWall = 0;
+                for (int i = 0; i < N; i++) if (R.NoStand[i] && fwd[i]) onWall++;
+                if (onWall > 0) { ok = false; lines.Add($"[失败] {onWall} 格墙顶 / 山体能被够到"); }
+            }
             // 3. 封口：不走出入口通道，从外面进不了房间
             var block = new bool[N];
             for (int i = 0; i < N; i++) block[i] = corridor[i];
