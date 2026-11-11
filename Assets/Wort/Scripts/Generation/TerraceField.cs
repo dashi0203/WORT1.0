@@ -73,6 +73,22 @@ namespace Wort.Generation
                     if (e < thick) cls[z * W + x] = Border;
                 }
 
+            // ---------- 沼泽大区（测试用：可玩区西南一片，边缘有机）。以后由规划器的 Biome 大区给出 ----------
+            double play = W - 2.0 * b0;
+            var fSw = new Fbm(Hash.Derive(seed, "tf.swamp"), 30, 3);
+            double scx = b0 + play * (0.16 + 0.12 * Hash.Unit(Hash.Derive(seed, "tf.swx")));
+            double scz = b0 + play * (0.18 + 0.12 * Hash.Unit(Hash.Derive(seed, "tf.swz")));
+            var swamp = new bool[N];
+            for (int z = 0; z < H; z++)
+                for (int x = 0; x < W; x++)
+                {
+                    int i = z * W + x;
+                    if (cls[i] == Border) continue;
+                    double dx = x - scx, dz = z - scz;
+                    swamp[i] = Math.Sqrt(dx * dx + dz * dz) < 46 + 18 * fSw.Sample(x, z);
+                }
+            swamp = Grid.RemoveSmall(Grid.OpenRound(swamp, W, H, 3.0), W, H, 400);
+
             // ---------- 台地候选：域扭曲 + 大中两层噪声，按覆盖率取阈值 ----------
             var fWx = new Fbm(Hash.Derive(seed, "tf.wx"), 70, 2);
             var fWz = new Fbm(Hash.Derive(seed, "tf.wz"), 70, 2);
@@ -91,7 +107,7 @@ namespace Wort.Generation
                 }
             double thrP = QuantileOf(vals, 1 - s.PlateauCoverage);
             var plateau = new bool[N];
-            for (int i = 0; i < N; i++) plateau[i] = cls[i] != Border && pn[i] > thrP;
+            for (int i = 0; i < N; i++) plateau[i] = cls[i] != Border && pn[i] > thrP && !swamp[i]; // 沼泽里不长台地
 
             // ---------- 河：北缓南曲 ----------
             var path = RiverPath(seed, W, H, b0);
@@ -157,14 +173,14 @@ namespace Wort.Generation
                     int i = z * W + x;
                     if (cls[i] == Border) continue;
                     interior++;
-                    if (plateau[i] || dRiver[i] <= HalfWidth(i) + 5) continue;
+                    if (plateau[i] || swamp[i] || dRiver[i] <= HalfWidth(i) + 5) continue;
                     bn[i] = fB1.Sample(x, z) + 0.4 * fB2.Sample(x, z);
                     gvals.Add(bn[i]);
                 }
             double frac = Math.Min(0.9, s.BasinCoverage * interior / Math.Max(1, gvals.Count));
             double thrB = QuantileOf(gvals, 1 - frac);
             for (int i = 0; i < N; i++)
-                basin[i] = cls[i] != Border && !plateau[i] && dRiver[i] > HalfWidth(i) + 5 && bn[i] > thrB;
+                basin[i] = cls[i] != Border && !plateau[i] && !swamp[i] && dRiver[i] > HalfWidth(i) + 5 && bn[i] > thrB;
             basin = Grid.OpenRound(basin, W, H, 1.0);
             for (int pass = 0; pass < 2; pass++)
             {
@@ -195,6 +211,21 @@ namespace Wort.Generation
             foreach (var p in path) map.RiverPath.Add(p);
 
             for (int i = 0; i < N; i++) h[i] = G[i];
+            // 沼泽：底面只比森林低 1 层（能直接走进去）；水洼深 1 层（能涉水）；湿地小岛高 1 层
+            var fPond = new Fbm(Hash.Derive(seed, "tf.pond"), 14, 2);
+            var distSw = Grid.DistanceInside(swamp, W, H);
+            var swampIsland = new bool[N];
+            int pondCells = 0;
+            for (int z = 0; z < H; z++)
+                for (int x = 0; x < W; x++)
+                {
+                    int i = z * W + x;
+                    if (!swamp[i] || cls[i] != Ground) continue;
+                    h[i] = G[i] - 1;
+                    double v = fPond.Sample(x, z);
+                    if (v > 0.22 && distSw[i] > 4) { map.Water[i] = h[i]; h[i] -= 1; map.Flags[i] |= CellFlags.Pond; pondCells++; }
+                    else if (v < -0.42 && distSw[i] > 3) { h[i] += 1; swampIsland[i] = true; }
+                }
             // 河岸：离水面每 2m 最多升 1 层（河谷两侧能走上来）
             for (int i = 0; i < N; i++)
             {
@@ -277,26 +308,81 @@ namespace Wort.Generation
                 }
 
             // ---------- 坡道与连通 ----------
-            int spawn = FindSpawn(cls, map, W, H, b0);
+            int spawn = FindSpawn(cls, map, W, H, b0, swamp);
             map.SpawnX = spawn % W; map.SpawnZ = spawn / W;
             PlaceRamps(map, cls, s, spawn, out int unreachable, out int failedPlateaus);
 
-            // ---------- Biome（预览上色用）：外圈针叶林、台地针叶 / 荒原斑块、盆地湿地、其余混交林 ----------
-            var fBio = new Fbm(Hash.Derive(seed, "tf.bio"), 40, 2);
+            // ---------- Biome：大区（测试用自动生成）+ 小斑块 + 河漫滩湿地（Docs/WorldGen.md 第 4 节 Biome 规则） ----------
+            var bio = new byte[N];
+            var fCon = new Fbm(Hash.Derive(seed, "tf.con"), 42, 3);
+            var fMoor = new Fbm(Hash.Derive(seed, "tf.moor"), 16, 2);
+            var fWet = new Fbm(Hash.Derive(seed, "tf.wet"), 13, 2);
+            var fHum = new Fbm(Hash.Derive(seed, "tf.hum"), 18, 2);
+            var fFlood = new Fbm(Hash.Derive(seed, "tf.flood"), 12, 2);
+            // 1) 大区：外圈针叶林；沼泽大区；出生点附近一小块人类区；其余森林（针叶林斑块随纬度从约 0 增到约 50%）
             for (int z = 0; z < H; z++)
                 for (int x = 0; x < W; x++)
                 {
                     int i = z * W + x;
-                    BiomeId b;
-                    if (cls[i] == Border) b = BiomeId.Conifer;
-                    else if (cls[i] == Basin) b = BiomeId.Swamp;
-                    else if (cls[i] == Plateau2) b = fBio.Sample(x, z) > 0.2 ? BiomeId.Moor : BiomeId.Conifer;
-                    else if (cls[i] == Plateau) b = fBio.Sample(x, z) > 0.25 ? BiomeId.Conifer : BiomeId.MixedForest;
-                    else b = BiomeId.MixedForest;
-                    map.Biome[i] = (byte)b;
-                    map.Weights[(int)b][i] = 1;
-                    map.Tier[i] = cls[i];
+                    if (cls[i] == Border) { bio[i] = (byte)BiomeId.Conifer; continue; }
+                    if (swamp[i]) { bio[i] = (byte)(swampIsland[i] && fCon.Sample(x, z) > -0.1 ? BiomeId.MixedForest : BiomeId.Swamp); continue; }
+                    int ddx = x - map.SpawnX, ddz = z - map.SpawnZ;
+                    if ((cls[i] == Ground || cls[i] == Basin) && Math.Sqrt(ddx * ddx + ddz * ddz) < 24 + 10 * fHum.Sample(x, z)) { bio[i] = (byte)BiomeId.Human; continue; }
+                    double lat = (z - b0) / play; lat = lat < 0 ? 0 : (lat > 1 ? 1 : lat);
+                    double conBias = (cls[i] == Plateau || cls[i] == Plateau2) ? 0.15 : 0;
+                    bio[i] = (byte)(fCon.Sample(x, z) + conBias > 0.55 - 0.6 * lat ? BiomeId.Conifer : BiomeId.MixedForest);
                 }
+            // 2) 小斑块：二级台地顶多荒原；森林里约 6% 小块荒原、约 5% 迷你湿地（低洼的盆地更容易是湿地）
+            var moorP = new bool[N];
+            var wetP = new bool[N];
+            for (int z = 0; z < H; z++)
+                for (int x = 0; x < W; x++)
+                {
+                    int i = z * W + x;
+                    if (cls[i] == Border || swamp[i]) continue;
+                    bool forest = bio[i] == (byte)BiomeId.MixedForest || bio[i] == (byte)BiomeId.Conifer;
+                    if (cls[i] == Plateau2 && fMoor.Sample(x, z) > -0.05) moorP[i] = true;
+                    else if (forest && fMoor.Sample(x, z) > 0.55) moorP[i] = true;
+                    if ((forest || bio[i] == (byte)BiomeId.Human) && fWet.Sample(x, z) + (cls[i] == Basin ? 0.55 : 0) > 0.6) wetP[i] = true;
+                }
+            // 斑块最小 18 格（负责人 2026-11-11）
+            moorP = Grid.RemoveSmall(Grid.OpenRound(moorP, W, H, 1.5), W, H, 18);
+            wetP = Grid.RemoveSmall(Grid.OpenRound(wetP, W, H, 1.5), W, H, 18);
+            for (int i = 0; i < N; i++) { if (moorP[i]) bio[i] = (byte)BiomeId.Moor; if (wetP[i]) bio[i] = (byte)BiomeId.Swamp; }
+            // 3) 河漫滩湿地：下游（可玩区南半段）每约 24m 一段，按段随机选一侧（约 3 成的段空着），从水边往外最宽约 4–10m，边缘不规则，最小 18 格
+            int floodCells = 0;
+            var floodP = new bool[N];
+            double zFlood = b0 + play * 0.55;
+            for (int z = 0; z < H; z++)
+                for (int x = 0; x < W; x++)
+                {
+                    int i = z * W + x;
+                    int k = nearest[i];
+                    if (k < 0 || z > zFlood || cls[i] != Ground || map.HasWater(i)) continue;
+                    double out0 = dRiver[i] - HalfWidth(i);
+                    if (out0 <= 0) continue;
+                    double width = 7 + 3 * fFlood.Sample(x, z);
+                    if (out0 > width) continue;
+                    if (h[i] > wl[k] + 1) continue; // 只在贴水的低岸
+                    int a = path[Math.Max(0, k - 4)], b = path[Math.Min(path.Count - 1, k + 4)];
+                    double tx = b % W - a % W, tz = b / W - a / W;
+                    double cross = tx * (z - path[k] / W) - tz * (x - path[k] % W);
+                    double r = Hash.Unit(Hash.Of((uint)(k / 24), Hash.Derive(seed, "tf.fside")));
+                    if (r > 0.7) continue;
+                    int side = r < 0.35 ? 1 : -1;
+                    if (cross * side <= 0) continue;
+                    floodP[i] = true;
+                }
+            floodP = Grid.RemoveSmall(floodP, W, H, 18);
+            for (int i = 0; i < N; i++) if (floodP[i]) { bio[i] = (byte)BiomeId.Swamp; floodCells++; }
+            int swampCells = 0;
+            for (int i = 0; i < N; i++)
+            {
+                map.Biome[i] = bio[i];
+                map.Weights[bio[i]][i] = 1;
+                map.Tier[i] = cls[i];
+                if (bio[i] == (byte)BiomeId.Swamp && !IsBorderChunk(i, W, H, b0)) swampCells++;
+            }
 
             // ---------- 统计与自检 ----------
             int cp = 0, cp2 = 0, cb = 0, consecutive = 0, ramps = 0, cliffs = 0;
@@ -334,6 +420,9 @@ namespace Wort.Generation
             map.Stats["unreachableGround(应为0)"] = unreachable;
             map.Stats["plateausWithoutRamp(≥" + s.MinRampedPlateau + "格)"] = failedPlateaus;
             map.Stats["riverDrops"] = map.Drops.Count;
+            map.Stats["swampBiomePercent"] = swampCells * 100 / playArea;
+            map.Stats["floodplainCells"] = floodCells;
+            map.Stats["pondCells"] = pondCells;
             return map;
         }
 
@@ -593,7 +682,7 @@ namespace Wort.Generation
             return res;
         }
 
-        static int FindSpawn(byte[] cls, RegionMap map, int W, int H, int b0)
+        static int FindSpawn(byte[] cls, RegionMap map, int W, int H, int b0, bool[] avoid)
         {
             int tx = W / 2, tz = b0 + 40, best = -1, bestD = int.MaxValue;
             var lab = Grid.Label(W, H, i => cls[i] == Ground, (a, b) => true, out var sizes);
@@ -601,7 +690,7 @@ namespace Wort.Generation
             for (int c = 1; c < sizes.Count; c++) if (sizes[c] > sizes[main]) main = c;
             for (int i = 0; i < W * H; i++)
             {
-                if (cls[i] != Ground || lab[i] != main || map.Water[i] != RegionMap.NoWater || IsBorderChunk(i, W, H, b0)) continue;
+                if (cls[i] != Ground || lab[i] != main || avoid[i] || map.Water[i] != RegionMap.NoWater || IsBorderChunk(i, W, H, b0)) continue;
                 // 周围 5×5 都是同高平地
                 int x = i % W, z = i / W, ok = 1;
                 for (int dz = -2; dz <= 2 && ok == 1; dz++)

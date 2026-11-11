@@ -62,6 +62,7 @@ namespace Wort.Tools
             }
             Plan(map, cls).Save(Path.Combine(outDir, "plan.png"));
             Maps.Height(map).Save(Path.Combine(outDir, "height.png"));
+            Maps.Biome(map).Save(Path.Combine(outDir, "biome.png"));
             var r = new ShearRenderer(map, meshes);
             r.Render(0, 0, map.W, map.H, 2.0, null).Save(Path.Combine(outDir, "shear_overview.png"));
             return 0;
