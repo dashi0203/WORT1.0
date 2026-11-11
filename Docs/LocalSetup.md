@@ -71,7 +71,9 @@ layout 管线目前只在云端预览和测试里用，TerrainLab 场景还是�
 
 **体素器 5×5 与崖面外观**：Terrain Lab 的 Inspector 里 `Generator` 选 `Terrace5x5`、`Seed` 填 3，生成后 checksum 应为 `0x30884FC1`。
 `Cliff Dressing` 勾上时显示崖面外观原型（方案 B：立方体 + 倒角、侧面外鼓、泥土顶面边缘一圈岩石），取消勾选是原来的方块；
-勾上时地面用 `Wort/TerrainBlend` 着色器（泥土 / 岩石两张 128×128 贴图融合）；碰撞是 1m 格按同高矩形合并的 BoxCollider 加斜坡小网格（`Collider` 子物体）。反馈时请附开关前后的截图。
+勾上时地面用 `Wort/TerrainBlend` 着色器（泥土 / 岩石两张 128×128 贴图融合）；碰撞是 1m 格按同高矩形合并的 BoxCollider 加斜坡小网格（`Collider` 子物体）。
+勾上 `Random Chunk`（默认勾上）时，右上角 chunk（3,3）是随机 chunk；Inspector 里点“重新生成随机 chunk”换一次（序号 +1），只重建它和周围一圈，
+Console 打印 `[TerrainLab] 刷新 k：通过 / 失败 …` 和各步耗时。种子 3、序号 0 的随机区域 checksum 应为 `0x99C8D394`（与云端 `--random --seed 3` 的刷新 1 相同）。反馈时请附开关前后的截图。
 
 ## 6. 本地改动约定
 

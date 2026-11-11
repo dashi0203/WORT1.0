@@ -34,6 +34,12 @@ namespace Wort.Terrain
         [SerializeField, Tooltip("Legacy8x8 = 旧 8×8 生成器；Terrace5x5 = 体素器第一步（TerraceField，5×5，种子 3 是负责人选定的测试种子）。")]
         private GeneratorKind generator = GeneratorKind.Legacy8x8;
 
+        [SerializeField, Tooltip("Terrace5x5 时启用右上角的随机 chunk（chunk 3,3），用 RandomRegion 生成；Inspector 里有“重新生成随机 chunk”按钮。")]
+        private bool randomChunk = true;
+
+        [SerializeField, Tooltip("随机 chunk 的刷新序号（0 起）。每点一次“重新生成随机 chunk”加 1；同一种子、同一序号结果相同。")]
+        private int refreshIndex;
+
         [SerializeField, Tooltip("地形外观方案 B（CliffMesher）：立方体 + 外倒角 / 内倒角、泥土顶面、边缘一圈石头。只改画面，碰撞仍用原来的 1m 体素网格。")]
         private bool cliffDressing = true;
 
@@ -77,9 +83,13 @@ namespace Wort.Terrain
             Clear();
             var sw = Stopwatch.StartNew();
             uint useed = unchecked((uint)seed);
-            var map = generator == GeneratorKind.Terrace5x5
-                ? TerraceField.Generate(new TerraceFieldSettings { Seed = useed }, out _)
-                : RegionGenerator.Generate(new RegionSettings { Seed = useed });
+            RegionMap map;
+            if (generator == GeneratorKind.Terrace5x5 && randomChunk)
+                map = RefreshRandom(useed, out _);
+            else
+                map = generator == GeneratorKind.Terrace5x5
+                    ? TerraceField.Generate(new TerraceFieldSettings { Seed = useed }, out _)
+                    : RegionGenerator.Generate(new RegionSettings { Seed = useed });
             var settings = map.Settings;
             var voxels = new RegionVoxels(map);
             EnsureMaterials();
@@ -90,18 +100,7 @@ namespace Wort.Terrain
             for (int cz = 0; cz < settings.ChunksZ; cz++)
                 for (int cx = 0; cx < settings.ChunksX; cx++)
                 {
-                    var data = ChunkMesher.Build(voxels, cx, cz);
-                    var visual = cliffDressing ? CliffMesher.Build(voxels, cx, cz, useed) : data;
-                    triangles += visual.TriangleCount;
-                    var chunk = new GameObject($"Chunk {cx},{cz}") { hideFlags = HideFlags.DontSave };
-                    chunk.transform.SetParent(root.transform, false);
-                    chunk.transform.localPosition = new Vector3(cx * settings.ChunkSize, 0f, cz * settings.ChunkSize);
-                    chunk.isStatic = true;
-                    AddPart(chunk, "Ground", visual, false, addColliders && !cliffDressing);
-                    AddPart(chunk, "Water", visual, true, false);
-                    if (addColliders && cliffDressing)
-                        AddBoxColliders(chunk, map, voxels, cx, cz); // 碰撞仍按 1m 格：同高矩形合并成碰撞盒 + 斜坡小网格
-                }
+                    triangles += BuildChunk(root.transform, map, voxels, cx, cz, useed);
             sw.Stop();
             LastMap = map;
             LastMilliseconds = sw.ElapsedMilliseconds;
@@ -109,8 +108,99 @@ namespace Wort.Terrain
 
             map.Stats.TryGetValue("slopePermille", out int slope);
             map.Stats.TryGetValue("ramps", out int ramps);
+            if (CanRefreshRandom)
+                Debug.Log($"[TerrainLab] {LastRefreshReport}", this);
             Debug.Log($"[TerrainLab] seed {seed}  checksum 0x{map.Checksum():X8}  {sw.ElapsedMilliseconds} ms  " +
                       $"triangles {triangles}  ramps {ramps}  slopes {slope / 10f:0.0}%  spawn ({map.SpawnX}, {map.SpawnZ})", this);
+        }
+
+        private int BuildChunk(Transform root, RegionMap map, RegionVoxels voxels, int cx, int cz, uint useed)
+        {
+            var settings = map.Settings;
+            var data = ChunkMesher.Build(voxels, cx, cz);
+            var visual = cliffDressing ? CliffMesher.Build(voxels, cx, cz, useed) : data;
+            var chunk = new GameObject($"Chunk {cx},{cz}") { hideFlags = HideFlags.DontSave };
+            chunk.transform.SetParent(root, false);
+            chunk.transform.localPosition = new Vector3(cx * settings.ChunkSize, 0f, cz * settings.ChunkSize);
+            chunk.isStatic = true;
+            AddPart(chunk, "Ground", visual, false, addColliders && !cliffDressing);
+            AddPart(chunk, "Water", visual, true, false);
+            if (addColliders && cliffDressing)
+                AddBoxColliders(chunk, map, voxels, cx, cz); // 碰撞仍按 1m 格：同高矩形合并成碰撞盒 + 斜坡小网格
+            return visual.TriangleCount;
+        }
+
+        // ---- 随机 chunk（5×5 右上角，chunk 3,3）----
+        static readonly List<(int cx, int cz)> RandomChunks = new List<(int, int)> { (3, 3) };
+        private uint bakedSeed;
+        private RegionMap baked;
+        private byte[] bakedCls;
+        private List<RegionEntrance> candidates;
+
+        public bool CanRefreshRandom => generator == GeneratorKind.Terrace5x5 && randomChunk;
+        public int RefreshIndex => refreshIndex;
+        public string LastRefreshReport { get; private set; }
+
+        /// <summary>固定世界只烘焙一次（同一种子缓存），随机区域按 refreshIndex 生成。</summary>
+        private RegionMap RefreshRandom(uint useed, out RandomRegionResult result)
+        {
+            if (baked == null || bakedSeed != useed)
+            {
+                baked = TerraceField.Generate(new TerraceFieldSettings { Seed = useed, RandomChunks = RandomChunks }, out bakedCls);
+                candidates = RandomRegion.AutoCandidates(baked, bakedCls, RandomChunks, useed);
+                bakedSeed = useed;
+            }
+            var sw = Stopwatch.StartNew();
+            result = RandomRegion.Refresh(baked, bakedCls, RandomChunks, candidates, useed, 1, refreshIndex, new RandomRegionSettings());
+            LastRefreshReport = $"刷新 {refreshIndex + 1}：{(result.Ok ? "通过" : "失败")}，尝试 {result.Attempts} 次，区域生成 {sw.ElapsedMilliseconds} ms，checksum 0x{result.Map.Checksum():X8}";
+            if (!result.Ok)
+                Debug.LogWarning("[TerrainLab] 随机 chunk 校验失败：\n" + string.Join("\n", result.Report), this);
+            return result.Map;
+        }
+
+        /// <summary>
+        /// 重新生成随机 chunk：刷新序号 +1，只重建随机 chunk 和它周围一圈（3×3 个 chunk），角色不动。
+        /// Console 打印区域生成、体素、外观网格 + 碰撞各自的耗时。
+        /// </summary>
+        public void RegenerateRandomChunk()
+        {
+            if (!CanRefreshRandom)
+                return;
+            var root = transform.Find(RootName);
+            if (root == null || LastMap == null)
+            {
+                Generate();
+                return;
+            }
+            refreshIndex++;
+            uint useed = unchecked((uint)seed);
+            var swAll = Stopwatch.StartNew();
+            var map = RefreshRandom(useed, out _);
+            long tRegion = swAll.ElapsedMilliseconds;
+            var voxels = new RegionVoxels(map);
+            long tVoxels = swAll.ElapsedMilliseconds - tRegion;
+            EnsureMaterials();
+            var (rcx, rcz) = RandomChunks[0];
+            int rebuilt = 0;
+            for (int cz = rcz - 1; cz <= rcz + 1; cz++)
+                for (int cx = rcx - 1; cx <= rcx + 1; cx++)
+                {
+                    if (cx < 0 || cz < 0 || cx >= map.Settings.ChunksX || cz >= map.Settings.ChunksZ)
+                        continue;
+                    var old = root.Find($"Chunk {cx},{cz}");
+                    if (old != null)
+                    {
+                        foreach (var filter in old.GetComponentsInChildren<MeshFilter>(true))
+                            DestroySafe(filter.sharedMesh);
+                        DestroySafe(old.gameObject);
+                    }
+                    BuildChunk(root, map, voxels, cx, cz, useed);
+                    rebuilt++;
+                }
+            long tMesh = swAll.ElapsedMilliseconds - tRegion - tVoxels;
+            LastMap = map;
+            LastMilliseconds = swAll.ElapsedMilliseconds;
+            Debug.Log($"[TerrainLab] {LastRefreshReport}；体素 {tVoxels} ms；外观网格 + 碰撞 {tMesh} ms（重建 {rebuilt} 个 chunk）；合计 {swAll.ElapsedMilliseconds} ms", this);
         }
 
         public void Clear()
