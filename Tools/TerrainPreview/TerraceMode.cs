@@ -1,0 +1,100 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using Wort.Generation;
+
+namespace Wort.Tools
+{
+    /// <summary>
+    /// 体素器第一步（TerraceField）的预览：dotnet run -c Release -- --terrace [--seed N] [--out DIR]
+    /// 输出：plan.png（参考图风格的台地 / 盆地分布）、height.png、shear_overview.png、views/*.png。
+    /// </summary>
+    static class TerraceMode
+    {
+        public static int Run(uint seed, string outDir)
+        {
+            Directory.CreateDirectory(outDir);
+            var sw = Stopwatch.StartNew();
+            if (Environment.GetEnvironmentVariable("DEBUG_UNREACH") != null) TerraceField.Debug = new System.Text.StringBuilder();
+            var map = TerraceField.Generate(new TerraceFieldSettings { Seed = seed }, out var cls);
+            long tA = sw.ElapsedMilliseconds;
+            var voxels = new RegionVoxels(map);
+            var meshes = new List<(MeshData mesh, int ox, int oz)>();
+            for (int cz = 0; cz < map.Settings.ChunksZ; cz++)
+                for (int cx = 0; cx < map.Settings.ChunksX; cx++)
+                    meshes.Add((ChunkMesher.Build(voxels, cx, cz), cx * map.Settings.ChunkSize, cz * map.Settings.ChunkSize));
+            long tB = sw.ElapsedMilliseconds;
+            Console.WriteLine($"terrace seed {seed}: 生成 {tA}ms, 体素 + 网格 {tB - tA}ms");
+            foreach (var kv in map.Stats) Console.WriteLine($"  {kv.Key} = {kv.Value}");
+            Console.WriteLine($"  checksum = 0x{map.Checksum():X8}");
+            if (Environment.GetEnvironmentVariable("DEBUG_UNREACH") != null)
+            {
+                var cnt = new int[5]; var hs = new SortedDictionary<int,int>();
+                for (int i = 0; i < cls.Length; i++) if (map.Has(i, CellFlags.Unreachable)) { cnt[cls[i]]++; hs[map.Height[i]] = hs.GetValueOrDefault(map.Height[i]) + 1; }
+                Console.WriteLine("  unreachable by class: " + string.Join(",", cnt) + " heights: " + string.Join(" ", hs));
+                Console.Write(TerraceField.Debug);
+                Console.WriteLine($"  spawn h={map.Height[map.Index(map.SpawnX,map.SpawnZ)]}");
+                var lab = Grid.Label(map.W, map.H, i => cls[i] == TerraceField.Ground, (a, b) => true, out var sz);
+                var l2 = new List<int>(sz); l2.Sort(); l2.Reverse();
+                Console.WriteLine("  ground comps: " + sz.Count + " top: " + string.Join(" ", l2.GetRange(0, Math.Min(6, l2.Count))));
+                var ul = new SortedDictionary<int,int>();
+                for (int i = 0; i < cls.Length; i++) if (map.Has(i, CellFlags.Unreachable) && cls[i]==0) ul[sz[lab[i]]] = ul.GetValueOrDefault(sz[lab[i]]) + 1;
+                Console.WriteLine("  unreachable ground by comp size: " + string.Join(" ", ul));
+            }
+
+            Plan(map, cls).Save(Path.Combine(outDir, "plan.png"));
+            Maps.Height(map).Save(Path.Combine(outDir, "height.png"));
+            var r = new ShearRenderer(map, meshes);
+            r.Render(0, 0, map.W, map.H, 2.0, null).Save(Path.Combine(outDir, "shear_overview.png"));
+            return 0;
+        }
+
+        /// <summary>参考图风格：平地浅褐、台地深褐（二级更深）、盆地暗绿褐、外圈最深；高处南 / 东侧描黑边当崖影。</summary>
+        static Image Plan(RegionMap map, byte[] cls)
+        {
+            const int S = 3;
+            var img = new Image(map.W * S, map.H * S);
+            var fx = new Fbm(77, 9, 2);
+            for (int z = 0; z < map.H; z++)
+                for (int x = 0; x < map.W; x++)
+                {
+                    int i = map.Index(x, z);
+                    uint col = cls[i] switch
+                    {
+                        TerraceField.Plateau => 0x4E3626u,
+                        TerraceField.Plateau2 => 0x3B281Bu,
+                        TerraceField.Basin => 0x4F5340u,
+                        TerraceField.Border => 0x2E2118u,
+                        _ => 0x8A6C55u,
+                    };
+                    // 地表斑驳（植被感）
+                    double n = fx.Sample(x, z);
+                    if (cls[i] == TerraceField.Ground && n > 0.35) col = Image.Mix(col, 0x6E7A5A, 0.45);
+                    col = Image.Scale(col, 1 + 0.03 * (map.Height[i] % 4));
+                    if (map.HasWater(i)) col = 0x3F7FB0u;
+                    if (map.Slope[i] >= 0) col = 0xE0A040u;
+                    else if (map.Has(i, CellFlags.Ramp)) col = 0xB98A4Au;
+                    if (map.Has(i, CellFlags.Unreachable)) col = Image.Mix(col, 0xFF2020, 0.6);
+                    for (int py = 0; py < S; py++)
+                        for (int px = 0; px < S; px++)
+                            img.Set(x * S + px, (map.H - 1 - z) * S + py, col);
+                    // 崖影：比南邻 / 东邻高 ≥ 2 时在本格南 / 东边描黑
+                    if (z > 0 && map.Height[i] - map.Height[i - map.W] >= 2 && map.Slope[i - map.W] < 0)
+                        for (int px = 0; px < S; px++) img.Set(x * S + px, (map.H - 1 - z) * S + S - 1, 0x0E0A08);
+                    if (x + 1 < map.W && map.Height[i] - map.Height[i + 1] >= 2 && map.Slope[i + 1] < 0)
+                        for (int py = 0; py < S; py++) img.Set(x * S + S - 1, (map.H - 1 - z) * S + py, 0x1A120C);
+                }
+            // chunk 网格
+            for (int c = 0; c <= map.W; c += 64)
+                for (int t = 0; t < map.H * S; t++)
+                {
+                    if (c * S < img.Width) img.Set(Math.Min(c * S, img.Width - 1), t, Image.Mix(img.Get(Math.Min(c * S, img.Width - 1), t), 0xFFFFFF, 0.25));
+                    if (c * S < img.Height) img.Set(t, Math.Min(c * S, img.Height - 1), Image.Mix(img.Get(t, Math.Min(c * S, img.Height - 1)), 0xFFFFFF, 0.25));
+                }
+            img.Disc((map.SpawnX + 0.5) * S, (map.H - map.SpawnZ - 0.5) * S, 6, 0xFFFFFF);
+            img.Disc((map.SpawnX + 0.5) * S, (map.H - map.SpawnZ - 0.5) * S, 4, 0xE02020);
+            return img;
+        }
+    }
+}

@@ -18,12 +18,15 @@ namespace Wort.Tools
             uint seed = 20261109;
             string outDir = "out";
             string layout = null;
+            bool terrace = false;
             for (int i = 0; i < args.Length - 1; i++)
             {
                 if (args[i] == "--seed") seed = uint.Parse(args[i + 1]);
                 if (args[i] == "--out") outDir = args[i + 1];
                 if (args[i] == "--layout") layout = args[i + 1];
             }
+            foreach (var a in args) if (a == "--terrace") terrace = true;
+            if (terrace) return TerraceMode.Run(seed, outDir);
             if (layout != null) return LayoutMode.Run(layout, outDir);
             Directory.CreateDirectory(outDir);
 
