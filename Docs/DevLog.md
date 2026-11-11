@@ -4,6 +4,21 @@
 
 GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
 
+## 2026-11-11 晚 收工：明天从这里开始
+
+今天完成：
+- 随机区域整理：只在窗口里计算，结果逐格不变；调试开关统一为 `--debug` / `GenDebug.Log`；删去“开口南侧墙压到最低”（随机关卡文档 rev 40）。
+- 地形外观定为方案 B（`CliffMesher`）：立方体 + 外倒角 0.1m / 内倒角 0.04m、侧面两层 Voronoi 外鼓（0.26m）、崖脚外扩 0.18m、外角补地面；
+  泥土 / 岩石两张 128 贴图按顶点权重融合（`TerrainTextures`、`Wort/TerrainBlend`）；平地和碰撞盒按矩形合并；外观网格每 chunk 约 7.5 ms。
+  规则见《地形外观与崖面美术规范》rev 6（快照 `Docs/TerrainArtGDD.md`）。
+- Unity：`TerrainLab` 支持 `Terrace5x5` + 随机 chunk，Inspector 有“重新生成随机 chunk”按钮。**Unity 侧代码云端未编译**，负责人让 Codex 在本地新克隆项目运行。
+
+明天先做：
+1. 看 Codex 在 Unity 里的反馈（Console 报错、checksum `0x30884FC1` / `0x99C8D394`、耗时、截图），先修编译 / 显示问题。
+2. 按 Unity 实际效果再调外鼓、崖脚、贴图融合；确认后把相关【暂定】数值定下来。
+3. 待选：随机区域生成提前判失败、减少重试（现在 40–180 ms，是刷新耗时的大头）；网格生成多线程；北 / 东 / 西面进一步简化。
+4. 仍挂着的旧待办：随机 chunk 出入口通道做成弯曲、宽窄变化的谷道；TerraceField 连通检查加跳跃；规划器 JSON 接入体素器；道路地表。
+
 ## 当前工作重心（负责人 2026-11-11）
 
 **先做抽象的大世界设计，暂不碰体素。** 负责人或 Claude 在 `Tools/WorldPlanner/`（离线单文件 HTML）里设计，
