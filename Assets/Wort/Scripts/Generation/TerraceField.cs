@@ -162,10 +162,14 @@ namespace Wort.Generation
             EnforceCorridor(plateau, basin, cls, riverMask, W, H);
 
             // 随机 chunk 周围 10m 内不放台地（烘焙时就把挨着随机区域的固定地形放平，免得随机区域边上出现离谱的高差）
+            // 距离用噪声在 3–14m 之间变化，边缘弯曲（不在随机区域外面留一条等宽的平带）
+            var fNear = new Fbm(Hash.Derive(seed, "tf.nearRand"), 14, 2);
+            bool NearRandom(int x, int z) => s.RandomChunks.Count > 0 && DistToChunks(x, z, s.RandomChunks, rs.ChunkSize) <= 8.5 + 5.5 * fNear.Sample(x, z);
             if (s.RandomChunks.Count > 0)
                 for (int z = 0; z < H; z++)
                     for (int x = 0; x < W; x++)
-                        if (DistToChunks(x, z, s.RandomChunks, rs.ChunkSize) <= 10) plateau[z * W + x] = false;
+                        if (NearRandom(x, z)) plateau[z * W + x] = false;
+            if (s.RandomChunks.Count > 0) plateau = Grid.RemoveSmall(Grid.OpenRound(plateau, W, H, 2.0), W, H, 30); // 清掉被切剩的细条
 
             // ---------- 二级台地：大块台地内部再叠一级 ----------
             var distP = Grid.DistanceInside(plateau, W, H);
@@ -200,7 +204,7 @@ namespace Wort.Generation
             double thrB = QuantileOf(gvals, 1 - frac);
             for (int i = 0; i < N; i++)
                 basin[i] = cls[i] != Border && !plateau[i] && !swamp[i] && dRiver[i] > HalfWidth(i) + 5 && bn[i] > thrB
-                    && (s.RandomChunks.Count == 0 || DistToChunks(i % W, i / W, s.RandomChunks, rs.ChunkSize) > 10);
+                    && !NearRandom(i % W, i / W);
             basin = Grid.OpenRound(basin, W, H, 1.0);
             for (int pass = 0; pass < 2; pass++)
             {

@@ -237,6 +237,7 @@ namespace Wort.Generation
             var inner = new bool[N];
             var fSeam = new Fbm(Hash.Of(seed, 11), 9, 2);
             var fSeamBig = new Fbm(Hash.Of(seed, 12), 22, 2);
+            var fSeamMid = new Fbm(Hash.Of(seed, 16), 11, 2);
             for (int z = 0; z < H; z++)
                 for (int x = 0; x < W; x++)
                 {
@@ -245,9 +246,10 @@ namespace Wort.Generation
                     // 接缝带内缘用噪声弄弯：3.5–6m
                     // 接缝带内缘弯曲：1.5–6m，大小两层噪声（不出方框）
                     // 接缝带宽窄不一：1–6m（大小两层噪声），有的地方山体几乎贴着 chunk 边
-                    double sv = 0.5 + 0.9 * fSeamBig.Sample(x, z) + 0.25 * fSeam.Sample(x, z);
+                    // 宽度 0.5–6m：中等波长为主（不出等宽长条），山体有的地方贴着 chunk 边、有的地方凹进去成小湾
+                    double sv = 0.45 + 0.8 * fSeamMid.Sample(x, z) + 0.35 * fSeamBig.Sample(x, z) + 0.2 * fSeam.Sample(x, z);
                     sv = sv < 0 ? 0 : (sv > 1 ? 1 : sv);
-                    double sw = 1 + (s.SeamWidth - 1) * sv;
+                    double sw = 0.5 + (s.SeamWidth - 0.5) * sv;
                     if (distOut[i] <= sw) seam[i] = true; else inner[i] = true;
                 }
             inner = Grid.RemoveSmall(inner, W, H, 40);
