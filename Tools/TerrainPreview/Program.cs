@@ -320,6 +320,14 @@ namespace Wort.Tools
                         double k = 0.5 + 0.6 * lambert;
                         // 预览专用：顶面按高度略微提亮，便于分辨台地层级
                         if (ny > 0.99) k *= 0.82 + 0.36 * Math.Clamp((p[a * 3 + 1] - minY) / (double)Math.Max(1, maxY - minY), 0, 1);
+                        if (mesh.Blend.Count == mesh.VertexCount && mat != (int)VoxelMaterial.Water)
+                        {
+                            RasterTex(img, depth, u0, v0, ppm, h, k, nx, ny, nz,
+                                p[a * 3] + ox, p[a * 3 + 1], p[a * 3 + 2] + oz, mesh.Blend[a],
+                                p[b * 3] + ox, p[b * 3 + 1], p[b * 3 + 2] + oz, mesh.Blend[b],
+                                p[c * 3] + ox, p[c * 3 + 1], p[c * 3 + 2] + oz, mesh.Blend[c]);
+                            continue;
+                        }
                         uint col = Image.Scale(baseColor, k);
                         Raster(img, depth, u0, v0, ppm, h,
                             p[a * 3] + ox, p[a * 3 + 1], p[a * 3 + 2] + oz,
@@ -367,6 +375,52 @@ namespace Wort.Tools
                     if (x < 0 || y < 0 || x >= img.Width || y >= img.Height) continue;
                     bool border = y == y0 || y == y1 || x == x0 || x == x1 - 1 || y == y0 + 1 || x == x0 + 1;
                     img.Set(x, y, border ? 0x000000u : col);
+                }
+        }
+
+        static uint[] texDirt, texRock; static float[] hDirt, hRock;
+
+        /// <summary>带贴图的三角形：按法线选投影（顶面用 xz，侧面用沿墙坐标和 y），两张 128×128 贴图按融合权重和高度混合。</summary>
+        static void RasterTex(Image img, float[] depth, double u0, double v0, double ppm, int h, double k, double nx, double ny, double nz,
+            double ax, double ay, double az, float ba, double bx, double by, double bz, float bb, double cx, double cy, double cz, float bc)
+        {
+            if (texDirt == null) { texDirt = TerrainTextures.Dirt(out hDirt); texRock = TerrainTextures.Rock(out hRock); }
+            double pax = (ax - u0) * ppm, pay = h - (az + ay * Shear - v0) * ppm;
+            double pbx = (bx - u0) * ppm, pby = h - (bz + by * Shear - v0) * ppm;
+            double pcx = (cx - u0) * ppm, pcy = h - (cz + cy * Shear - v0) * ppm;
+            double area = (pbx - pax) * (pcy - pay) - (pby - pay) * (pcx - pax);
+            if (Math.Abs(area) < 1e-9) return;
+            int minX = Math.Max(0, (int)Math.Floor(Math.Min(pax, Math.Min(pbx, pcx))));
+            int maxX = Math.Min(img.Width - 1, (int)Math.Ceiling(Math.Max(pax, Math.Max(pbx, pcx))));
+            int minY = Math.Max(0, (int)Math.Floor(Math.Min(pay, Math.Min(pby, pcy))));
+            int maxY = Math.Min(img.Height - 1, (int)Math.Ceiling(Math.Max(pay, Math.Max(pby, pcy))));
+            if (minX > maxX || minY > maxY) return;
+            double inv = 1.0 / area;
+            bool topFace = Math.Abs(ny) > 0.6, alongX = Math.Abs(nz) > Math.Abs(nx);
+            int S = TerrainTextures.Size;
+            for (int y = minY; y <= maxY; y++)
+                for (int x = minX; x <= maxX; x++)
+                {
+                    double px = x + 0.5, py = y + 0.5;
+                    double w0 = ((pbx - px) * (pcy - py) - (pby - py) * (pcx - px)) * inv;
+                    double w1 = ((pcx - px) * (pay - py) - (pcy - py) * (pax - px)) * inv;
+                    double w2 = 1 - w0 - w1;
+                    if (w0 < -1e-7 || w1 < -1e-7 || w2 < -1e-7) continue;
+                    float d = (float)(w0 * (ay - az * 1e-4) + w1 * (by - bz * 1e-4) + w2 * (cy - cz * 1e-4));
+                    int kk = y * img.Width + x;
+                    if (d <= depth[kk]) continue;
+                    depth[kk] = d;
+                    double wx = w0 * ax + w1 * bx + w2 * cx, wy = w0 * ay + w1 * by + w2 * cy, wz = w0 * az + w1 * bz + w2 * cz;
+                    double tu = topFace ? wx : (alongX ? wx : wz), tv = topFace ? wz : wy;
+                    int Ti(double uu, double vv) { int ix = (((int)Math.Floor(uu * S)) % S + S) % S, iy = (((int)Math.Floor(vv * S)) % S + S) % S; return iy * S + ix; }
+                    TerrainTextures.Uv2(tu, tv, out double tu2, out double tv2);
+                    int t1 = Ti(tu, tv), t2 = Ti(tu2, tv2);
+                    float bl = (float)(w0 * ba + w1 * bb + w2 * bc);
+                    float m = TerrainTextures.Mix(bl, (hDirt[t1] + hDirt[t2]) * 0.5f, (hRock[t1] + hRock[t2]) * 0.5f);
+                    uint Ch(uint c, int sh) => (c >> sh) & 0xFF;
+                    double Avg(uint[] tex, int sh) => (Ch(tex[t1], sh) + Ch(tex[t2], sh)) * 0.5;
+                    uint r = (uint)(Avg(texDirt, 16) * (1 - m) + Avg(texRock, 16) * m), g = (uint)(Avg(texDirt, 8) * (1 - m) + Avg(texRock, 8) * m), b = (uint)(Avg(texDirt, 0) * (1 - m) + Avg(texRock, 0) * m);
+                    img.Set(x, y, Image.Scale(r << 16 | g << 8 | b, k));
                 }
         }
 

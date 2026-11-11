@@ -38,6 +38,8 @@ namespace Wort.Terrain
         private bool cliffDressing = true;
 
         private Material[] materials;
+        private Material blendMaterial;   // Wort/TerrainBlend（方案 B 的泥土 / 岩石融合）
+        private Texture2D dirtTexture, rockTexture;
 
         public int Seed
         {
@@ -64,6 +66,10 @@ namespace Wort.Terrain
             foreach (var m in materials)
                 DestroySafe(m);
             materials = null;
+            DestroySafe(blendMaterial);
+            DestroySafe(dirtTexture);
+            DestroySafe(rockTexture);
+            blendMaterial = null;
         }
 
         public void Generate()
@@ -94,7 +100,7 @@ namespace Wort.Terrain
                     AddPart(chunk, "Ground", visual, false, addColliders && !cliffDressing);
                     AddPart(chunk, "Water", visual, true, false);
                     if (addColliders && cliffDressing)
-                        AddCollider(chunk, data); // 碰撞用未变形的体素网格（玩法规则按 1m 格）
+                        AddBoxColliders(chunk, map, voxels, cx, cz); // 碰撞仍按 1m 格：同高矩形合并成碰撞盒 + 斜坡小网格
                 }
             sw.Stop();
             LastMap = map;
@@ -135,17 +141,27 @@ namespace Wort.Terrain
                 go.AddComponent<MeshCollider>().sharedMesh = mesh;
         }
 
-        private void AddCollider(GameObject chunk, MeshData data)
+        private void AddBoxColliders(GameObject chunk, RegionMap map, RegionVoxels voxels, int cx, int cz)
         {
-            var mesh = BuildMesh(data, false, out _);
-            if (mesh == null)
-                return;
-            mesh.name = $"{chunk.name} Collider";
             var go = new GameObject("Collider") { hideFlags = HideFlags.DontSave };
             go.transform.SetParent(chunk.transform, false);
             go.isStatic = true;
-            go.AddComponent<MeshFilter>().sharedMesh = mesh; // 只为 Clear() 能找到并销毁网格；没有 MeshRenderer，不渲染
-            go.AddComponent<MeshCollider>().sharedMesh = mesh;
+            map.HeightRange(out int minH, out _);
+            float bottom = minH - 2;
+            int ox = cx * map.Settings.ChunkSize, oz = cz * map.Settings.ChunkSize;
+            foreach (var b in ColliderBoxes.Build(map, cx, cz))
+            {
+                var box = go.AddComponent<BoxCollider>();
+                box.center = new Vector3((b.X0 + b.X1) * 0.5f - ox, (bottom + b.Top) * 0.5f, (b.Z0 + b.Z1) * 0.5f - oz);
+                box.size = new Vector3(b.X1 - b.X0, b.Top - bottom, b.Z1 - b.Z0);
+            }
+            var slopes = BuildMesh(CliffMesher.SlopesOnly(voxels, cx, cz), false, out _);
+            if (slopes != null)
+            {
+                slopes.name = $"{chunk.name} Slope Collider";
+                go.AddComponent<MeshFilter>().sharedMesh = slopes; // 只为 Clear() 能找到并销毁网格；没有 MeshRenderer，不渲染
+                go.AddComponent<MeshCollider>().sharedMesh = slopes;
+            }
         }
 
         /// <summary>MeshData → Mesh。water 为 true 时只取水面子网格，否则取除水以外的全部。</summary>
@@ -176,12 +192,20 @@ namespace Wort.Terrain
             var mesh = new Mesh { indexFormat = IndexFormat.UInt32, hideFlags = HideFlags.DontSave };
             mesh.SetVertices(vertices);
             mesh.SetNormals(normals);
+            bool blended = !water && data.Blend.Count == count && blendMaterial != null;
+            if (blended)
+            {
+                var colors = new List<Color32>(count);
+                for (int i = 0; i < count; i++)
+                    colors.Add(new Color32((byte)Mathf.RoundToInt(Mathf.Clamp01(data.Blend[i]) * 255f), 0, 0, 255));
+                mesh.SetColors(colors);
+            }
             mesh.subMeshCount = subs.Count;
             used = new Material[subs.Count];
             for (int k = 0; k < subs.Count; k++)
             {
                 mesh.SetTriangles(data.Indices[subs[k]], k, false);
-                used[k] = materials[subs[k]];
+                used[k] = blended ? blendMaterial : materials[subs[k]];
             }
             mesh.RecalculateBounds();
             return mesh;
@@ -190,6 +214,7 @@ namespace Wort.Terrain
         /// <summary>按 VoxelPalette 建纯色 URP 材质（GDD 16：只用纯色材质）。</summary>
         private void EnsureMaterials()
         {
+            EnsureBlendMaterial();
             int count = (int)VoxelMaterial.Count;
             if (materials != null && materials.Length == count && materials[1] != null)
                 return;
@@ -207,6 +232,42 @@ namespace Wort.Terrain
                 mat.SetFloat("_Smoothness", vm == VoxelMaterial.Water ? 0.6f : 0f);
                 materials[m] = mat;
             }
+        }
+
+        /// <summary>方案 B 的融合材质：贴图由 TerrainTextures 生成（128×128，A 通道 = 高度），与云端预览一致。</summary>
+        private void EnsureBlendMaterial()
+        {
+            if (blendMaterial != null)
+                return;
+            var shader = Shader.Find("Wort/TerrainBlend");
+            if (shader == null)
+            {
+                Debug.LogWarning("[TerrainLab] 找不到 Wort/TerrainBlend 着色器，崖面外观改用纯色材质。", this);
+                return;
+            }
+            dirtTexture = MakeTexture("Dirt", TerrainTextures.Dirt(out var dh), dh);
+            rockTexture = MakeTexture("Rock", TerrainTextures.Rock(out var rh), rh);
+            blendMaterial = new Material(shader) { name = "Terrain Blend", hideFlags = HideFlags.DontSave };
+            blendMaterial.SetTexture("_DirtTex", dirtTexture);
+            blendMaterial.SetTexture("_RockTex", rockTexture);
+        }
+
+        private static Texture2D MakeTexture(string name, uint[] rgb, float[] height)
+        {
+            int n = TerrainTextures.Size;
+            var tex = new Texture2D(n, n, TextureFormat.RGBA32, true)
+            {
+                name = "Terrain " + name, wrapMode = TextureWrapMode.Repeat, filterMode = FilterMode.Bilinear, hideFlags = HideFlags.DontSave
+            };
+            var px = new Color32[n * n];
+            for (int i = 0; i < px.Length; i++)
+            {
+                uint c = rgb[i];
+                px[i] = new Color32((byte)(c >> 16), (byte)(c >> 8), (byte)c, (byte)Mathf.RoundToInt(Mathf.Clamp01(height[i]) * 255f));
+            }
+            tex.SetPixels32(px);
+            tex.Apply(true);
+            return tex;
         }
 
         private void PlacePlayer(RegionMap map)

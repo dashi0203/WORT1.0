@@ -70,8 +70,8 @@ git pull origin claude/bold-bardeen-vlwhjd
 layout 管线目前只在云端预览和测试里用，TerrainLab 场景还是旧生成器。
 
 **体素器 5×5 与崖面外观**：Terrain Lab 的 Inspector 里 `Generator` 选 `Terrace5x5`、`Seed` 填 3，生成后 checksum 应为 `0x30884FC1`。
-`Cliff Dressing` 勾上时显示崖面外观原型（削角、岩层、沿石、崖面嵌石、崖脚碎石，规则见 `Docs/TerrainArtGDD.md`），取消勾选是原来的方块；
-碰撞始终用原来的方块网格（勾上时是一个不渲染的 `Collider` 子物体）。反馈时请附开关前后的截图。
+`Cliff Dressing` 勾上时显示崖面外观原型（方案 B：立方体 + 倒角、侧面外鼓、泥土顶面边缘一圈岩石），取消勾选是原来的方块；
+勾上时地面用 `Wort/TerrainBlend` 着色器（泥土 / 岩石两张 128×128 贴图融合）；碰撞是 1m 格按同高矩形合并的 BoxCollider 加斜坡小网格（`Collider` 子物体）。反馈时请附开关前后的截图。
 
 ## 6. 本地改动约定
 

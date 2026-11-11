@@ -8,6 +8,8 @@ namespace Wort.Generation
     {
         public readonly List<float> Positions = new List<float>();
         public readonly List<float> Normals = new List<float>();
+        /// <summary>每个顶点的贴图融合权重（0 = 泥土，1 = 岩石）。只有 CliffMesher 写；为空表示不用融合。</summary>
+        public readonly List<float> Blend = new List<float>();
         public readonly List<int>[] Indices;
 
         public MeshData()
