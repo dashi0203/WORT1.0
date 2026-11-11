@@ -20,16 +20,20 @@ namespace Wort.Tools
             long tA = sw.ElapsedMilliseconds;
             var voxels = new RegionVoxels(map);
             var meshes = new List<(MeshData mesh, int ox, int oz)>();
+            long triBase = 0, triDressed = 0;
             for (int cz = 0; cz < map.Settings.ChunksZ; cz++)
                 for (int cx = 0; cx < map.Settings.ChunksX; cx++)
                     {
                     var mesh = ChunkMesher.Build(voxels, cx, cz);
+                    triBase += mesh.TriangleCount;
                     int ox = cx * map.Settings.ChunkSize, oz = cz * map.Settings.ChunkSize;
                     if (cliff) mesh = CliffDressing.Apply(mesh, map, ox, oz, seed);
+                    triDressed += mesh.TriangleCount;
                     meshes.Add((mesh, ox, oz));
                 }
             long tB = sw.ElapsedMilliseconds;
             Console.WriteLine($"terrace seed {seed}: 生成 {tA}ms, 体素 + 网格 {tB - tA}ms");
+            Console.WriteLine($"  三角形：体素网格 {triBase}，显示网格 {triDressed}");
             foreach (var kv in map.Stats) Console.WriteLine($"  {kv.Key} = {kv.Value}");
             Console.WriteLine($"  checksum = 0x{map.Checksum():X8}");
             if (GenDebug.On)
