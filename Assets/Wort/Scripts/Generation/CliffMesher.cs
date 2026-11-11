@@ -18,7 +18,7 @@ namespace Wort.Generation
     {
         public const float Bevel = 0.1f;   // 外倒角（顶边、外角竖边）
         public const float Fillet = 0.04f; // 内倒角（凹角）
-        public const float Bulge = 0.17f;  // 侧面往外鼓（m）
+        public const float Bulge = 0.3f;   // 侧面往外鼓（m，Voronoi 石块中心处）
         const float RimIn = 0.12f, RimOut = 0.5f, RimNoise = 0.1f; // 顶面融合：离崖边 ≤ RimIn 全岩石，≥ RimOut 全泥土
 
         // 子网格：融合材质的地面都放在 Soil 里（着色器按 Blend 混合两张贴图）
@@ -261,7 +261,12 @@ namespace Wort.Generation
         {
             if (y1 - y0 < 1e-3f) return;
             var rows = new List<float> { y0 };
-            for (float y = (float)Math.Floor(y0 * 2 + 1.001f) * 0.5f; y < y1 - 0.2f; y += 0.5f) rows.Add(y);
+            // 朝南的面（镜头看得见）每 0.25m 一行、列也加倍，其余每 0.5m 一行
+            // 北面镜头看不见：不细分、不鼓；东西面只看得到轮廓：列减半
+            bool south = nz < -0.5f, north = nz > 0.5f;
+            float step = south ? 0.25f : (north ? 100f : 0.5f);
+            if (south) cols *= 2; else if (north) cols = 1; else cols = Math.Max(1, cols / 2);
+            for (float y = (float)Math.Floor(y0 / step + 1.001f) * step; y < y1 - step * 0.4f; y += step) rows.Add(y);
             rows.Add(y1);
             int C = cols, R = rows.Count - 1;
             float tx = -nz, tz = nx; // 沿墙方向（世界）
@@ -283,11 +288,12 @@ namespace Wort.Generation
                     {
                         // 错开：只对非端头的列沿墙错开，所有可动顶点上下错开（都取决于世界坐标）
                         uint hsh = Hash.Of((int)Math.Floor(along * 8 + 0.5f), (int)Math.Floor(Y * 8 + 0.5f), (uint)(plane * 131 + 7));
-                        float jy = ((hsh & 0xFF) / 255f - 0.5f) * 0.22f;
+                        float jy = ((hsh & 0xFF) / 255f - 0.5f) * 0.44f * step;
                         float ju = end ? 0 : (((hsh >> 8) & 0xFF) / 255f - 0.5f) * 0.12f;
                         Y += jy; along += ju; X += tx * ju; Z += tz * ju;
                         float v = Vor(along, Y, (uint)(plane * 977 + 3));
-                        float off = Bulge * (0.25f + 0.75f * (1 - v));
+                        float q = 1 - v * 1.4f; q = q < 0 ? 0 : q;
+                        float off = Bulge * (0.15f + 0.85f * q * q); // 石块中心鼓得多、石块之间凹下去，起伏更分明
                         X += nx * off; Z += nz * off;
                     }
                     else if (r == 0 && ground && !end)
