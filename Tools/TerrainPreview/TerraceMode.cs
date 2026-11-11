@@ -43,6 +43,23 @@ namespace Wort.Tools
                 Console.WriteLine("  unreachable ground by comp size: " + string.Join(" ", ul));
             }
 
+            if (Environment.GetEnvironmentVariable("BAND_STATS") != null)
+            {
+                int b0 = 64;
+                for (int band = 0; band < 3; band++)
+                {
+                    int z0 = b0 + band * 64, z1 = z0 + 64;
+                    var hist = new SortedDictionary<int, int>();
+                    int gmin = int.MaxValue, gmax = int.MinValue;
+                    for (int z = z0; z < z1; z++) for (int x = b0; x < map.W - b0; x++)
+                    {
+                        int i = map.Index(x, z); if (cls[i] == TerraceField.Border || map.HasWater(i)) continue;
+                        hist[map.Height[i]] = hist.GetValueOrDefault(map.Height[i]) + 1;
+                        if (cls[i] == TerraceField.Ground) { gmin = Math.Min(gmin, map.Height[i]); gmax = Math.Max(gmax, map.Height[i]); }
+                    }
+                    Console.WriteLine($"  band {(band==0?"南":band==1?"中":"北")}: 平地 {gmin}..{gmax}, 全部 " + string.Join(" ", hist));
+                }
+            }
             Plan(map, cls).Save(Path.Combine(outDir, "plan.png"));
             Maps.Height(map).Save(Path.Combine(outDir, "height.png"));
             var r = new ShearRenderer(map, meshes);
