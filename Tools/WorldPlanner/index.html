@@ -216,7 +216,7 @@ function renderMap(){const {w:W,h:H}=dims(),parts=[];
  else if(z==='fixed')parts.push(`<rect x="${xx+3}" y="${yy+3}" width="58" height="58" fill="none" stroke="${fill}" stroke-width="3"/><circle cx="${xx+11}" cy="${yy+11}" r="4.5" fill="${fill}"/>`);
  else parts.push(`<rect x="${xx+3}" y="${yy+3}" width="58" height="58" fill="#d7ad67" fill-opacity=".18" stroke="${fill}" stroke-width="2.5" stroke-dasharray="5 4"/>`);
  }}
- if(ui.visible.hydrography){for(const s of state.strokes){const sel=ui.selected?.kind==='stroke'&&ui.selected.id===s.id,c=s.kind==='river'?'#6dc5e4':'#b9855f',d=pathD(s.points);
+ if(ui.visible.hydrography){for(const s of [...state.strokes].sort((a,b)=>(a.kind==='river')-(b.kind==='river'))){const sel=ui.selected?.kind==='stroke'&&ui.selected.id===s.id,c=s.kind==='river'?'#6dc5e4':'#b9855f',d=pathD(s.points);
  if(s.kind==='canyon')parts.push(`<path d="${d}" fill="none" stroke="#50372b" stroke-width="${s.width+5}" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>`);
  if(s.points.length===1)parts.push(`<circle data-object="stroke" data-id="${esc(s.id)}" cx="${s.points[0][0]}" cy="${s.points[0][1]}" r="${s.width/2}" fill="${c}"/>`);
  else parts.push(`<path data-object="stroke" data-id="${esc(s.id)}" d="${d}" fill="none" stroke="${c}" stroke-opacity=".9" stroke-width="${s.width}" stroke-linecap="round" stroke-linejoin="round"/>`);
