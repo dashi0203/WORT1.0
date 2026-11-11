@@ -20,7 +20,6 @@ namespace Wort.Generation
         public const float Fillet = 0.04f; // 内倒角（凹角）
         public const float Bulge = 0.17f;  // 侧面往外鼓（m）
         const float RimIn = 0.12f, RimOut = 0.5f, RimNoise = 0.1f; // 顶面融合：离崖边 ≤ RimIn 全岩石，≥ RimOut 全泥土
-        const float FaceNoise = 0.04f;
 
         // 子网格：融合材质的地面都放在 Soil 里（着色器按 Blend 混合两张贴图）
         const int Rock = (int)VoxelMaterial.Soil, Dirt = (int)VoxelMaterial.Soil;
@@ -31,14 +30,14 @@ namespace Wort.Generation
             var mesh = new MeshData();
             int size = map.Settings.ChunkSize, ox = cx * size, oz = cz * size;
             var fRim = new Fbm(Hash.Of(seed, 911), 0.6, 2);
-            var fFace = new Fbm(Hash.Of(seed, 912), 0.5, 2);
+            
             var b = new Builder { M = mesh, Ox = ox, Oz = oz };
             for (int lz = 0; lz < size; lz++)
                 for (int lx = 0; lx < size; lx++)
                 {
                     int x = ox + lx, z = oz + lz;
                     if (x >= map.W || z >= map.H) continue;
-                    Column(map, b, fRim, fFace, x, z);
+                    Column(map, b, fRim, x, z);
                 }
             MergeFlat(map, b, ox, oz, size);
             // 水面、斜坡：沿用体素网格的做法（融合权重补 0 = 泥土）
@@ -78,7 +77,7 @@ namespace Wort.Generation
         }
 
         /// <summary>一格：顶面（含边缘材质）、每个露出侧面的墙、顶边倒角、角上的倒角面。墙归高的那一格。</summary>
-        static void Column(RegionMap map, Builder bd, Fbm fRim, Fbm fFace, int x, int z)
+        static void Column(RegionMap map, Builder bd, Fbm fRim, int x, int z)
         {
             int h = H(map, x, z);
             float cxw = x + 0.5f, czw = z + 0.5f;
@@ -136,56 +135,78 @@ namespace Wort.Generation
                 float PX(float u, float k) => cxw + nx * (0.5f - k) + tx * u;
                 float PZ(float u, float k) => czw + nz * (0.5f - k) + tz * u;
 
-                for (int y = hn; y < h; y++)
+                // 每一层（slab）两端的情况：0 = 直接到格边，1 = 外角（倒 Bevel），2 = 凹角（倒 Fillet）
+                int nSlab = h - hn;
+                var kindA = new int[nSlab]; var kindB = new int[nSlab];
+                for (int k = 0; k < nSlab; k++)
                 {
-                    bool top = y == h - 1;
-                    float y0 = y, y1 = top ? h - Bevel : y + 1;
-                    var endInset = new float[2];
-                    var endKind = new int[2]; // 0 = 直接到格边，1 = 外角，2 = 内角
+                    int y = hn + k;
                     for (int e = 0; e < 2; e++)
                     {
                         int sg = e == 0 ? -1 : 1;
                         int hp = H(map, x + sg * tx, z + sg * tz), hd = H(map, x + nx + sg * tx, z + nz + sg * tz);
                         bool perpSolid = hp > y, diagSolid = hd > y;
-                        if (!perpSolid && !diagSolid) { endKind[e] = 1; endInset[e] = Bevel; }
-                        else if (perpSolid && diagSolid) { endKind[e] = 2; endInset[e] = Fillet; }
+                        int kind = !perpSolid && !diagSolid ? 1 : (perpSolid && diagSolid ? 2 : 0);
+                        if (e == 0) kindA[k] = kind; else kindB[k] = kind;
                     }
-                    float u0 = -0.5f + endInset[0], u1 = 0.5f - endInset[1];
-                    // 端头能否一起鼓：旁边那格在同一平面上也有墙、且这一段的上下沿一样（否则端头不动，避免裂缝）
-                    var endBulge = new bool[2];
+                }
+                float Inset(int kind) => kind == 1 ? Bevel : (kind == 2 ? Fillet : 0);
+                // 两端情况相同的连续几层合并成一段墙（不再一层一段，避免横向条纹）
+                for (int k0 = 0; k0 < nSlab;)
+                {
+                    int k1 = k0 + 1;
+                    while (k1 < nSlab && kindA[k1] == kindA[k0] && kindB[k1] == kindB[k0]) k1++;
+                    bool segTop = k1 == nSlab;
+                    float y0 = hn + k0, y1 = segTop ? h - Bevel : hn + k1;
+                    int kA = kindA[k0], kB = kindB[k0];
+                    float u0 = -0.5f + Inset(kA), u1 = 0.5f - Inset(kB);
+                    // 端头和同一平面上相邻格的墙重叠的高度范围（开区间）：这个范围里两面墙在共用的边上有同样的行，端头顶点可以一起鼓
+                    var endLo = new float[2]; var endHi = new float[2];
                     for (int e = 0; e < 2; e++)
                     {
-                        if (endKind[e] != 0) continue;
+                        endLo[e] = 1e9f; endHi[e] = -1e9f;
+                        if ((e == 0 ? kA : kB) != 0) continue;
                         int sg = e == 0 ? -1 : 1;
                         int hp = H(map, x + sg * tx, z + sg * tz), hd = H(map, x + nx + sg * tx, z + nz + sg * tz);
-                        endBulge[e] = hp > y && hd <= y && (top == (y == hp - 1));
+                        if (hp <= hd) continue;
+                        endLo[e] = Math.Max(hn, hd) + 0.01f;
+                        endHi[e] = hp == h ? h - Bevel - 0.01f : Math.Min(h, hp) - Bevel - 0.49f;
                     }
-                    // 墙
-                    Wall(bd, fFace, nx, nz, PX(u0, 0), PZ(u0, 0), PX(u1, 0), PZ(u1, 0), y0, y1, 4, 1f, endBulge[0], endBulge[1]);
+                    Wall(bd, nx, nz, PX(u0, 0), PZ(u0, 0), PX(u1, 0), PZ(u1, 0), y0, y1, 4, endLo[0], endHi[0], endLo[1], endHi[1], k0 == 0, segTop);
                     // 角上的竖向倒角面（外角）/ 内倒角面（凹角），由南北向的墙负责
                     if (ns)
                         for (int e = 0; e < 2; e++)
                         {
                             int sg = e == 0 ? -1 : 1;
-                            float ue = sg * (0.5f - endInset[e]);
-                            if (endKind[e] == 1)
+                            int kind = e == 0 ? kA : kB;
+                            float ue = sg * (0.5f - Inset(kind));
+                            if (kind == 1)
                             {
-                                // 另一面墙在角上的端点：沿墙方向在格边上，往格内收 Bevel
                                 float qx = cxw + tx * sg * 0.5f + nx * (0.5f - Bevel), qz = czw + tz * sg * 0.5f + nz * (0.5f - Bevel);
-                                if (sg > 0) Wall(bd, fFace, (nx + tx) * 0.7071f, (nz + tz) * 0.7071f, PX(ue, 0), PZ(ue, 0), qx, qz, y0, y1, 2, 1.2f, false, false);
-                                else Wall(bd, fFace, (nx - tx) * 0.7071f, (nz - tz) * 0.7071f, qx, qz, PX(ue, 0), PZ(ue, 0), y0, y1, 2, 1.2f, false, false);
+                                if (sg > 0) Wall(bd, (nx + tx) * 0.7071f, (nz + tz) * 0.7071f, PX(ue, 0), PZ(ue, 0), qx, qz, y0, y1, 1, 1, 0, 1, 0, false, true);
+                                else Wall(bd, (nx - tx) * 0.7071f, (nz - tz) * 0.7071f, qx, qz, PX(ue, 0), PZ(ue, 0), y0, y1, 1, 1, 0, 1, 0, false, true);
+                                // 倒角削掉的那个小三角正下方没有地面（是高格自己的范围），补一个三角形当地面
+                                float kx = cxw + nx * 0.5f + tx * sg * 0.5f, kz = czw + nz * 0.5f + tz * sg * 0.5f;
+                                bd.TriB(Dirt, 0, 1, 0, kx, y0, kz, 0, PX(ue, 0), y0, PZ(ue, 0), 0, qx, y0, qz, 0);
                             }
-                            else if (endKind[e] == 2)
+                            else if (kind == 2)
                             {
                                 int hq = H(map, x + nx + sg * tx, z + nz + sg * tz);
-                                float yTop = Math.Min(y1, y == hq - 1 ? hq - Bevel : y + 1);
+                                float yTop = Math.Min(y1, hq - Bevel);
                                 float kx = cxw + nx * 0.5f + tx * sg * 0.5f, kz = czw + nz * 0.5f + tz * sg * 0.5f; // 凹角的竖边
                                 float qx = kx + nx * Fillet, qz = kz + nz * Fillet;
-                                bd.Quad(Rock, nx - tx * sg, 0, nz - tz * sg, PX(ue, 0), y0, PZ(ue, 0), PX(ue, 0), yTop, PZ(ue, 0), qx, yTop, qz, qx, y0, qz);
+                                if (yTop > y0) bd.Quad(Rock, nx - tx * sg, 0, nz - tz * sg, PX(ue, 0), y0, PZ(ue, 0), PX(ue, 0), yTop, PZ(ue, 0), qx, yTop, qz, qx, y0, qz);
                             }
                         }
-
-                    if (!top) continue;
+                    k0 = k1;
+                }
+                {
+                    int y = h - 1;
+                    bool top = true;
+                    float y1 = h - Bevel;
+                    var endInset = new[] { Inset(kindA[nSlab - 1]), Inset(kindB[nSlab - 1]) };
+                    var endKind = new[] { kindA[nSlab - 1], kindB[nSlab - 1] };
+                    float u0 = -0.5f + endInset[0], u1 = 0.5f - endInset[1];
                     // ---- 顶边倒角：墙顶（格边，h - Bevel）→ 顶面边（收进 Bevel，h） ----
                     var tEnd = new float[2];
                     for (int e = 0; e < 2; e++)
@@ -230,30 +251,48 @@ namespace Wort.Generation
         }
 
         /// <summary>
-        /// 一段竖墙（从 A 到 B，法线 (nx, nz)）：cols 列 × 4 行；两端的列和上下两行不动（和相邻的面、倒角对齐），
-        /// 中间的顶点往外鼓（参考 topdowntemp 的悬崖件），中间一行收回一些当折痕，再加一点低模噪声。
+        /// 一段竖墙（从 A 到 B，法线 (nx, nz)，高 y0..y1，可跨多层）：cols 列，行按世界高度每 0.5m 一行（相邻墙的行对得上）。
+        /// 内部顶点上下左右错开一点，再按 Voronoi 噪声往外鼓（一块块石头，不是横条）；上沿不动（接顶边倒角）；
+        /// ground 为 true 时最下一行往外撇一点（崖脚）。端头的列只在 [lo, hi] 高度范围里鼓（和相邻格的墙一致），否则不动。
+        /// 位移只取决于世界坐标，所以相邻的墙在共用的边上算出的位置相同、不会裂。
         /// </summary>
-        static void Wall(Builder bd, Fbm f, float nx, float nz, float ax, float az, float bx, float bz, float y0, float y1, int cols, float amp, bool bulgeA, bool bulgeB)
+        static void Wall(Builder bd, float nx, float nz, float ax, float az, float bx, float bz, float y0, float y1, int cols,
+            float loA, float hiA, float loB, float hiB, bool ground, bool realTop)
         {
-            const int R = 4;
-            float[] rowProfile = { 0, 0.85f, 0.65f, 0.85f, 0 };
-            int C = cols;
+            if (y1 - y0 < 1e-3f) return;
+            var rows = new List<float> { y0 };
+            for (float y = (float)Math.Floor(y0 * 2 + 1.001f) * 0.5f; y < y1 - 0.2f; y += 0.5f) rows.Add(y);
+            rows.Add(y1);
+            int C = cols, R = rows.Count - 1;
+            float tx = -nz, tz = nx; // 沿墙方向（世界）
+            float plane = ax * nx + az * nz;
             var px = new float[(C + 1) * (R + 1)]; var py = new float[px.Length]; var pz = new float[px.Length];
             for (int r = 0; r <= R; r++)
                 for (int c = 0; c <= C; c++)
                 {
                     int k = r * (C + 1) + c;
                     float t = (float)c / C;
-                    float X = ax + (bx - ax) * t, Z = az + (bz - az) * t, Y = y0 + (y1 - y0) * r / R;
-                    bool inner = (c > 0 || bulgeA) && (c < C || bulgeB);
-                    if (inner && r > 0 && r < R)
+                    float X = ax + (bx - ax) * t, Z = az + (bz - az) * t, Y = rows[r];
+                    float along = X * tx + Z * tz;
+                    bool end = c == 0 || c == C;
+                    bool interiorRow = r > 0 && r < R;
+                    // 端头列：在和相邻墙重叠的范围内都可动（分段处的上下沿也算，只要不是地面和真正的顶）
+                    bool endRowOk = (r > 0 || !ground) && (r < R || !realTop);
+                    bool move = end ? endRowOk && (c == 0 ? (Y > loA && Y < hiA) : (Y > loB && Y < hiB)) : interiorRow;
+                    if (move)
                     {
-                        // 中间鼓、两端收一半；端头和旁边那格的墙用同一个值，所以连续
-                        float colProfile = 1 - (2 * t - 1) * (2 * t - 1) * 0.5f;
-                        float n01 = (float)f.Sample(X * 1.9 + Y * 0.7, Z * 1.9 - Y * 1.1) * 0.5f + 0.5f;
-                        float off = Bulge * amp * rowProfile[r] * colProfile * (0.6f + 0.4f * n01)
-                                    + (float)f.Sample(X * 4.1 - Y * 2.3, Z * 4.1 + Y * 3.7) * FaceNoise;
+                        // 错开：只对非端头的列沿墙错开，所有可动顶点上下错开（都取决于世界坐标）
+                        uint hsh = Hash.Of((int)Math.Floor(along * 8 + 0.5f), (int)Math.Floor(Y * 8 + 0.5f), (uint)(plane * 131 + 7));
+                        float jy = ((hsh & 0xFF) / 255f - 0.5f) * 0.22f;
+                        float ju = end ? 0 : (((hsh >> 8) & 0xFF) / 255f - 0.5f) * 0.12f;
+                        Y += jy; along += ju; X += tx * ju; Z += tz * ju;
+                        float v = Vor(along, Y, (uint)(plane * 977 + 3));
+                        float off = Bulge * (0.25f + 0.75f * (1 - v));
                         X += nx * off; Z += nz * off;
+                    }
+                    else if (r == 0 && ground && !end)
+                    {
+                        X += nx * 0.08f; Z += nz * 0.08f; // 崖脚往外撇
                     }
                     px[k] = X; py[k] = Y; pz[k] = Z;
                 }
@@ -264,6 +303,23 @@ namespace Wort.Generation
                     bd.Tri(Rock, nx, 0, nz, px[a], py[a], pz[a], px[d], py[d], pz[d], px[e], py[e], pz[e]);
                     bd.Tri(Rock, nx, 0, nz, px[a], py[a], pz[a], px[e], py[e], pz[e], px[b2], py[b2], pz[b2]);
                 }
+        }
+
+        /// <summary>Voronoi F1（格 0.8m，每格一个随机点），返回到最近点的距离 / 0.8，约 0–0.8。只用开方，结果确定。</summary>
+        static float Vor(float u, float v, uint seed)
+        {
+            const float G = 0.8f;
+            int gu = (int)Math.Floor(u / G), gv = (int)Math.Floor(v / G);
+            float best = 9;
+            for (int j = -1; j <= 1; j++)
+                for (int i = -1; i <= 1; i++)
+                {
+                    uint hh = Hash.Of(gu + i, gv + j, seed);
+                    float cu = (gu + i + (hh & 0xFFFF) / 65535f) * G, cv = (gv + j + (hh >> 16) / 65535f) * G;
+                    float du = u - cu, dv = v - cv, d = du * du + dv * dv;
+                    if (d < best) best = d;
+                }
+            return (float)Math.Sqrt(best) / G;
         }
 
         /// <summary>不靠崖边的平地格（四邻和四个对角都不比它低），同高的按矩形贪心合并成一块顶面（泥土）。</summary>

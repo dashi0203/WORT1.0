@@ -20,20 +20,28 @@ namespace Wort.Tools
             long tA = sw.ElapsedMilliseconds;
             var voxels = new RegionVoxels(map);
             var meshes = new List<(MeshData mesh, int ox, int oz)>();
-            long triBase = 0, triDressed = 0;
+            long triBase = 0, triDressed = 0; double tCliff = 0, tBoxes = 0; int nBoxes = 0;
             for (int cz = 0; cz < map.Settings.ChunksZ; cz++)
                 for (int cx = 0; cx < map.Settings.ChunksX; cx++)
                     {
                     var mesh = ChunkMesher.Build(voxels, cx, cz);
                     triBase += mesh.TriangleCount;
                     int ox = cx * map.Settings.ChunkSize, oz = cz * map.Settings.ChunkSize;
-                    if (cliff) mesh = CliffMesher.Build(voxels, cx, cz, seed);
+                    if (cliff)
+                    {
+                        var swc = Stopwatch.StartNew();
+                        mesh = CliffMesher.Build(voxels, cx, cz, seed);
+                        tCliff += swc.Elapsed.TotalMilliseconds; swc.Restart();
+                        nBoxes += ColliderBoxes.Build(map, cx, cz).Count;
+                        tBoxes += swc.Elapsed.TotalMilliseconds;
+                    }
                     triDressed += mesh.TriangleCount;
                     meshes.Add((mesh, ox, oz));
                 }
             long tB = sw.ElapsedMilliseconds;
             Console.WriteLine($"terrace seed {seed}: 生成 {tA}ms, 体素 + 网格 {tB - tA}ms");
             Console.WriteLine($"  三角形：体素网格 {triBase}，显示网格 {triDressed}");
+            if (cliff) Console.WriteLine($"  外观网格 {tCliff:0} ms（每 chunk {tCliff / meshes.Count:0.0} ms），碰撞盒 {nBoxes} 个、{tBoxes:0} ms（每 chunk {nBoxes / meshes.Count} 个、{tBoxes / meshes.Count:0.00} ms）");
             foreach (var kv in map.Stats) Console.WriteLine($"  {kv.Key} = {kv.Value}");
             Console.WriteLine($"  checksum = 0x{map.Checksum():X8}");
             if (GenDebug.On)
