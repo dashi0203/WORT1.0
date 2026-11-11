@@ -52,13 +52,15 @@ namespace Wort.Tools
                     int h = m.Height[i];
                     uint col;
                     if (cls[i] == TerraceField.Border) col = 0x2E2118;
-                    else if (reg && r.Wall[i] && !r.Corridor[i] && !r.Seam[i]) col = Image.Mix(0x3A2A1C, 0x5A4A30, 0.15 * ((h % 3)));
+                    else if (reg && r.Wall[i] && !r.Corridor[i] && !r.Seam[i] && !m.Has(i, CellFlags.Spire)) col = Image.Mix(0x3A2A1C, 0x5A4A30, 0.15 * ((h % 3)));
                     else
                     {
                         // 地面：按高度微调明暗
                         col = Image.Scale(0x8A6C55, 0.86 + 0.05 * (h % 4));
                         if (reg && r.Grass[i]) col = Image.Mix(col, ((x * 7 + z * 13) & 3) == 0 ? 0x3E8A3Au : 0x5C9A48u, 0.55);
                         if (reg && r.Rock[i]) col = 0x8C8A84;
+                        if (reg && m.Has(i, CellFlags.Scree)) col = 0x9A8A70;
+                        if (reg && m.Has(i, CellFlags.Spire)) col = 0xB8B4AA;
                         if (reg && r.Seam[i]) col = Image.Mix(col, 0x6E5A48, 0.45);
                         if (reg && r.Corridor[i]) col = 0xC9A878;
                     }

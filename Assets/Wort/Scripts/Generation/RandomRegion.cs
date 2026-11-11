@@ -244,7 +244,28 @@ namespace Wort.Generation
                     if (distOut[i] <= sw) seam[i] = true; else inner[i] = true;
                 }
             inner = Grid.RemoveSmall(inner, W, H, 40);
-            for (int i = 0; i < N; i++) if (region[i] && !inner[i]) seam[i] = true;
+            // 房间区整体轮廓做成有机团块：从边上往里切掉一圈厚 1–10m 的山体（四角更厚），不再是方的（负责人 2026-11-11 图 2）
+            var mass = new bool[N];
+            {
+                var dIn = Grid.DistanceInside(inner, W, H);
+                var fOut = new Fbm(Hash.Of(seed, 13), 16, 3);
+                int cbx0 = W, cbz0 = H, cbx1 = 0, cbz1 = 0;
+                for (int i = 0; i < N; i++) if (inner[i]) { int x = i % W, z = i / W; cbx0 = Math.Min(cbx0, x); cbz0 = Math.Min(cbz0, z); cbx1 = Math.Max(cbx1, x); cbz1 = Math.Max(cbz1, z); }
+                for (int i = 0; i < N; i++)
+                {
+                    if (!inner[i]) continue;
+                    int x = i % W, z = i / W;
+                    double v = fOut.Sample(x, z) * 1.3 + 0.35; v = v < 0 ? 0 : (v > 1 ? 1 : v);
+                    double ddx = Math.Min(x - cbx0, cbx1 - x), ddz = Math.Min(z - cbz0, cbz1 - z);
+                    double corner = Math.Max(0, 16 - Math.Sqrt(ddx * ddx + ddz * ddz)) * 0.5; // 角上更厚
+                    double thick = 1 + 9 * v + corner;
+                    if (dIn[i] <= thick) mass[i] = true;
+                }
+                for (int i = 0; i < N; i++) if (mass[i]) inner[i] = false;
+                inner = Grid.RemoveSmall(inner, W, H, 60);
+                for (int i = 0; i < N; i++) if (region[i] && !seam[i] && !inner[i]) mass[i] = true;
+            }
+            for (int i = 0; i < N; i++) if (region[i] && !inner[i] && !mass[i]) seam[i] = true;
             R.Seam = seam;
 
             // ---------- 3. 切房间（按房间区的总面积） ----------
@@ -611,36 +632,50 @@ namespace Wort.Generation
             if (allCands.Count > 1 && rng.Next() < s.ShortPathChance) bestEdges = allCands[rng.Range(0, allCands.Count)].edges;
             R.Edges = bestEdges;
 
-            // ---------- 8. 房间地面：从第一个出入口房间往外随机游走，相邻相连的房间最多差 1 层 ----------
-            var ent0 = R.Entrances[openIdx[0]];
-            int baseH = m.Height[ent0.Z * W + ent0.X];
-            var floor = new int[nr];
-            var depth = GraphDist(nr, R.Edges, entRoom[openIdx[0]]);
+            // ---------- 8. 地面高度场：以出入口为准（负责人 2026-11-11）——各出入口外侧固定地面高度按距离插值，再叠平缓起伏；
+            //            量化成整数层，相邻格最多差 1 层，等高线是弯的 ----------
+            var fFloor = new Fbm(Hash.Of(seed, 43), 24, 2);
+            var Ff = new double[N];
+            var fl = new int[N];
+            for (int i = 0; i < N; i++)
             {
-                var done = new bool[nr];
-                var q = new Queue<int>();
-                int root = entRoom[openIdx[0]];
-                floor[root] = baseH; done[root] = true; q.Enqueue(root);
-                while (q.Count > 0)
+                if (!region[i]) continue;
+                int x = i % W, z = i / W;
+                double sw = 0, sh = 0;
+                foreach (var e in R.Entrances)
                 {
-                    int u = q.Dequeue();
-                    foreach (var (a, b) in R.Edges)
+                    double dx = x - e.X, dz = z - e.Z, wgt = 1.0 / (dx * dx + dz * dz + 36.0);
+                    sw += wgt; sh += wgt * m.Height[e.Z * W + e.X];
+                }
+                Ff[i] = (sw > 0 ? sh / sw : baked.Height[i]) + 1.3 * fFloor.Sample(x, z);
+                fl[i] = (int)Math.Floor(Ff[i] + 0.5);
+            }
+            // 相邻格最多差 1 层（几遍松弛）
+            for (int pass = 0; pass < 4; pass++)
+                for (int i = 0; i < N; i++)
+                {
+                    if (!region[i]) continue;
+                    int x = i % W, z = i / W;
+                    for (int d = 0; d < 4; d++)
                     {
-                        int v = a == u ? b : (b == u ? a : -1);
-                        if (v < 0 || done[v]) continue;
-                        double r = rng.Next();
-                        int f = floor[u] + (r < 0.25 ? -1 : (r < 0.75 ? 0 : 1));
-                        if (f > baseH + 2) f = baseH + 2; if (f < baseH - 2) f = baseH - 2;
-                        floor[v] = f; done[v] = true; q.Enqueue(v);
+                        int n = (z + Grid.DZ4[d]) * W + x + Grid.DX4[d];
+                        if (n < 0 || n >= N || !region[n]) continue;
+                        if (fl[i] > fl[n] + 1) fl[i] = fl[n] + 1;
                     }
                 }
-                for (int pass = 0; pass < 6; pass++)
-                    foreach (var (a, b) in R.Edges)
-                    {
-                        if (floor[a] - floor[b] > 1) floor[a] = floor[b] + 1;
-                        if (floor[b] - floor[a] > 1) floor[b] = floor[a] + 1;
-                    }
+            int baseH;
+            {
+                long sum = 0; int cnt = 0;
+                for (int i = 0; i < N; i++) if (inner[i]) { sum += fl[i]; cnt++; }
+                baseH = cnt > 0 ? (int)Math.Floor(sum / (double)cnt + 0.5) : m.Height[R.Entrances[openIdx[0]].Z * W + R.Entrances[openIdx[0]].X];
             }
+            var floor = new int[nr];
+            {
+                var fs = new long[nr]; var fc = new int[nr];
+                for (int i = 0; i < N; i++) if (roomOf[i] >= 0) { fs[roomOf[i]] += fl[i]; fc[roomOf[i]]++; }
+                for (int k = 0; k < nr; k++) floor[k] = fc[k] > 0 ? (int)Math.Floor(fs[k] / (double)fc[k] + 0.5) : baseH;
+            }
+            var depth = GraphDist(nr, R.Edges, entRoom[openIdx[0]]);
             for (int k = 0; k < nr; k++) { R.Rooms[k].Floor = floor[k]; R.Rooms[k].Depth = depth[k]; }
 
             // ---------- 9. 写高度：房间地面 + 小起伏；墙 = 两侧较高地面 + 2–3 层 ----------
@@ -658,7 +693,7 @@ namespace Wort.Generation
                 if (roomOf[i] >= 0)
                 {
                     int x = i % W, z = i / W;
-                    h[i] = floor[roomOf[i]] + (distWall[i] >= 3 && fBump.Sample(x, z) > 0.5 ? 1 : 0);
+                    h[i] = fl[i] + (distWall[i] >= 3 && fBump.Sample(x, z) > 0.5 ? 1 : 0);
                 }
             }
             for (int i = 0; i < N; i++)
@@ -669,11 +704,26 @@ namespace Wort.Generation
                     for (int dx = -3; dx <= 3; dx++)
                     {
                         int n = (z + dz) * W + x + dx;
-                        if (n >= 0 && n < N && roomOf[n] >= 0) hi = Math.Max(hi, floor[roomOf[n]]);
+                        if (n >= 0 && n < N && roomOf[n] >= 0) hi = Math.Max(hi, fl[n] + (distWall[n] >= 3 ? 1 : 0));
                     }
-                if (hi == int.MinValue) hi = baseH;
+                if (hi == int.MinValue) hi = fl[i];
                 // 比墙脚高 2–3 层，墙顶高低不平（宽的地方中间再高 1 层）
                 h[i] = hi + (fRise.Sample(x, z) > 0 ? 3 : 2) + (distWall2[i] >= 2 ? 1 : 0);
+            }
+            // 外围山体（有机轮廓切掉的那一圈）：从房间一侧往外每 ~2.5m 升 1 层，起点比房间高 2–3 层，最高 +6
+            {
+                var notRoomArea = new bool[N];
+                for (int i = 0; i < N; i++) notRoomArea[i] = !(inner[i]);
+                var dFromRooms = Grid.DistanceInside(notRoomArea, W, H);
+                for (int i = 0; i < N; i++)
+                {
+                    if (!mass[i]) continue;
+                    int x = i % W, z = i / W;
+                    int rise = 2 + (fRise.Sample(x, z) > 0 ? 1 : 0) + (int)Math.Floor(Math.Max(0, dFromRooms[i] - 1) / 2.5);
+                    if (rise > 6) rise = 6;
+                    h[i] = fl[i] + rise;
+                    wall[i] = true;
+                }
             }
             // 接缝带：贴外圈不可通行的地方沿用外圈高度（崖面往里退），贴固定平地的地方从邻居高度渐变到房间地面
             var near = NearestOutside(region, W, H, s.SeamWidth + 3);
@@ -681,21 +731,34 @@ namespace Wort.Generation
             {
                 if (!seam[i]) continue;
                 int o = near[i];
-                if (o < 0) { h[i] = baseH; continue; }
+                if (o < 0) { h[i] = fl[i] + 3; continue; }
                 int hn = m.Height[o];
                 if (clsBaked[o] == TerraceField.Border)
                 {
                     // 贴着不可通行高地：从高地高度逐级降下来，每级 2 层，分界弯曲；最低一级仍比房间地面高 2 层（从房间爬不上来）
                     double tt = Math.Min(1.0, distOut[i] / s.SeamWidth);
-                    int lowest = baseH + 3; // 和贴平地那一侧的脊顶一样高，连成一圈
+                    int lowest = fl[i] + 3; // 和贴平地那一侧的脊顶一样高，连成一圈
                     double raw = lowest + (hn - lowest) * (1 - tt);
-                    int bsteps = (int)Math.Floor((raw - lowest) / 2.0 + 0.35 * fSeam.Sample(x0s(i, W) * 2.1, z0s(i, W) * 2.1));
+                    // 等高线错落：细噪声把台阶边打碎
+                    int bsteps = (int)Math.Floor((raw - lowest) / 2.0 + 0.8 * fSeam.Sample(x0s(i, W) * 2.1, z0s(i, W) * 2.1));
                     h[i] = Math.Min(hn, lowest + 2 * Math.Max(0, bsteps));
                     continue;
                 }
-                // 接缝带和外圈墙合成一道自然的脊：从邻居高度按每级 2 层往上升到脊顶（从外面爬不上去），脊的另一面落进房间
+                // 接缝带和外圈墙合成一道自然的脊：从邻居高度按每级 2 层往上升到脊顶（从外面爬不上去），脊的另一面落进房间。
+                // 邻居高度取附近所有固定格里最高的（不止最近那一格），保证比外面每一格都高 ≥ 2
+                {
+                    int x = i % W, z = i / W;
+                    for (int dz = -3; dz <= 3; dz++)
+                        for (int dx = -3; dx <= 3; dx++)
+                        {
+                            int n = (z + dz) * W + x + dx;
+                            if (n < 0 || n >= N || region[n] || clsBaked[n] == TerraceField.Border) continue;
+                            int top = m.HasWater(n) ? Math.Max(m.Height[n], m.Water[n]) : m.Height[n];
+                            if (top > hn) hn = top;
+                        }
+                }
                 double t = Math.Min(1.0, distOut[i] / Math.Max(1.0, s.SeamWidth - 1.5 * (1 + fSeamBig.Sample(i % W, i / W))));
-                int ridge = Math.Max(baseH, hn) + 3;
+                int ridge = Math.Max(fl[i], hn) + 3;
                 int steps = (int)Math.Ceiling((ridge - hn) * t / 2.0 + 0.3 * fSeam.Sample(i % W * 2.3, i / W * 2.3));
                 if (steps < 1) steps = 1;
                 h[i] = Math.Min(ridge, hn + 2 * steps);
@@ -703,7 +766,7 @@ namespace Wort.Generation
             // 外圈墙和接缝带的脊连成一体：墙不低于旁边的脊（不再额外 +2，免得叠成画框）
             for (int i = 0; i < N; i++)
             {
-                if (!wall[i] || !inner[i]) continue;
+                if (!wall[i] || !(inner[i] || mass[i])) continue;
                 int x = i % W, z = i / W, hs = int.MinValue;
                 for (int dz = -2; dz <= 2; dz++)
                     for (int dx = -2; dx <= 2; dx++)
@@ -720,21 +783,36 @@ namespace Wort.Generation
             {
                 int ra = Math.Min(a, b), rb = Math.Max(a, b);
                 if (!sepCells.TryGetValue(((long)ra << 32) | (uint)rb, out var cells)) continue;
-                OpenWall(m, cells, roomOf, floor, ra, rb, s, ref rng, wall, W, N, -1);
-                if (Math.Abs(floor[ra] - floor[rb]) == 1 && IsOnCycle(nr, R.Edges, a, b)) oneWayCands.Add((a, b));
+                OpenWall(m, cells, roomOf, fl, ra, rb, s, ref rng, wall, W, N, -1);
+                if (IsOnCycle(nr, R.Edges, a, b)) oneWayCands.Add((a, b));
             }
             // 单向落差：环上一条地面差 1 层的边，开口处做成“上 1 层的坎、再跳下 2 层”
             if (oneWayCands.Count > 0 && rng.Next() < s.OneWayChance)
             {
                 var (a, b) = oneWayCands[rng.Range(0, oneWayCands.Count)];
-                int hiR = floor[a] > floor[b] ? a : b;
                 int ra = Math.Min(a, b), rb = Math.Max(a, b);
                 var cells = sepCells[((long)ra << 32) | (uint)rb];
-                int ledge = floor[hiR] + 1;
-                int cx = 0, cz = 0, cnt = 0;
+                int lo = int.MaxValue, hiF = int.MinValue;
                 foreach (int i in cells)
-                    if (!wall[i]) { h[i] = ledge; cx += i % W; cz += i / W; cnt++; }
-                if (cnt > 0) R.OneWay = (cx / cnt, cz / cnt);
+                {
+                    if (wall[i]) continue;
+                    int x = i % W, z = i / W;
+                    for (int dz = -3; dz <= 3; dz++)
+                        for (int dx = -3; dx <= 3; dx++)
+                        {
+                            int n = (z + dz) * W + x + dx;
+                            if (n < 0 || n >= N || roomOf[n] < 0) continue;
+                            lo = Math.Min(lo, fl[n]); hiF = Math.Max(hiF, fl[n]);
+                        }
+                }
+                if (hiF != int.MinValue && hiF - lo >= 1)
+                {
+                    int ledge = hiF + 1;
+                    int cx = 0, cz = 0, cnt = 0;
+                    foreach (int i in cells)
+                        if (!wall[i]) { h[i] = ledge; cx += i % W; cz += i / W; cnt++; }
+                    if (cnt > 0) R.OneWay = (cx / cnt, cz / cnt);
+                }
             }
 
             // ---------- 11. 出入口通道：开放的从固定侧往里铺 3–4m 宽，每格最多 1 层；关闭的不开 ----------
@@ -744,8 +822,14 @@ namespace Wort.Generation
                 var e = R.Entrances[k];
                 if (!e.Open || entRoom[k] < 0) continue;
                 int fh = m.Height[e.Z * W + e.X];
-                int rh = floor[entRoom[k]];
                 var path = entPath[k];
+                int rh;
+                {
+                    int lastI = path.Count > 0 ? path[path.Count - 1] : e.Z * W + e.X;
+                    int nx2 = lastI % W + Grid.DX4[e.Dir], nz2 = lastI / W + Grid.DZ4[e.Dir];
+                    int ni = nz2 * W + nx2;
+                    rh = region[ni] ? fl[ni] : floor[entRoom[k]];
+                }
                 int px = Grid.DX4[(e.Dir + 1) & 3], pz = Grid.DZ4[(e.Dir + 1) & 3];
                 int half = 1 + (rng.Next() < 0.5 ? 1 : 0);
                 for (int j = 0; j < path.Count; j++)
@@ -758,7 +842,7 @@ namespace Wort.Generation
                         if (!m.InBounds(x, z)) continue;
                         int i = z * W + x;
                         if (!region[i]) continue;
-                        corridor[i] = true; wall[i] = false; seam[i] = false;
+                        corridor[i] = true; wall[i] = false; seam[i] = false; mass[i] = false;
                         h[i] = want;
                     }
                 }
@@ -776,18 +860,64 @@ namespace Wort.Generation
                         for (int dx = -1; dx <= 1; dx++)
                         {
                             int n = (z - dz) * W + x + dx;
-                            if (n < 0 || n >= N || !wall[n] || !inner[n] || corridor[n]) continue;
+                            if (n < 0 || n >= N || !wall[n] || !(inner[n] || mass[n]) || corridor[n]) continue;
                             int nx = n % W, nz = n / W, lo = int.MinValue;
                             for (int qz = -3; qz <= 3; qz++)
                                 for (int qx = -3; qx <= 3; qx++)
                                 {
                                     int q = (nz + qz) * W + nx + qx;
                                     if (q < 0 || q >= N) continue;
-                                    if (roomOf[q] >= 0) lo = Math.Max(lo, floor[roomOf[q]] + 1); // 房间小起伏 +1
+                                    if (roomOf[q] >= 0) lo = Math.Max(lo, fl[q] + 1); // 房间小起伏 +1
                                     if (seam[q] || corridor[q] || opening[q]) lo = Math.Max(lo, h[q]);
                                 }
                             if (lo != int.MinValue && h[n] > lo + 2) h[n] = lo + 2;
                         }
+                }
+            }
+
+            // ---------- 11b. 落差大的地方的过渡：山脚碎石（零散或成片，+1 层，顶部比崖顶至少低 2 层）；台阶边上贴着的石柱 ----------
+            {
+                var fScree = new Fbm(Hash.Of(seed, 61), 5, 2);
+                var hc = (int[])h.Clone();
+                for (int i = 0; i < N; i++)
+                {
+                    if (roomOf[i] < 0 || m.HasWater(i) || corridor[i]) continue;
+                    int x = i % W, z = i / W, top = int.MinValue;
+                    for (int dz = -2; dz <= 2; dz++)
+                        for (int dx = -2; dx <= 2; dx++)
+                        {
+                            int n = (z + dz) * W + x + dx;
+                            if (n >= 0 && n < N && region[n] && roomOf[n] < 0 && !corridor[n]) top = Math.Max(top, hc[n]);
+                        }
+                    if (top == int.MinValue || top - hc[i] < 3) continue;  // 只在高差 ≥ 3 的崖脚
+                    if (fScree.Sample(x, z) < -0.05) continue;
+                    if (hc[i] + 1 > top - 2) continue;
+                    h[i] = hc[i] + 1; m.Flags[i] |= CellFlags.Scree;
+                }
+                // 石柱：外围山体 / 贴高地的接缝带里，台阶边上随机立 1–2m 粗的柱子，比所在台阶高 2–3 层（看得到、上不去，不影响通行）
+                int pillars = 0;
+                for (int tries = 0; tries < 400 && pillars < 10; tries++)
+                {
+                    int x = bx0 - 6 + rng.Range(0, Math.Max(1, bx1 - bx0 + 12)), z = bz0 - 6 + rng.Range(0, Math.Max(1, bz1 - bz0 + 12));
+                    if (!m.InBounds(x, z)) continue;
+                    int i = z * W + x;
+                    bool host = mass[i] || (seam[i] && near[i] >= 0 && clsBaked[near[i]] == TerraceField.Border);
+                    if (!host) continue;
+                    // 要在台阶边上：旁边有低 ≥ 2 的格
+                    bool edge = false;
+                    for (int d = 0; d < 4; d++) { int n = (z + Grid.DZ4[d]) * W + x + Grid.DX4[d]; if (region[n] && h[n] <= h[i] - 2) edge = true; }
+                    if (!edge) continue;
+                    double rr = 0.8 + rng.Next() * 0.9;
+                    int ph = h[i] + 2 + (rng.Next() < 0.5 ? 1 : 0);
+                    for (int dz = -2; dz <= 2; dz++)
+                        for (int dx = -2; dx <= 2; dx++)
+                        {
+                            if (dx * dx + dz * dz > rr * rr) continue;
+                            int n = (z + dz) * W + x + dx;
+                            if (n < 0 || n >= N || !(mass[n] || seam[n]) || corridor[n]) continue;
+                            if (h[n] < ph) { h[n] = ph; m.Flags[n] |= CellFlags.Spire; }
+                        }
+                    pillars++;
                 }
             }
 
@@ -812,7 +942,7 @@ namespace Wort.Generation
                         {
                             double v = fWater.Sample(x, z);
                             bool wet = shape == 0 ? Math.Abs(v) < 0.09 : (v > 0.3 && v < 0.62);
-                            if (wet) { h[i] = floor[k] - 1; m.Water[i] = floor[k]; m.Flags[i] |= CellFlags.Pond; continue; }
+                            if (wet) { h[i] = fl[i] - 1; m.Water[i] = fl[i]; m.Flags[i] |= CellFlags.Pond; continue; }
                         }
                         if (fGrass.Sample(x, z) > 0.28) grass[i] = true;
                     }
@@ -826,7 +956,7 @@ namespace Wort.Generation
                         int i = z * W + x;
                         if (roomOf[i] != k || distWall[i] < 4 || distOpen[i] < 5 || m.HasWater(i)) continue;
                         double rr = 1 + rng.Next() * 1.2;
-                        int rh = floor[k] + (rng.Next() < 0.5 ? 1 : 2);
+                        int rh = fl[i] + (rng.Next() < 0.5 ? 1 : 2);
                         for (int dz = -2; dz <= 2; dz++)
                             for (int dx = -2; dx <= 2; dx++)
                             {
@@ -896,7 +1026,7 @@ namespace Wort.Generation
             return Math.Max(maxX - minX, maxZ - minZ) + 1;
         }
 
-        static void OpenWall(RegionMap m, List<int> cells, int[] roomOf, int[] floor, int ra, int rb, RandomRegionSettings s, ref Rng rng, bool[] wall, int W, int N, int ledge)
+        static void OpenWall(RegionMap m, List<int> cells, int[] roomOf, int[] fl, int ra, int rb, RandomRegionSettings s, ref Rng rng, bool[] wall, int W, int N, int ledge)
         {
             int minX = int.MaxValue, maxX = int.MinValue, minZ = int.MaxValue, maxZ = int.MinValue;
             foreach (int i in cells) { int x = i % W, z = i / W; minX = Math.Min(minX, x); maxX = Math.Max(maxX, x); minZ = Math.Min(minZ, z); maxZ = Math.Max(maxZ, z); }
@@ -911,15 +1041,13 @@ namespace Wort.Generation
             if (width < s.MinOpening) width = s.MinOpening;
             int start = lo + 2 + rng.Range(0, Math.Max(1, usable - width + 1));
             if (span - 4 < s.MinOpening) start = lo + Math.Max(0, (span - width) / 2);
-            int fl = Math.Min(floor[ra], floor[rb]);
-            int fh = Math.Max(floor[ra], floor[rb]);
             foreach (int i in cells)
             {
                 int p = alongX ? i % W : i / W;
                 if (p < start || p >= start + width) continue;
                 wall[i] = false;
                 // 开口里的地面：靠近哪个房间就取哪个房间的地面，差 1 层就是一级台阶
-                int x = i % W, z = i / W, best = int.MaxValue, bf = fl;
+                int x = i % W, z = i / W, best = int.MaxValue, bf = m.Height[i];
                 for (int dz = -3; dz <= 3; dz++)
                     for (int dx = -3; dx <= 3; dx++)
                     {
@@ -928,7 +1056,7 @@ namespace Wort.Generation
                         int r = roomOf[n];
                         if (r != ra && r != rb) continue;
                         int dd = dx * dx + dz * dz;
-                        if (dd < best) { best = dd; bf = floor[r]; }
+                        if (dd < best) { best = dd; bf = fl[n]; }
                     }
                 m.Height[i] = bf;
             }
@@ -1045,7 +1173,20 @@ namespace Wort.Generation
                 if (R.RoomOf[i] >= 0) { roomCells++; if (!fwd[i] && TerraceField.Walkable(m, cls, i)) unreached++; }
                 if (fwd[i] && !back[i]) trapped++;
             }
-            if (trapped > 0) { ok = false; lines.Add($"[失败] {trapped} 格进得去出不来"); }
+            if (trapped > 0)
+            {
+                ok = false; lines.Add($"[失败] {trapped} 格进得去出不来");
+                if (Environment.GetEnvironmentVariable("RR_DEBUG") != null)
+                    for (int i = 0; i < N; i++)
+                        if (region[i] && fwd[i] && !back[i])
+                        {
+                            int x = i % W, z = i / W;
+                            var sb = new System.Text.StringBuilder($"  trap ({x},{z}) room={R.RoomOf[i]} wall={R.Wall[i]} seam={R.Seam[i]} corr={corridor[i]} water={m.HasWater(i)} flags={m.Flags[i]}\n");
+                            for (int dz = 2; dz >= -2; dz--) { for (int dx = -2; dx <= 2; dx++) sb.Append($"{m.Height[(z + dz) * W + x + dx],4}"); sb.Append('\n'); }
+                            lines.Add(sb.ToString());
+                            break;
+                        }
+            }
             // 房间都要能到（个别被石块围住的角落格不算，按房间算）
             var roomReached = new bool[R.Rooms.Count];
             for (int i = 0; i < N; i++) if (R.RoomOf[i] >= 0 && fwd[i]) roomReached[R.RoomOf[i]] = true;
