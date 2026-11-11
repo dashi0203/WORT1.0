@@ -244,27 +244,9 @@ namespace Wort.Generation
                     if (distOut[i] <= sw) seam[i] = true; else inner[i] = true;
                 }
             inner = Grid.RemoveSmall(inner, W, H, 40);
-            // 房间区整体轮廓做成有机团块：从边上往里切掉一圈厚 1–10m 的山体（四角更厚），不再是方的（负责人 2026-11-11 图 2）
-            var mass = new bool[N];
-            {
-                var dIn = Grid.DistanceInside(inner, W, H);
-                var fOut = new Fbm(Hash.Of(seed, 13), 16, 3);
-                int cbx0 = W, cbz0 = H, cbx1 = 0, cbz1 = 0;
-                for (int i = 0; i < N; i++) if (inner[i]) { int x = i % W, z = i / W; cbx0 = Math.Min(cbx0, x); cbz0 = Math.Min(cbz0, z); cbx1 = Math.Max(cbx1, x); cbz1 = Math.Max(cbz1, z); }
-                for (int i = 0; i < N; i++)
-                {
-                    if (!inner[i]) continue;
-                    int x = i % W, z = i / W;
-                    double v = fOut.Sample(x, z) * 1.3 + 0.35; v = v < 0 ? 0 : (v > 1 ? 1 : v);
-                    double ddx = Math.Min(x - cbx0, cbx1 - x), ddz = Math.Min(z - cbz0, cbz1 - z);
-                    double corner = Math.Max(0, 16 - Math.Sqrt(ddx * ddx + ddz * ddz)) * 0.5; // 角上更厚
-                    double thick = 1 + 9 * v + corner;
-                    if (dIn[i] <= thick) mass[i] = true;
-                }
-                for (int i = 0; i < N; i++) if (mass[i]) inner[i] = false;
-                inner = Grid.RemoveSmall(inner, W, H, 60);
-                for (int i = 0; i < N; i++) if (region[i] && !seam[i] && !inner[i]) mass[i] = true;
-            }
+            // 房间区整体轮廓：四角磨圆（圆形开运算），不再是方的；磨掉的部分并进接缝带（融合区）
+            var mass = new bool[N]; // 保留变量：不再切外围山体（负责人 2026-11-11：墙太多）
+            inner = Grid.RemoveSmall(Grid.OpenRound(inner, W, H, 7.0), W, H, 60);
             for (int i = 0; i < N; i++) if (region[i] && !inner[i] && !mass[i]) seam[i] = true;
             R.Seam = seam;
 
@@ -744,26 +726,31 @@ namespace Wort.Generation
                     h[i] = Math.Min(hn, lowest + 2 * Math.Max(0, bsteps));
                     continue;
                 }
-                // 接缝带和外圈墙合成一道自然的脊：从邻居高度按每级 2 层往上升到脊顶（从外面爬不上去），脊的另一面落进房间。
-                // 邻居高度取附近所有固定格里最高的（不止最近那一格），保证比外面每一格都高 ≥ 2
+                // 接缝带只做融合：从外面固定地面的高度平滑过渡到房间区边上的地面高度（下面再松弛成每格最多 1 层）
                 {
-                    int x = i % W, z = i / W;
-                    for (int dz = -3; dz <= 3; dz++)
-                        for (int dx = -3; dx <= 3; dx++)
-                        {
-                            int n = (z + dz) * W + x + dx;
-                            if (n < 0 || n >= N || region[n] || clsBaked[n] == TerraceField.Border) continue;
-                            int top = m.HasWater(n) ? Math.Max(m.Height[n], m.Water[n]) : m.Height[n];
-                            if (top > hn) hn = top;
-                        }
+                    double t = Math.Min(1.0, distOut[i] / s.SeamWidth);
+                    t = t * t * (3 - 2 * t);
+                    h[i] = (int)Math.Floor(hn + (fl[i] - hn) * t + 0.5);
                 }
-                double t = Math.Min(1.0, distOut[i] / Math.Max(1.0, s.SeamWidth - 1.5 * (1 + fSeamBig.Sample(i % W, i / W))));
-                int ridge = Math.Max(fl[i], hn) + 3;
-                int steps = (int)Math.Ceiling((ridge - hn) * t / 2.0 + 0.3 * fSeam.Sample(i % W * 2.3, i / W * 2.3));
-                if (steps < 1) steps = 1;
-                h[i] = Math.Min(ridge, hn + 2 * steps);
             }
-            // 外圈墙和接缝带的脊连成一体：墙不低于旁边的脊（不再额外 +2，免得叠成画框）
+            // 融合区每格最多 1 层（贴外圈高地的台阶不动）
+            for (int pass = 0; pass < 8; pass++)
+                for (int i = 0; i < N; i++)
+                {
+                    if (!seam[i] || (near[i] >= 0 && clsBaked[near[i]] == TerraceField.Border)) continue;
+                    int x = i % W, z = i / W, lo = int.MinValue, hi2 = int.MaxValue;
+                    for (int d = 0; d < 4; d++)
+                    {
+                        int n = (z + Grid.DZ4[d]) * W + x + Grid.DX4[d];
+                        if (n < 0 || n >= N) continue;
+                        bool walkNb = (!region[n] && clsBaked[n] != TerraceField.Border && !m.HasWater(n)) || (seam[n] && !(near[n] >= 0 && clsBaked[near[n]] == TerraceField.Border));
+                        if (!walkNb) continue;
+                        lo = Math.Max(lo, h[n] - 1); hi2 = Math.Min(hi2, h[n] + 1);
+                    }
+                    if (lo != int.MinValue && h[i] < lo) h[i] = lo;
+                    if (hi2 != int.MaxValue && h[i] > hi2) h[i] = hi2;
+                }
+            // 房间区外沿那道墙要比旁边能走进来的融合区高 ≥ 2 层（从融合区爬不上墙）
             for (int i = 0; i < N; i++)
             {
                 if (!wall[i] || !(inner[i] || mass[i])) continue;
@@ -774,7 +761,7 @@ namespace Wort.Generation
                         int n = (z + dz) * W + x + dx;
                         if (n >= 0 && n < N && seam[n] && !(near[n] >= 0 && clsBaked[near[n]] == TerraceField.Border)) hs = Math.Max(hs, h[n]);
                     }
-                if (hs != int.MinValue && h[i] < hs) h[i] = hs;
+                if (hs != int.MinValue && h[i] < hs + 2) h[i] = hs + 2;
             }
 
             // ---------- 10. 通路：在连接边对应的墙上开口，宽度随机（≥ 3m，可以很宽） ----------
