@@ -1,8 +1,19 @@
 # Wort 开发记录
 
-最后更新：2026-11-10 · 分支 `claude/intelligent-noether-7f0v7r` · 最新提交见 `git log`
+最后更新：2026-11-11 · 分支 `claude/bold-bardeen-vlwhjd`（已合并 intelligent-noether 与 focused-galileo） · 最新提交见 `git log`
 
 GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
+
+## 当前工作重心（负责人 2026-11-11）
+
+**先做抽象的大世界设计，暂不碰体素。** 负责人或 Claude 在 `Tools/WorldPlanner/`（离线单文件 HTML）里设计，
+按 codexsug/2026-11-11 的三阶段顺序：关键地点 + Biome + 水系 + 初步路线 → 台地 / 盆地三态分割 → 最终路线 → 固定 / 随机 chunk。
+规划器虽然简化，但抽象阶段够用；成果是分层 JSON（PNG 只作总览）。
+
+- 规划器不写高度；以后接生成器时台地 / 盆地按默认值处理（台地 +3–4 层、盆地 −2 层），特殊需要再在 layout 里补字段。
+- 体素侧（`LayoutGenerator` 调参、随机 chunk 刷新原型、规划器 JSON 接入生成器）暂缓，等抽象设计成形后再排。
+- 微型玩法原型 3×3 / 4×4（两条必经之路 + 一个随机 chunk）也先在规划器里做抽象设计。
+- 待负责人确认：必经之路都在固定 chunk 上、随机 chunk 是挂在旁边的口袋（WorldGen 第 8 节【已定】）；规划器 chunk 标记里“过渡 / 不可通行”的含义。
 
 ## GDD 同步记录
 
