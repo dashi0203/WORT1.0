@@ -242,10 +242,14 @@ namespace Wort.Generation
                         }
                         else
                         {
-                            // 旁边是同高 / 更高的格：倒角的端头补一个三角（角点在 h 上）
+                            // 旁边是同高 / 更高的格：倒角的端头补一个三角（角点在 h 上）。
+                            // 旁边那格同高、同一侧也露出时，两段倒角本来就连成一条，端头不补（否则是一片悬在斜面上的小三角）
                             float kx = PX(sg * 0.5f, 0), kz = PZ(sg * 0.5f, 0);
-                            bd.Tri(Rock, nx - tx * sg * 0.3f, 1, nz - tz * sg * 0.3f,
-                                PX(ut, Bevel), h, PZ(ut, Bevel), kx, h, kz, PX(ub, 0), y1, PZ(ub, 0));
+                            int hp2 = H(map, x + sg * tx, z + sg * tz), hpn = H(map, x + sg * tx + nx, z + sg * tz + nz);
+                            bool continues = hp2 == h && hpn < h;
+                            if (!continues)
+                                bd.Tri(Rock, nx - tx * sg * 0.3f, 1, nz - tz * sg * 0.3f,
+                                    PX(ut, Bevel), h, PZ(ut, Bevel), kx, h, kz, PX(ub, 0), y1, PZ(ub, 0));
                             // 凹角且对角格同高：两道倒角之间再补一片（内倒角的顶部），南北向的墙负责
                             int hq = H(map, x + nx + sg * tx, z + nz + sg * tz);
                             if (ns && endKind[e] == 2 && hq == h)
