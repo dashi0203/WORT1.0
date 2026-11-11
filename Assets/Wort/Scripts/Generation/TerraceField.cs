@@ -46,11 +46,19 @@ namespace Wort.Generation
             uint seed = s.Seed;
 
             // ---------- 底面：北高南低 ----------
-            var fG = new Fbm(Hash.Derive(seed, "tf.ground"), 90, 3);
+            // 阶梯式：可玩区从南到北 4 级，每级 1 层（能跳上去），分界线用域扭曲的噪声弄成有机曲线；
+            // 南级平地 1 层、北级 5 层（负责人 2026-11-11：南约 −1~8，北约 3~12）。外圈沿用两端的级。
+            var fG = new Fbm(Hash.Derive(seed, "tf.ground"), 70, 3);
+            var fGw = new Fbm(Hash.Derive(seed, "tf.groundW"), 50, 2);
             var G = new int[N];
             for (int z = 0; z < H; z++)
                 for (int x = 0; x < W; x++)
-                    G[z * W + x] = (int)Math.Floor(2 + 6.0 * z / (H - 1) + 1.6 * fG.Sample(x, z));
+                {
+                    double zw = z + 14 * fGw.Sample(x, z);
+                    double t = (zw - b0) / (H - 2.0 * b0);
+                    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+                    G[z * W + x] = 1 + (int)Math.Floor(t * 4.999 + 0.3 * fG.Sample(x, z));
+                }
 
             // ---------- 外圈：内缘有机，向可玩区内伸 3–12m ----------
             var cls = new byte[N];
@@ -132,7 +140,7 @@ namespace Wort.Generation
                 for (int x = 0; x < W; x++)
                 {
                     int i = z * W + x;
-                    tier2[i] = plateau[i] && distP[i] > 5 && fT2.Sample(x, z) > 0.12;
+                    tier2[i] = plateau[i] && distP[i] > 5 && fT2.Sample(x, z) > 0.05;
                 }
             tier2 = Grid.RemoveSmall(Grid.OpenRound(tier2, W, H, 2.0), W, H, 80);
             for (int i = 0; i < N; i++) if (tier2[i] && distP[i] <= 3.5) tier2[i] = false; // 与台地边至少隔 3m
@@ -227,7 +235,7 @@ namespace Wort.Generation
             for (int c = 0; c < platSizes.Count; c++)
             {
                 double r = Hash.Unit(Hash.Of((uint)c, Hash.Derive(seed, "tf.po")));
-                platOff[c] = platSizes[c] < 150 ? (r < 0.4 ? 1 : (r < 0.8 ? 2 : 3)) : (r < 0.4 ? 2 : (r < 0.75 ? 3 : 4));
+                platOff[c] = platSizes[c] < 150 ? (r < 0.4 ? 1 : (r < 0.8 ? 2 : 3)) : (r < 0.25 ? 2 : (r < 0.6 ? 3 : 4));
             }
             for (int i = 0; i < N; i++)
                 if (cls[i] == Plateau || cls[i] == Plateau2) h[i] = G[i] + platOff[platLab[i]];
@@ -238,7 +246,7 @@ namespace Wort.Generation
                     ForN8(i, W, H, n => { if (cls[n] == Ground || cls[n] == Basin) hi = Math.Max(hi, h[n]); });
                     if (hi != int.MinValue && h[i] < hi + 2) h[i] = hi + 2;
                 }
-            for (int i = 0; i < N; i++) if (cls[i] == Plateau2) h[i] += 2;
+            for (int i = 0; i < N; i++) if (cls[i] == Plateau2) h[i] += 3;
             for (int i = 0; i < N; i++)
                 if (cls[i] == Plateau2)
                 {

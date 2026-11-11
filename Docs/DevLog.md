@@ -26,6 +26,9 @@ GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
   坡道 = 单格斜坡 + 平台交替（放不下时挖进台地），保证所有平地都能走到。还没接规划器 JSON、没铺道路地表。
   预览：`dotnet bin/Release/net8.0/TerrainPreview.dll --terrace --seed N --out DIR` → `plan.png`（参考图配色）、`height.png`、`shear_overview.png`。
   种子 1–8 自检：连续斜坡 0、走不到的平地 0、60 格以上没坡道的台地 0；台地约 37–41%（二级 1–7%），盆地约 5%。
+  - 北高南低改为阶梯式（负责人 2026-11-11）：可玩区底面南→北 4 级、每级 1 层（能跳上），分界是有机曲线；南级平地约 1、北级约 5。
+    台地 +2–4（大块以 3–4 为主），二级台地再 +3，盆地 −2–3。实测（种子 1–8，去掉 0.5% 极值）：南段约 −2–9，北段约 1–12。
+    `BAND_STATS=1` 环境变量打印南 / 中 / 北三段的高度分布。
 - 5×5 微型原型设计稿：`Tools/WorldPlanner/designs/Micro5x5_v1.json`（v0 为放射状，已被否定，留作对照）。
 - 待负责人确认：必经之路都在固定 chunk 上、随机 chunk 是挂在旁边的口袋（WorldGen 第 8 节【已定】）；规划器 chunk 标记里“过渡 / 不可通行”的含义。
 
