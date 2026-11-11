@@ -41,6 +41,18 @@ namespace Wort.Tools
             long tB = sw.ElapsedMilliseconds;
             Console.WriteLine($"terrace seed {seed}: 生成 {tA}ms, 体素 + 网格 {tB - tA}ms");
             Console.WriteLine($"  三角形：体素网格 {triBase}，显示网格 {triDressed}");
+            if (cliff && GenDebug.On)
+            {
+                // 基准：去掉首次 JIT 的影响，重复 5 遍取最快
+                double best = 1e9;
+                for (int rep = 0; rep < 5; rep++)
+                {
+                    var swb = Stopwatch.StartNew();
+                    for (int cz = 0; cz < map.Settings.ChunksZ; cz++) for (int cx = 0; cx < map.Settings.ChunksX; cx++) CliffMesher.Build(voxels, cx, cz, seed);
+                    best = Math.Min(best, swb.Elapsed.TotalMilliseconds);
+                }
+                Console.WriteLine($"  基准：外观网格每 chunk {best / meshes.Count:0.00} ms（5 遍取最快）");
+            }
             if (cliff) Console.WriteLine($"  外观网格 {tCliff:0} ms（每 chunk {tCliff / meshes.Count:0.0} ms），碰撞盒 {nBoxes} 个、{tBoxes:0} ms（每 chunk {nBoxes / meshes.Count} 个、{tBoxes / meshes.Count:0.00} ms）");
             foreach (var kv in map.Stats) Console.WriteLine($"  {kv.Key} = {kv.Value}");
             Console.WriteLine($"  checksum = 0x{map.Checksum():X8}");

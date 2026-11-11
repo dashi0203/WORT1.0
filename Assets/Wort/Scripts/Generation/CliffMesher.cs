@@ -18,7 +18,7 @@ namespace Wort.Generation
     {
         public const float Bevel = 0.1f;   // 外倒角（顶边、外角竖边）
         public const float Fillet = 0.04f; // 内倒角（凹角）
-        public const float FootFlare = 0.14f; // 崖脚横截面往外扩（m，贴地处最大，0.7m 以上为 0）
+        public const float FootFlare = 0.18f; // 崖脚横截面往外扩（m，贴地处最大，0.7m 以上为 0）
         public const float Bulge = 0.26f;  // 侧面往外鼓（m，Voronoi 石块中心处）
         const float RimIn = 0.12f, RimOut = 0.5f, RimNoise = 0.1f; // 顶面融合：离崖边 ≤ RimIn 全岩石，≥ RimOut 全泥土
 
@@ -30,6 +30,9 @@ namespace Wort.Generation
             var map = rv.Map;
             var mesh = new MeshData();
             int size = map.Settings.ChunkSize, ox = cx * size, oz = cz * size;
+            // 预留容量（每 chunk 约 5–6 万三角形），避免 List 反复扩容拷贝
+            mesh.Positions.Capacity = 600000; mesh.Normals.Capacity = 600000; mesh.Blend.Capacity = 200000;
+            mesh.Indices[Dirt].Capacity = 200000;
             var fRim = new Fbm(Hash.Of(seed, 911), 0.6, 2);
             
             var b = new Builder { M = mesh, Ox = ox, Oz = oz };
@@ -58,17 +61,24 @@ namespace Wort.Generation
         static void AppendWaterAndSlopes(RegionVoxels rv, MeshData mesh, int cx, int cz, bool water)
         {
             int size = rv.Map.Settings.ChunkSize, ox = cx * size, oz = cz * size;
+            // 只看有水 / 斜坡的格（不再扫整个 chunk 的体素体积）
+            var map = rv.Map;
             var chunk = rv.GetChunk(cx, cz);
-            for (int y = chunk.MinY; y < chunk.MinY + chunk.SizeY; y++)
-                for (int lz = 0; lz < size; lz++)
-                    for (int lx = 0; lx < size; lx++)
+            for (int lz = 0; lz < size; lz++)
+                for (int lx = 0; lx < size; lx++)
+                {
+                    int x = ox + lx, z = oz + lz;
+                    if (x >= map.W || z >= map.H) continue;
+                    int i = map.Index(x, z), h = map.Height[i];
+                    if (map.Slope[i] >= 0 && h >= chunk.MinY && h < chunk.MinY + chunk.SizeY)
                     {
-                        var m = chunk.GetMaterial(lx, y, lz);
-                        if (m == VoxelMaterial.Air) continue;
-                        var s = chunk.GetShape(lx, y, lz);
-                        if (m == VoxelMaterial.Water) { if (water) ChunkMesher.EmitWater(rv, mesh, ox + lx, y, oz + lz, ox, oz); }
-                        else if (s != VoxelShape.Full) ChunkMesher.EmitSlope(rv, mesh, m, (int)s - 1, ox + lx, y, oz + lz, ox, oz);
+                        var s = chunk.GetShape(lx, h, lz);
+                        if (s != VoxelShape.Full) ChunkMesher.EmitSlope(rv, mesh, chunk.GetMaterial(lx, h, lz), (int)s - 1, x, h, z, ox, oz);
                     }
+                    if (water && map.HasWater(i))
+                        for (int y = Math.Max(h, chunk.MinY); y < map.Water[i] && y < chunk.MinY + chunk.SizeY; y++)
+                            if (chunk.GetMaterial(lx, y, lz) == VoxelMaterial.Water) ChunkMesher.EmitWater(rv, mesh, x, y, z, ox, oz);
+                }
         }
 
         static int H(RegionMap m, int x, int z)
@@ -261,7 +271,8 @@ namespace Wort.Generation
             float loA, float hiA, float loB, float hiB, bool ground, bool realTop)
         {
             if (y1 - y0 < 1e-3f) return;
-            var rows = new List<float> { y0 };
+            var rows = rowBuf ?? (rowBuf = new List<float>(128));
+            rows.Clear(); rows.Add(y0);
             // 朝南的面（镜头看得见）每 0.25m 一行、列也加倍，其余每 0.5m 一行
             // 北面镜头看不见：不细分、不鼓；东西面只看得到轮廓：列减半
             bool south = nz < -0.5f, north = nz > 0.5f;
@@ -272,7 +283,12 @@ namespace Wort.Generation
             int C = cols, R = rows.Count - 1;
             float tx = -nz, tz = nx; // 沿墙方向（世界）
             float plane = ax * nx + az * nz;
-            var px = new float[(C + 1) * (R + 1)]; var py = new float[px.Length]; var pz = new float[px.Length];
+            float along0 = ax * tx + az * tz, along1 = bx * tx + bz * tz;
+            bool vorReady = false;
+            var vb = vorBig ?? (vorBig = new VorCache()); var vs = vorSmall ?? (vorSmall = new VorCache());
+            int nv = (C + 1) * (R + 1);
+            if (wx == null || wx.Length < nv) { wx = new float[nv * 2]; wy = new float[nv * 2]; wz = new float[nv * 2]; }
+            float[] px = wx, py = wy, pz = wz;
             for (int r = 0; r <= R; r++)
                 for (int c = 0; c <= C; c++)
                 {
@@ -289,13 +305,14 @@ namespace Wort.Generation
                     {
                         // 错开：只对非端头的列沿墙错开，所有可动顶点上下错开（都取决于世界坐标）
                         uint hsh = Hash.Of((int)Math.Floor(along * 8 + 0.5f), (int)Math.Floor(Y * 8 + 0.5f), (uint)(plane * 131 + 7));
-                        float jy = ((hsh & 0xFF) / 255f - 0.5f) * 0.44f * step;
+                        float jy = ((hsh & 0xFF) / 255f - 0.5f) * 0.44f * Math.Min(step, 0.5f); // 北面 step 很大，上下错开不能跟着放大
                         float ju = end ? 0 : (((hsh >> 8) & 0xFF) / 255f - 0.5f) * 0.12f;
                         Y += jy; along += ju; X += tx * ju; Z += tz * ju;
                         // 两层 Voronoi：大块（2.2m 一格）决定整体凸起，小块（0.8m）在上面加细节；大块占主导，小凸起合并成大凸起
-                        float qb = 1 - Vor(along, Y, (uint)(plane * 977 + 3), 2.2f) * 1.6f; qb = qb < 0 ? 0 : qb;
-                        float qs = 1 - Vor(along, Y, (uint)(plane * 977 + 11), 0.8f) * 1.4f; qs = qs < 0 ? 0 : qs;
-                        float off = Bulge * (0.08f + 0.6f * qb + 0.32f * qs * qs);
+                        if (!vorReady) { vb.Init(Math.Min(along0, along1) - 0.3f, Math.Max(along0, along1) + 0.3f, y0 - 0.3f, y1 + 0.3f, 2.2f, (uint)(plane * 977 + 3)); vs.Init(Math.Min(along0, along1) - 0.3f, Math.Max(along0, along1) + 0.3f, y0 - 0.3f, y1 + 0.3f, 0.65f, (uint)(plane * 977 + 11)); vorReady = true; }
+                        float qb = 1 - vb.F1(along, Y) * 1.6f; qb = qb < 0 ? 0 : qb;
+                        float qs = 1 - vs.F1(along, Y) * 1.7f; qs = qs < 0 ? 0 : qs;
+                        float off = Bulge * (0.05f + 0.45f * qb + 0.6f * qs);
                         if (ground) { float ft = 1 - (Y - y0) / 0.7f; if (ft > 0) off += FootFlare * ft * ft; } // 崖脚往外扩
                         X += nx * off; Z += nz * off;
                     }
@@ -313,6 +330,46 @@ namespace Wort.Generation
                     bd.Tri(Rock, nx, 0, nz, px[a], py[a], pz[a], px[e], py[e], pz[e], px[b2], py[b2], pz[b2]);
                 }
         }
+
+        [ThreadStatic] static List<float> rowBuf;
+        [ThreadStatic] static VorCache vorBig, vorSmall;
+
+        /// <summary>
+        /// 一面墙范围内的 Voronoi 特征点缓存（每格一个随机点，先算好），F1 查询不再重复算哈希。结果与逐点算完全相同。
+        /// </summary>
+        sealed class VorCache
+        {
+            float g; int gu0, gv0, nu, nv; float[] pu = new float[64], pv = new float[64];
+            public void Init(float u0, float u1, float v0, float v1, float grid, uint seed)
+            {
+                g = grid;
+                gu0 = (int)Math.Floor(u0 / g) - 1; gv0 = (int)Math.Floor(v0 / g) - 1;
+                nu = (int)Math.Floor(u1 / g) + 2 - gu0; nv = (int)Math.Floor(v1 / g) + 2 - gv0;
+                int n = nu * nv;
+                if (pu.Length < n) { pu = new float[n * 2]; pv = new float[n * 2]; }
+                for (int j = 0; j < nv; j++)
+                    for (int i = 0; i < nu; i++)
+                    {
+                        uint hh = Hash.Of(gu0 + i, gv0 + j, seed);
+                        pu[j * nu + i] = (gu0 + i + (hh & 0xFFFF) / 65535f) * g;
+                        pv[j * nu + i] = (gv0 + j + (hh >> 16) / 65535f) * g;
+                    }
+            }
+            public float F1(float u, float v)
+            {
+                int cu = (int)Math.Floor(u / g) - gu0, cv = (int)Math.Floor(v / g) - gv0;
+                float best = 9;
+                for (int j = cv - 1; j <= cv + 1; j++)
+                    for (int i = cu - 1; i <= cu + 1; i++)
+                    {
+                        int k = j * nu + i;
+                        float du = u - pu[k], dv = v - pv[k], d = du * du + dv * dv;
+                        if (d < best) best = d;
+                    }
+                return (float)Math.Sqrt(best) / g;
+            }
+        }
+        [ThreadStatic] static float[] wx, wy, wz;
 
         /// <summary>Voronoi F1（格 G 米，每格一个随机点），返回到最近点的距离 / G，约 0–0.8。只用开方，结果确定。</summary>
         static float Vor(float u, float v, uint seed, float G)
