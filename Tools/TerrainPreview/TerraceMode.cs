@@ -16,7 +16,9 @@ namespace Wort.Tools
         {
             Directory.CreateDirectory(outDir);
             var sw = Stopwatch.StartNew();
-            var map = TerraceField.Generate(new TerraceFieldSettings { Seed = seed, Chunks = chunks }, out var cls);
+            var tfs = new TerraceFieldSettings { Seed = seed, Chunks = chunks };
+            if (int.TryParse(Environment.GetEnvironmentVariable("WORT_RAMPWIDTH"), out int rw)) tfs.RampWidth = rw; // 调试：坡道横向宽度
+            var map = TerraceField.Generate(tfs, out var cls);
             long tA = sw.ElapsedMilliseconds;
             // 调试：WORT_ROADPAINT=1 时，从每个坡道的坡底往外刷一段 8m 长、2 格宽的路（看路和坡道怎么衔接）
             if (Environment.GetEnvironmentVariable("WORT_ROADPAINT") != null)
