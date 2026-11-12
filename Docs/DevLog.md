@@ -1,6 +1,6 @@
 # Wort 开发记录
 
-最后更新：2026-11-12 · 分支 `claude/compassionate-davinci-5t1ttq`（已合并 bold-bardeen-vlwhjd） · 最新提交见 `git log`
+最后更新：2026-11-12 · 分支 `claude/ecstatic-maxwell-8c9ue4`（已合并 compassionate-davinci-5t1ttq）（已合并 bold-bardeen-vlwhjd） · 最新提交见 `git log`
 
 GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
 
@@ -24,6 +24,9 @@ GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
     顶面瓦片离露边 8cm 内法线往外倾（越靠边越倾）。顶面 → 唇边 → 崖壁光照连续。可重复运行（按位置重设，不叠加）。
   - 崖壁贴图最上面约两成本身偏暗（参考图唇下的阴影烘焙在里面），交界变自然后更显眼；Unity 里看着太重的话再在着色器里提亮。
   - 砂土修补脚本移到 `Tools/TilesetFix/fix_leak.py`。
+  - 交付规格 `Docs/TilesetSpec.md`（给 Codex / 美术做下一套 Biome 瓦片用：尺寸与拼装、网格 UV 约定、贴图要求、`Wort/TileSurface` 材质设置、目录、自查步骤）；
+    自查用的渲染脚本 `Tools/TilesetPreview/render_scene.py`（不开 Unity，按游戏相机渲染示例场景）。
+  - `Docs/LocalSetup.md` 第 7 节“让 Codex 拉新”模板的分支改为本会话的 `claude/ecstatic-maxwell-8c9ue4`（已合并 compassionate-davinci-5t1ttq 的全部提交）。
 - **Unity 侧云端未编译**（`TileSurface.shader`、新材质、改过法线的网格），等本地看 `Limestone_Showcase`。
 - 接下来（等负责人确认）：按格选件（纯 C#）→ TerrainLab `Tileset` 模式按 chunk 合并网格；合并时给顶沿、崖壁两端和拐角加一点世界坐标噪声挤出（只动轮廓）；
   路面遮罩按 RoadSurface 烘焙成 4 像素 / m 的贴图；坡道需要专门的件。

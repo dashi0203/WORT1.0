@@ -115,13 +115,13 @@ git restore .
    - 如果还有别的被改动的文件（尤其是 .cs 或 .shader），先停下来告诉我，不要自己还原。
    - 未跟踪的文件一律不要动。
 2. git fetch origin
-3. git switch claude/compassionate-davinci-5t1ttq
+3. git switch claude/ecstatic-maxwell-8c9ue4
 4. git pull
 5. git lfs pull
 6. 依次运行这三条，把输出都发给我：
    git log -1 --oneline
    git rev-parse --short HEAD
-   git rev-parse --short origin/claude/compassionate-davinci-5t1ttq
+   git rev-parse --short origin/claude/ecstatic-maxwell-8c9ue4
    后两条输出一样，就说明已经是最新；不一样就停下来告诉我。
 
 做完就结束，不要打开或操作 Unity，也不要做其他检查。
