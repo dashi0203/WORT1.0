@@ -276,7 +276,9 @@ namespace Wort.Tools
     /// </summary>
     sealed class ShearRenderer
     {
+        // 错切：v = z + y·Shear；调试斜视角：u = x − y·ShearX（环境变量 WORT_SHEARX，看东西向的墙和缝）
         const double Shear = 1.0;
+        static readonly double ShearX = double.TryParse(Environment.GetEnvironmentVariable("WORT_SHEARX"), out double sxv) ? sxv : 0.0;
         readonly RegionMap map;
         readonly List<(MeshData mesh, int ox, int oz)> meshes;
         static readonly double LX, LY, LZ;
@@ -361,7 +363,7 @@ namespace Wort.Tools
                         {
                             var pts = new double[3, 3];
                             for (int q = 0; q < 3; q++) { int vi = idx[t + q]; pts[q, 0] = p[vi * 3] + ox; pts[q, 1] = p[vi * 3 + 1]; pts[q, 2] = p[vi * 3 + 2] + oz; }
-                            double X(int q) => (pts[q, 0] - u0) * ppm; double Yp(int q) => h - (pts[q, 2] + pts[q, 1] * Shear - v0) * ppm;
+                            double X(int q) => (pts[q, 0] - pts[q, 1] * ShearX - u0) * ppm; double Yp(int q) => h - (pts[q, 2] + pts[q, 1] * Shear - v0) * ppm;
                             double ar = (X(1) - X(0)) * (Yp(2) - Yp(0)) - (Yp(1) - Yp(0)) * (X(2) - X(0));
                             if (Math.Abs(ar) < 1e-9) continue;
                             double b0 = ((X(1) - qx) * (Yp(2) - qy) - (Yp(1) - qy) * (X(2) - qx)) / ar, b1 = ((X(2) - qx) * (Yp(0) - qy) - (Yp(2) - qy) * (X(0) - qx)) / ar, b2 = 1 - b0 - b1;
@@ -420,9 +422,9 @@ namespace Wort.Tools
             float ra = 0, float rb = 0, float rc = 0)
         {
             if (texDirt == null) { texDirt = TerrainTextures.Dirt(out hDirt); texRock = TerrainTextures.Rock(out hRock); texRoad = TerrainTextures.Road(out hRoad); }
-            double pax = (ax - u0) * ppm, pay = h - (az + ay * Shear - v0) * ppm;
-            double pbx = (bx - u0) * ppm, pby = h - (bz + by * Shear - v0) * ppm;
-            double pcx = (cx - u0) * ppm, pcy = h - (cz + cy * Shear - v0) * ppm;
+            double pax = (ax - ay * ShearX - u0) * ppm, pay = h - (az + ay * Shear - v0) * ppm;
+            double pbx = (bx - by * ShearX - u0) * ppm, pby = h - (bz + by * Shear - v0) * ppm;
+            double pcx = (cx - cy * ShearX - u0) * ppm, pcy = h - (cz + cy * Shear - v0) * ppm;
             double area = (pbx - pax) * (pcy - pay) - (pby - pay) * (pcx - pax);
             if (Math.Abs(area) < 1e-9) return;
             int minX = Math.Max(0, (int)Math.Floor(Math.Min(pax, Math.Min(pbx, pcx))));
@@ -467,9 +469,9 @@ namespace Wort.Tools
             double ax, double ay, double az, double bx, double by, double bz, double cx, double cy, double cz, uint col)
         {
             // 投影
-            double pax = (ax - u0) * ppm, pay = h - (az + ay * Shear - v0) * ppm;
-            double pbx = (bx - u0) * ppm, pby = h - (bz + by * Shear - v0) * ppm;
-            double pcx = (cx - u0) * ppm, pcy = h - (cz + cy * Shear - v0) * ppm;
+            double pax = (ax - ay * ShearX - u0) * ppm, pay = h - (az + ay * Shear - v0) * ppm;
+            double pbx = (bx - by * ShearX - u0) * ppm, pby = h - (bz + by * Shear - v0) * ppm;
+            double pcx = (cx - cy * ShearX - u0) * ppm, pcy = h - (cz + cy * Shear - v0) * ppm;
             double area = (pbx - pax) * (pcy - pay) - (pby - pay) * (pcx - pax);
             if (Math.Abs(area) < 1e-9) return;
             int minX = Math.Max(0, (int)Math.Floor(Math.Min(pax, Math.Min(pbx, pcx))));

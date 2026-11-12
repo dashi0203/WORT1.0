@@ -18,6 +18,19 @@ namespace Wort.Tools
             var sw = Stopwatch.StartNew();
             var map = TerraceField.Generate(new TerraceFieldSettings { Seed = seed, Chunks = chunks }, out var cls);
             long tA = sw.ElapsedMilliseconds;
+            // 调试：WORT_ROADPAINT=1 时，从每个坡道的坡底往外刷一段 8m 长、2 格宽的路（看路和坡道怎么衔接）
+            if (Environment.GetEnvironmentVariable("WORT_ROADPAINT") != null)
+            {
+                var xs = new List<int>(); var zs = new List<int>(); var ks = new List<byte>();
+                foreach (var rp in map.Ramps)
+                {
+                    int dx = Grid.DX4[rp.DownDir], dz = Grid.DZ4[rp.DownDir], px2 = Grid.DX4[(rp.DownDir + 1) & 3], pz2 = Grid.DZ4[(rp.DownDir + 1) & 3];
+                    float cx0 = rp.TopX + 0.5f + px2 * (rp.Width - 1) * 0.5f, cz0 = rp.TopZ + 0.5f + pz2 * (rp.Width - 1) * 0.5f;
+                    for (float t = rp.Length + 1; t < rp.Length + 9; t += 0.5f)
+                        foreach (var (fx, fz) in RoadOverlay.Footprint(cx0 + dx * t, cz0 + dz * t, 2)) { xs.Add(fx); zs.Add(fz); ks.Add(RegionMap.RoadPath); }
+                }
+                Console.WriteLine($"  调试刷路：改动 {RoadOverlay.Apply(map, xs, zs, ks).Count} 格");
+            }
             var voxels = new RegionVoxels(map);
             var meshes = new List<(MeshData mesh, int ox, int oz)>();
             long triBase = 0, triDressed = 0; double tCliff = 0, tBoxes = 0; int nBoxes = 0;
