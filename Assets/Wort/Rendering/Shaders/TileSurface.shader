@@ -7,6 +7,10 @@
 // - 路面：全局遮罩 _WortGroundMask（R = 路面权重，由 TerrainLab 按 RoadSurface 烘焙，覆盖 _WortGroundMaskRect = (x0, z0, 宽, 深) 的世界范围），
 //   只在 _RoadOn = 1 的材质（顶面砂土）朝上的面生效；交界公式与 Wort.Generation.TerrainTextures.MixRoad 相同（路面贴图 A = 高度，砂土 A = 高度，没有时取 0.5）。
 //   全局 _WortGroundMaskOn = 0 时不画路面。
+// - 唇边接缝（_SeamOn = 1，用在崖顶墙件 Crown 的崖壁和唇边两个材质上；负责人 2026-11-12：接缝太明显）：
+//   墙件 UV 纵向 = 件内高度，唇边下沿在 _LipY。交界两侧 _SeamWidth 内，两个材质用同一个公式逐像素决定显示“浅色唇边”还是“深色崖壁”：
+//   P = 0.5 + 到交界的距离 / 宽度 + (崖壁贴图明暗 − 0.3) × _SeamNoise —— 深色石缝往上咬进唇边、亮的石面往下变浅，交界跟着石块轮廓走；
+//   两侧算出的交界线连续。浅色一侧取唇边贴图在交界上方的镜像（不用唇边贴图下部的竖条纹）。交界下方 _ShadowDepth 内加淡暗影（_LipShadow）。
 Shader "Wort/TileSurface"
 {
     Properties
@@ -20,6 +24,14 @@ Shader "Wort/TileSurface"
         _WorldTile ("World Tile Size (m)", Float) = 1
         [Toggle] _RoadOn ("Road Overlay", Float) = 0
         _RoadTex ("Road (RGB, A = height)", 2D) = "gray" {}
+        [Toggle] _SeamOn ("Lip Seam Blend (Crown walls)", Float) = 0
+        _SeamCliff ("Seam: Cliff Map", 2D) = "gray" {}
+        _SeamLip ("Seam: Lip Map", 2D) = "white" {}
+        _LipY ("Lip Bottom (UV v)", Float) = 0.88
+        _SeamWidth ("Seam Width (m)", Float) = 0.07
+        _SeamNoise ("Seam Irregularity", Float) = 3
+        _LipShadow ("Lip Shadow", Range(0, 1)) = 0.12
+        _ShadowDepth ("Lip Shadow Depth (m)", Float) = 0.14
     }
     SubShader
     {
@@ -41,6 +53,8 @@ Shader "Wort/TileSurface"
             TEXTURE2D(_BaseMap); SAMPLER(sampler_BaseMap);
             TEXTURE2D(_BumpMap); SAMPLER(sampler_BumpMap);
             TEXTURE2D(_RoadTex); SAMPLER(sampler_RoadTex);
+            TEXTURE2D(_SeamCliff); SAMPLER(sampler_SeamCliff);
+            TEXTURE2D(_SeamLip); SAMPLER(sampler_SeamLip);
             TEXTURE2D(_WortGroundMask); SAMPLER(sampler_WortGroundMask);
             float4 _WortGroundMaskRect;
             float _WortGroundMaskOn;
@@ -54,6 +68,12 @@ Shader "Wort/TileSurface"
                 float _Projection;
                 float _WorldTile;
                 float _RoadOn;
+                float _SeamOn;
+                float _LipY;
+                float _SeamWidth;
+                float _SeamNoise;
+                float _LipShadow;
+                float _ShadowDepth;
             CBUFFER_END
 
             struct Attributes { float4 positionOS : POSITION; float3 normalOS : NORMAL; float4 tangentOS : TANGENT; float2 uv : TEXCOORD0; };
@@ -99,6 +119,21 @@ Shader "Wort/TileSurface"
                 float3 nm = normalize(t * nt.x + b * nt.y + ng * nt.z);
 
                 half3 albedo = baseC.rgb;
+                half lipShade = 1;
+                if (_SeamOn > 0.5)
+                {
+                    float d = i.uv.y - _LipY; // > 0 在唇边上，< 0 在崖壁上（m，墙件 1m 高）
+                    if (abs(d) < _SeamWidth * 2.5 || d < 0 && -d < _ShadowDepth)
+                    {
+                        half3 cc = SAMPLE_TEXTURE2D(_SeamCliff, sampler_SeamCliff, i.uv).rgb * _BaseColor.rgb;
+                        half3 lc = SAMPLE_TEXTURE2D(_SeamLip, sampler_SeamLip, float2(i.uv.x, _LipY + abs(d) + 0.005)).rgb * _BaseColor.rgb;
+                        float hc = dot(cc, half3(0.299, 0.587, 0.114));
+                        float P = saturate(0.5 + d / _SeamWidth + (hc - 0.3) * _SeamNoise);
+                        P = P * P * (3 - 2 * P);
+                        albedo = lerp(cc, lc, P);
+                        lipShade = 1 - _LipShadow * (1 - P) * (1 - smoothstep(0, _ShadowDepth, max(-d, 0)));
+                    }
+                }
                 if (_RoadOn > 0.5 && _WortGroundMaskOn > 0.5 && ng.y > 0.6)
                 {
                     float2 muv = (i.positionWS.xz - _WortGroundMaskRect.xy) / _WortGroundMaskRect.zw;
@@ -116,7 +151,7 @@ Shader "Wort/TileSurface"
                 Light light = GetMainLight(TransformWorldToShadowCoord(i.positionWS));
                 float ndl = lerp(saturate(dot(ng, light.direction)), saturate(dot(nm, light.direction)), _DetailNormal);
                 half3 diffuse = light.color * ndl * light.shadowAttenuation * light.distanceAttenuation;
-                half3 color = albedo * (diffuse + SampleSH(ng));
+                half3 color = albedo * (diffuse + SampleSH(ng)) * lipShade;
                 color = MixFog(color, i.fog);
                 return half4(color, 1);
             }
