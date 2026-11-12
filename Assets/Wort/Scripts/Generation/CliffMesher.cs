@@ -143,7 +143,8 @@ namespace Wort.Generation
                 if (!side[s]) continue;
                 int nx = Grid.DX4[s], nz = Grid.DZ4[s];
                 tLow[s] = Low(map, x, z, nx - ux, nz - uz) < h ? 1 : 0;       // 坡底那格这一侧也露出
-                tHigh[s] = Low(map, x, z, nx + ux, nz + uz) < h + 1 ? 1 : 0;  // 坡顶那格这一侧也露出
+                // 坡顶一端不收窄：坡顶那格这一侧露出时倒角直接接上；不露出时是凹角（旁边台面的崖边转过来），倒角也要到头、和台面崖边斜接
+                tHigh[s] = 1;
             }
             float Taper(int s, float a)
             {
@@ -235,6 +236,9 @@ namespace Wort.Generation
                     hi[k] = hp == top ? top - Bevel - 0.01f : Math.Min(top, hp) - Bevel - 0.49f;
                 }
                 SlopeSideWall(bd, nx, nz, lx, lz, hx, hz, e, h, lo[0], hi[0], lo[1], hi[1]);
+                // 坡顶的凹角：坡顶那格旁边的台面格和坡顶同高（它朝外的崖边转过来），两条倒角在这里斜接成一块小斜面
+                if (Low(map, x, z, nx + ux, nz + uz) >= h + 1)
+                    bd.Tri(Rock, nx - ux, 1, nz - uz, hx, h + 1 - Bevel, hz, hx - nx * Bevel, h + 1, hz - nz * Bevel, hx + ux * Bevel, h + 1, hz + uz * Bevel);
                 // 斜着的顶边倒角，分 K 段：墙面上沿（坡高 − 倒角宽）→ 坡面边（收进倒角宽）；
                 // 倒角收窄处，墙顶（坡高 − Bevel）到倒角下沿之间补一条墙面（不低于邻格地面）
                 var cuts = new List<float>();
@@ -343,9 +347,44 @@ namespace Wort.Generation
             var exposed = new bool[4];
             for (int s = 0; s < 4; s++) exposed[s] = Low(map, x, z, Grid.DX4[s], Grid.DZ4[s]) < h;
 
-            // ---- 顶面：露出的边往里收 Bevel ----
+            // ---- 挨着斜坡侧面的崖边：露出的高度沿边变化（坡顶处为 0），倒角宽度和岩石边随之收窄，坡面平滑并进台面 ----
+            var sideSlope = new bool[4];
+            for (int s = 0; s < 4; s++)
+            {
+                if (!exposed[s]) continue;
+                int ax = x + Grid.DX4[s], az = z + Grid.DZ4[s];
+                if (ax < 0 || az < 0 || ax >= map.W || az >= map.H) continue;
+                int un = map.Slope[map.Index(ax, az)];
+                sideSlope[s] = un >= 0 && un != s && un != ((s + 2) & 3);
+            }
+            float Expo(int s, float px, float pz)
+            {
+                int ax = x + Grid.DX4[s], az = z + Grid.DZ4[s], ni = map.Index(ax, az), un = map.Slope[ni], hn2 = map.Height[ni];
+                float yN = hn2 + ((px - (ax + 0.5f)) * Grid.DX4[un] + (pz - (az + 0.5f)) * Grid.DZ4[un] + 0.5f);
+                yN = yN < hn2 ? hn2 : (yN > hn2 + 1 ? hn2 + 1 : yN);
+                return h - yN;
+            }
+            float Ins(int s, float px, float pz)
+            {
+                if (!exposed[s]) return 0;
+                if (!sideSlope[s]) return Bevel;
+                float e2 = Expo(s, px, pz) / 0.3f;
+                return Bevel * (e2 < 0 ? 0 : (e2 > 1 ? 1 : e2));
+            }
+            // ---- 顶面：露出的边往里收倒角宽度 ----
             float x0 = x + (exposed[3] ? Bevel : 0), x1 = x + 1 - (exposed[1] ? Bevel : 0);
             float z0 = z + (exposed[2] ? Bevel : 0), z1 = z + 1 - (exposed[0] ? Bevel : 0);
+            bool anySide = sideSlope[0] || sideSlope[1] || sideSlope[2] || sideSlope[3];
+            void TopV(int i, int j, int KK, out float px, out float pz)
+            {
+                if (!anySide) { px = x0 + (x1 - x0) * i / KK; pz = z0 + (z1 - z0) * j / KK; return; }
+                // 先按格上的位置估一次，再用估出的位置重算（和倒角取宽度的位置一致，边缘对得上）
+                float bx = x + (float)i / KK, bz = z + (float)j / KK;
+                float iw = Ins(3, bx, bz), ie = Ins(1, bx, bz), isS = Ins(2, bx, bz), iN = Ins(0, bx, bz);
+                px = x + iw + (1 - iw - ie) * i / KK; pz = z + isS + (1 - isS - iN) * j / KK;
+                iw = Ins(3, x, pz); ie = Ins(1, x + 1, pz); isS = Ins(2, px, z); iN = Ins(0, px, z + 1);
+                px = x + iw + (1 - iw - ie) * i / KK; pz = z + isS + (1 - isS - iN) * j / KK;
+            }
             bool rim = false;
             for (int s = 0; s < 4; s++) if (exposed[s]) rim = true;
             for (int dz = -1; dz <= 1; dz += 2) for (int dx = -1; dx <= 1; dx += 2) if (Low(map, x, z, dx, dz) < h) rim = true;
@@ -357,7 +396,7 @@ namespace Wort.Generation
                 for (int j = 0; j <= K; j++)
                     for (int i = 0; i <= K; i++)
                     {
-                        float px = x0 + (x1 - x0) * i / K, pz = z0 + (z1 - z0) * j / K;
+                        TopV(i, j, K, out float px, out float pz);
                         // 路面离边距离：四邻 / 对角任何高差（更低的崖边、更高的崖脚）都算边
                         float dr = 9;
                         for (int s = 0; s < 4; s++)
@@ -372,7 +411,12 @@ namespace Wort.Generation
                         rf[j * (K + 1) + i] = RoadEdge(dr + (float)fRim.Sample(px * 1.7 + 5.1, pz * 1.7) * 0.12f);
                         float d = 9;
                         for (int s = 0; s < 4; s++)
-                            if (exposed[s]) d = Math.Min(d, 0.5f - ((px - cxw) * Grid.DX4[s] + (pz - czw) * Grid.DZ4[s]));
+                            if (exposed[s])
+                            {
+                                float ds = 0.5f - ((px - cxw) * Grid.DX4[s] + (pz - czw) * Grid.DZ4[s]);
+                                if (sideSlope[s]) { float ex = Expo(s, px, pz); ex = ex < 0 ? 0 : (ex > 1 ? 1 : ex); ds += (1 - ex) * 0.6f; }
+                                d = Math.Min(d, ds);
+                            }
                         for (int dz = -1; dz <= 1; dz += 2)
                             for (int dx = -1; dx <= 1; dx += 2)
                                 if (Low(map, x, z, dx, dz) < h)
@@ -387,12 +431,12 @@ namespace Wort.Generation
                 for (int j = 0; j < K; j++)
                     for (int i = 0; i < K; i++)
                     {
-                        float ax = x0 + (x1 - x0) * i / K, bx = x0 + (x1 - x0) * (i + 1) / K;
-                        float az = z0 + (z1 - z0) * j / K, bz = z0 + (z1 - z0) * (j + 1) / K;
+                        TopV(i, j, K, out float p00x, out float p00z); TopV(i + 1, j, K, out float p10x, out float p10z);
+                        TopV(i, j + 1, K, out float p01x, out float p01z); TopV(i + 1, j + 1, K, out float p11x, out float p11z);
                         float b00 = bl[j * (K + 1) + i], b10 = bl[j * (K + 1) + i + 1], b01 = bl[(j + 1) * (K + 1) + i], b11 = bl[(j + 1) * (K + 1) + i + 1];
                         float r00 = rf[j * (K + 1) + i], r10 = rf[j * (K + 1) + i + 1], r01 = rf[(j + 1) * (K + 1) + i], r11 = rf[(j + 1) * (K + 1) + i + 1];
-                        bd.TriBR(Dirt, 0, 1, 0, ax, h, az, b00, r00, ax, h, bz, b01, r01, bx, h, bz, b11, r11);
-                        bd.TriBR(Dirt, 0, 1, 0, ax, h, az, b00, r00, bx, h, bz, b11, r11, bx, h, az, b10, r10);
+                        bd.TriBR(Dirt, 0, 1, 0, p00x, h, p00z, b00, r00, p01x, h, p01z, b01, r01, p11x, h, p11z, b11, r11);
+                        bd.TriBR(Dirt, 0, 1, 0, p00x, h, p00z, b00, r00, p11x, h, p11z, b11, r11, p10x, h, p10z, b10, r10);
                     }
             }
 
@@ -494,12 +538,31 @@ namespace Wort.Generation
                         tEnd[e] = perpExposed ? Bevel : 0;
                     }
                     float tu0 = -0.5f + tEnd[0], tu1 = 0.5f - tEnd[1];
-                    bd.Quad(Rock, nx, 1, nz,
-                        PX(u0, 0), y1, PZ(u0, 0), PX(tu0, Bevel), h, PZ(tu0, Bevel),
-                        PX(tu1, Bevel), h, PZ(tu1, Bevel), PX(u1, 0), y1, PZ(u1, 0));
+                    var endIns = new[] { Bevel, Bevel };
+                    if (!sideSlope[s])
+                        bd.Quad(Rock, nx, 1, nz,
+                            PX(u0, 0), y1, PZ(u0, 0), PX(tu0, Bevel), h, PZ(tu0, Bevel),
+                            PX(tu1, Bevel), h, PZ(tu1, Bevel), PX(u1, 0), y1, PZ(u1, 0));
+                    else
+                    {
+                        // 倒角宽度沿边变化（挨着斜坡侧面）：分 4 段；倒角收窄处，墙顶到倒角下沿补一条墙面
+                        const int KS = 4;
+                        float InsAt(float uu) => Ins(s, PX(uu, 0), PZ(uu, 0));
+                        endIns[0] = InsAt(tu0); endIns[1] = InsAt(tu1);
+                        for (int k = 0; k < KS; k++)
+                        {
+                            float ta = (float)k / KS, tb = (float)(k + 1) / KS;
+                            float ua = u0 + (u1 - u0) * ta, ub2 = u0 + (u1 - u0) * tb, va = tu0 + (tu1 - tu0) * ta, vb = tu0 + (tu1 - tu0) * tb;
+                            float ia = InsAt(va), ib = InsAt(vb);
+                            bd.Quad(Rock, nx, 1, nz, PX(ua, 0), h - ia, PZ(ua, 0), PX(va, ia), h, PZ(va, ia), PX(vb, ib), h, PZ(vb, ib), PX(ub2, 0), h - ib, PZ(ub2, 0));
+                            if (ia < Bevel - 1e-4f || ib < Bevel - 1e-4f)
+                                bd.Quad(Rock, nx, 0, nz, PX(ua, 0), y1, PZ(ua, 0), PX(ua, 0), h - ia, PZ(ua, 0), PX(ub2, 0), h - ib, PZ(ub2, 0), PX(ub2, 0), y1, PZ(ub2, 0));
+                        }
+                    }
                     for (int e = 0; e < 2; e++)
                     {
                         int sg = e == 0 ? -1 : 1;
+                        if (endIns[e] < Bevel - 1e-4f) continue; // 倒角在这一端收到 0（坡顶），不补端头
                         float ub = sg * (0.5f - endInset[e]), ut = sg * (0.5f - tEnd[e]);
                         if (tEnd[e] > 0)
                         {
