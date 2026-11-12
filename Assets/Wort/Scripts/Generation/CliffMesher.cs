@@ -27,10 +27,6 @@ namespace Wort.Generation
         // 路面离崖边 / 崖脚（任何高差处）要留出泥土和岩石边：≤ RoadIn 没有路面，≥ RoadOut 完整路面（负责人 2026-11-12）
         const float RoadIn = 0.35f, RoadOut = 0.6f;
         static float RoadEdge(float d) { float t = (d - RoadIn) / (RoadOut - RoadIn); t = t < 0 ? 0 : (t > 1 ? 1 : t); return t * t * (3 - 2 * t); }
-        // 坡道（斜坡和坡道平台）上：路面占坡道宽度的大部分（2m 宽的坡道路面约 1.4m，负责人 2026-11-12）；
-        // 层次不变：最外是岩石边（≤ 0.2m 左右），往里一点泥土，再往里是路面
-        const float RampRoadIn = 0.22f, RampRoadOut = 0.36f, RampRimOut = 0.32f;
-        static float RampRoadEdge(float d) { float t = (d - RampRoadIn) / (RampRoadOut - RampRoadIn); t = t < 0 ? 0 : (t > 1 ? 1 : t); return t * t * (3 - 2 * t); }
 
         // 子网格：融合材质的地面都放在 Soil 里（着色器按 Blend 混合两张贴图）
         const int Rock = (int)VoxelMaterial.Soil, Dirt = (int)VoxelMaterial.Soil;
@@ -45,8 +41,9 @@ namespace Wort.Generation
             mesh.Indices[Dirt].Capacity = 200000;
             var fRim = new Fbm(Hash.Of(seed, 911), 0.6, 2);
             var road = rv.RoadMask ?? (rv.RoadMask = RoadSurface.BuildMask(map));
+            var mouths = rv.RoadMouths ?? (rv.RoadMouths = RoadSurface.BuildMouths(map));
 
-            var b = new Builder { M = mesh, Ox = ox, Oz = oz, RoadMask = road, MW = map.W, MH = map.H };
+            var b = new Builder { M = mesh, Ox = ox, Oz = oz, RoadMask = road, MW = map.W, MH = map.H, Mouths = mouths };
             for (int lz = 0; lz < size; lz++)
                 for (int lx = 0; lx < size; lx++)
                 {
@@ -185,9 +182,9 @@ namespace Wort.Generation
                         if (side[s]) d = Math.Min(d, ds + (1 - expo * Taper(s, a)) * 0.6f);
                         if (edge[s]) dr = Math.Min(dr, ds);
                     }
-                    rf[j * (K + 1) + i] = RampRoadEdge(dr + (float)fRim.Sample(px * 1.7 + 5.1, pz * 1.7) * 0.06f);
+                    rf[j * (K + 1) + i] = RoadEdge(dr + (float)fRim.Sample(px * 1.7 + 5.1, pz * 1.7) * 0.12f);
                     d += (float)fRim.Sample(px * 2.3, pz * 2.3) * RimNoise;
-                    float t = (d - RimIn) / (RampRimOut - RimIn); t = t < 0 ? 0 : (t > 1 ? 1 : t);
+                    float t = (d - RimIn) / (RimOut - RimIn); t = t < 0 ? 0 : (t > 1 ? 1 : t);
                     bl[j * (K + 1) + i] = 1 - t * t * (3 - 2 * t);
                 }
             for (int j = 0; j < K; j++)
@@ -389,7 +386,6 @@ namespace Wort.Generation
             float x0 = x + (exposed[3] ? Bevel : 0), x1 = x + 1 - (exposed[1] ? Bevel : 0);
             float z0 = z + (exposed[2] ? Bevel : 0), z1 = z + 1 - (exposed[0] ? Bevel : 0);
             bool anySide = sideSlope[0] || sideSlope[1] || sideSlope[2] || sideSlope[3];
-            bool isRamp = (map.Flags[map.Index(x, z)] & CellFlags.Ramp) != 0; // 坡道平台
             void TopV(int i, int j, int KK, out float px, out float pz)
             {
                 if (!anySide) { px = x0 + (x1 - x0) * i / KK; pz = z0 + (z1 - z0) * j / KK; return; }
@@ -424,7 +420,7 @@ namespace Wort.Generation
                                     dr = Math.Min(dr, (float)Math.Sqrt(kx * kx + kz * kz));
                                 }
                         float drn = dr + (float)fRim.Sample(px * 1.7 + 5.1, pz * 1.7) * 0.12f;
-                        rf[j * (K + 1) + i] = isRamp ? RampRoadEdge(dr + (float)fRim.Sample(px * 1.7 + 5.1, pz * 1.7) * 0.06f) : RoadEdge(drn);
+                        rf[j * (K + 1) + i] = RoadEdge(drn);
                         float d = 9;
                         for (int s = 0; s < 4; s++)
                             if (exposed[s])
@@ -441,7 +437,7 @@ namespace Wort.Generation
                                     d = Math.Min(d, (float)Math.Sqrt(kx * kx + kz * kz));
                                 }
                         d += (float)fRim.Sample(px * 2.3, pz * 2.3) * RimNoise;
-                        float t = (d - RimIn) / ((isRamp ? RampRimOut : RimOut) - RimIn); t = t < 0 ? 0 : (t > 1 ? 1 : t);
+                        float t = (d - RimIn) / (RimOut - RimIn); t = t < 0 ? 0 : (t > 1 ? 1 : t);
                         bl[j * (K + 1) + i] = 1 - t * t * (3 - 2 * t);
                     }
                 for (int j = 0; j < K; j++)
@@ -797,6 +793,7 @@ namespace Wort.Generation
         {
             public MeshData M; public int Ox, Oz;
             public float[] RoadMask; public int MW, MH;
+            public List<RoadSurface.Mouth> Mouths;
 
             public void Quad(int mat, float hx, float hy, float hz,
                 float ax, float ay, float az, float bx, float by, float bz, float cx, float cy, float cz, float dx, float dy, float dz)
@@ -838,7 +835,7 @@ namespace Wort.Generation
                 M.Positions.Add(x - Ox); M.Positions.Add(y); M.Positions.Add(z - Oz);
                 M.Normals.Add(nx); M.Normals.Add(ny); M.Normals.Add(nz);
                 M.Blend.Add(blend);
-                M.Road.Add(ny > 0.6f && RoadMask != null ? RoadSurface.Weight(RoadMask, MW, MH, x, z) * roadK : 0f);
+                M.Road.Add(ny > 0.6f && RoadMask != null ? Math.Min(1f, RoadSurface.Weight(RoadMask, MW, MH, x, z) * roadK * RoadSurface.Funnel(Mouths, x, z)) : 0f);
             }
         }
     }

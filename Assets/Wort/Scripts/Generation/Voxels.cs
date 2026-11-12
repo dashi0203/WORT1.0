@@ -138,6 +138,8 @@ namespace Wort.Generation
         public readonly int MinY, SizeY;
         /// <summary>路面遮罩（RoadSurface.BuildMask），第一次画网格时算好缓存。</summary>
         public float[] RoadMask;
+        /// <summary>坡道口（RoadSurface.BuildMouths），外面的路接坡道时收窄用；和 RoadMask 一起缓存。</summary>
+        public System.Collections.Generic.List<RoadSurface.Mouth> RoadMouths;
 
         public RegionVoxels(RegionMap map)
         {

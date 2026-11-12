@@ -344,7 +344,7 @@ namespace Wort.Terrain
             }
             if (lastVoxels == null || lastVoxels.Map != map)
                 lastVoxels = new RegionVoxels(map);
-            lastVoxels.RoadMask = null; // 路变了，遮罩重算
+            lastVoxels.RoadMask = null; // 路变了，遮罩重算（坡道口不变）
             EnsureMaterials();
             uint useed = unchecked((uint)seed);
             foreach (var (cx, cz) in dirty)
