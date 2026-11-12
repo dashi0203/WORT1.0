@@ -6,9 +6,9 @@ namespace Wort.Generation
     public enum CliffStyle : byte
     {
         Mountain = 0, // 现在的做法：两层 Voronoi 外鼓（山地、荒原、海岸临时）
-        Human = 1,    // 有棱角的大石块砌墙，顶沿一圈浅色路沿石
+        Human = 1,    // 方石错缝砌墙，凸出深浅不一
         Swamp = 2,    // 横向层理：一层层泥层，层缝发暗，层线沿墙是波浪
-        Forest = 3,   // 密集的小圆石（枕头形），石缝发暗
+        Forest = 3,   // 圆石（枕头形），石缝发暗
     }
 
     /// <summary>一种 Biome 的地基外观：崖面样式 + 配色（贴图明暗在 A → B 之间取色）。</summary>
@@ -32,7 +32,7 @@ namespace Wort.Generation
         public static readonly BiomeLook[] All =
         {
             new BiomeLook { Id = BiomeId.Human, Style = CliffStyle.Human,
-                DirtA = 0x9A7024, DirtB = 0xCFA040, RockA = 0x4A3E36, RockB = 0x8E7E6E, RimA = 0xB4A494, RimB = 0xEADCCC, RimIn = 0.35f, RimOut = 0.55f },
+                DirtA = 0x9A7024, DirtB = 0xCFA040, RockA = 0x4A3E36, RockB = 0x8E7E6E, RimA = 0xB4A494, RimB = 0xEADCCC, RimIn = 0.05f, RimOut = 0.18f },
             new BiomeLook { Id = BiomeId.MixedForest, Style = CliffStyle.Forest,
                 DirtA = 0x9A4022, DirtB = 0xD4743C, RockA = 0x6E2818, RockB = 0xC4643A, RimIn = 0.02f, RimOut = 0.12f },
             new BiomeLook { Id = BiomeId.Conifer, Style = CliffStyle.Forest,

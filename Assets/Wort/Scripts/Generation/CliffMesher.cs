@@ -217,6 +217,7 @@ namespace Wort.Generation
                 }
                 if (s == dn)
                 {
+                    bd.WallBase = e; bd.WallTop = h;
                     if (e < h) Wall(bd, nx, nz, ax, az, bx, bz, e, h, 4, 1, 0, 1, 0, true, false);
                     continue;
                 }
@@ -480,7 +481,7 @@ namespace Wort.Generation
                 float PX(float u, float k) => cxw + nx * (0.5f - k) + tx * u;
                 float PZ(float u, float k) => czw + nz * (0.5f - k) + tz * u;
 
-                if (bd.Look != null && h - hn >= 2 && !sideSlope[s]) RimStones(map, bd, x, z, s, h);
+                bd.WallBase = hn; bd.WallTop = h;
                 // 每一层（slab）两端的情况：0 = 直接到格边，1 = 外角（倒 Bevel），2 = 凹角（倒 Fillet）
                 int nSlab = h - hn;
                 var kindA = new int[nSlab]; var kindB = new int[nSlab];
@@ -743,7 +744,8 @@ namespace Wort.Generation
                     bool interiorRow = r > 0 && r < R;
                     bool endRowOk = (r > 0 || !ground) && (r < R || !realTop);
                     bool move = end ? endRowOk && (c == 0 ? (Y > loA && Y < hiA) : (Y > loB && Y < hiB)) : interiorRow;
-                    float off = StyleOffset(bd.Look, nx, nz, plane, along, Y, out float ao);
+                    float rel = bd.WallTop > bd.WallBase ? (Y - bd.WallBase) / (bd.WallTop - bd.WallBase) : 0.5f;
+                    float off = StyleOffset(bd.Look, nx, nz, plane, along, Y, rel, out float ao);
                     if (ground) { float gt = (Y - y0) / 0.6f; ao *= 0.8f + 0.2f * (gt > 1 ? 1 : gt); } // 贴地处略暗
                     if (move && !north)
                     {
@@ -770,9 +772,10 @@ namespace Wort.Generation
 
         /// <summary>
         /// 墙面一点按崖面样式往外鼓多少（m），以及暗部系数 ao（1 = 不压暗）。只取决于世界坐标（沿墙坐标、高度、所在平面）。
+        /// rel = 在这面墙上的相对高度（0 崖脚 … 1 崖顶）。
         /// 外鼓上限和现在的山地样式相同（约 0.26m），崖脚外扩另加（负责人：和现在差不多，不要太多，尤其是底沿）。
         /// </summary>
-        static float StyleOffset(LookField look, float nx, float nz, float plane, float along, float y, out float ao)
+        static float StyleOffset(LookField look, float nx, float nz, float plane, float along, float y, float rel, out float ao)
         {
             var style = look.WallStyle(nx, nz, plane, along, y, out float edge);
             uint ps = (uint)(plane * 977 + 3);
@@ -781,42 +784,64 @@ namespace Wort.Generation
             {
                 case CliffStyle.Human:
                 {
-                    // 有棱角的大石块：Voronoi（横 0.55m、竖 0.42m）每块一个倾斜的平面，块边往里收出石缝
-                    const float SU = 0.55f, SV = 0.42f;
-                    Vor2(along / SU, y / SV, ps + 101, out int iu, out int iv, out float cu, out float cv, out float e);
-                    uint hc = Hash.Of(iu, iv, ps + 102);
-                    float gu = (Unit(hc >> 3) - 0.5f) * 0.4f, gv = (Unit(hc >> 11) - 0.5f) * 0.4f;
-                    off = 0.11f + 0.09f * Unit(hc) + gu * (along - cu * SU) + gv * (y - cv * SV);
-                    off = off < 0.04f ? 0.04f : (off > 0.24f ? 0.24f : off);
-                    float crack = Sat(e / 0.08f);
-                    off *= 0.35f + 0.65f * crack;
-                    ao = (0.45f + 0.55f * Smooth(0, 0.12f, e)) * (0.86f + 0.14f * Unit(hc >> 17));
+                    // 方石错缝砌：一层层（每层 0.5–0.8m 高），每层切成 0.6–1.2m 宽的方块，上下层接缝错开；
+                    // 每块一个略倾斜的平面、凸出深浅不一（错落），块边倒一点小角、收出石缝
+                    int row = (int)Math.Floor(y / 0.65f) + 2;
+                    float yb0 = 0, yb1 = 0; int ri = 0;
+                    for (int k = row - 2; k <= row + 1; k++)
+                    {
+                        float lo = k * 0.65f + (Unit(Hash.Of(k, 0, ps + 101)) - 0.5f) * 0.36f, hi = (k + 1) * 0.65f + (Unit(Hash.Of(k + 1, 0, ps + 101)) - 0.5f) * 0.36f;
+                        if (y >= lo && y < hi) { yb0 = lo; yb1 = hi; ri = k; break; }
+                    }
+                    float shift = Unit(Hash.Of(ri, 1, ps + 103)) * 0.9f; // 每层整体错开，接缝不对齐
+                    float ua = along + shift;
+                    int col = (int)Math.Floor(ua / 0.9f);
+                    float ub0 = 0, ub1 = 0; int ci = 0;
+                    for (int j = col - 1; j <= col + 1; j++)
+                    {
+                        float lo = j * 0.9f + (Unit(Hash.Of(j, ri, ps + 104)) - 0.5f) * 0.5f, hi = (j + 1) * 0.9f + (Unit(Hash.Of(j + 1, ri, ps + 104)) - 0.5f) * 0.5f;
+                        if (ua >= lo && ua < hi) { ub0 = lo; ub1 = hi; ci = j; break; }
+                    }
+                    uint hc = Hash.Of(ci, ri, ps + 102);
+                    float cu = (ub0 + ub1) * 0.5f, cv = (yb0 + yb1) * 0.5f;
+                    float gu = (Unit(hc >> 3) - 0.5f) * 0.16f, gv = (Unit(hc >> 11) - 0.5f) * 0.22f;
+                    off = 0.04f + 0.18f * Unit(hc) * Unit(hc >> 21) + 0.04f * Unit(hc) + gu * (ua - cu) + gv * (y - cv);
+                    off = off < 0.03f ? 0.03f : (off > 0.24f ? 0.24f : off);
+                    float e = Math.Min(Math.Min(ua - ub0, ub1 - ua), Math.Min(y - yb0, yb1 - y)); // 到方块边的距离（m）
+                    float edgeK = Smooth(0, 0.07f, e);
+                    off *= 0.3f + 0.7f * edgeK;
+                    ao = (0.45f + 0.55f * Smooth(0, 0.09f, e)) * (0.74f + 0.14f * Unit(hc >> 17) + 0.6f * (off - 0.04f)); // 凸出多的石块亮一些
                     break;
                 }
                 case CliffStyle.Forest:
                 {
-                    // 密集的小圆石：Voronoi 0.34m，每块中间鼓成枕头，块边是暗缝；再叠一层大块起伏
-                    Vor2(along / 0.34f, y / 0.34f, ps + 201, out int iu, out int iv, out _, out _, out float e);
+                    // 圆石：Voronoi 0.5m，每块中间鼓成枕头，块边是暗缝；再叠一层大块起伏
+                    Vor2(along / 0.5f, y / 0.5f, ps + 201, out int iu, out int iv, out _, out _, out float e);
                     uint hc = Hash.Of(iu, iv, ps + 202);
                     float pillow = 1 - (1 - Sat(e / 0.32f)) * (1 - Sat(e / 0.32f));
                     float qb = 1 - Vor(along, y, ps, 2.2f) * 1.6f; qb = qb < 0 ? 0 : qb;
-                    off = 0.03f + (0.1f + 0.04f * Unit(hc)) * pillow + 0.07f * qb;
-                    ao = (0.42f + 0.58f * Smooth(0, 0.2f, e)) * (0.88f + 0.12f * Unit(hc >> 9));
+                    off = 0.03f + (0.11f + 0.05f * Unit(hc)) * pillow + 0.06f * qb;
+                    ao = (0.42f + 0.58f * Smooth(0, 0.16f, e)) * (0.88f + 0.12f * Unit(hc >> 9));
                     break;
                 }
                 case CliffStyle.Swamp:
                 {
-                    // 横向层理：每层约 0.34m，上沿外凸、下沿往里收；层线沿墙波浪起伏，每层鼓出的量不同
-                    const float T = 0.38f;
-                    float wav = 0.2f * (Noise1(along / 2.6f, ps + 301) - 0.5f) * 2 + 0.06f * (Noise1(along / 0.8f, ps + 302) - 0.5f) * 2;
-                    float yb = y + wav;
-                    int band = (int)Math.Floor(yb / T);
-                    float f = yb / T - band;
-                    float amp = (0.07f + 0.13f * Unit(Hash.Of(band, 0, ps + 303))) * (0.55f + 0.45f * Noise1(along / 1.9f + band * 7.31f, ps + 304));
+                    // 横向层理：层线沿墙波浪起伏（共同的大波浪 ±0.26m、波长约 1.3m，加每条层线自己的 ±0.09m，层的厚薄随之变化）；
+                    // 每层上沿外凸、下沿内收，越往上越平缓：层缝变浅、外凸变小（负责人 2026-11-12）
+                    const float T = 0.5f;
+                    float common = 0.26f * (Noise1(along / 1.3f, ps + 306) * 2 - 1) + 0.08f * (Noise1(along / 0.5f, ps + 307) * 2 - 1); // 所有层线一起起伏（不会交叉）
+                    float Line(int k) => k * T + common + 0.09f * (Noise1(along / 1.1f + k * 3.17f, ps + 301) * 2 - 1);
+                    int k0 = (int)Math.Floor(y / T);
+                    int band = k0; float lo = Line(k0), hi = Line(k0 + 1);
+                    if (y < lo) { band = k0 - 1; hi = lo; lo = Line(k0 - 1); }
+                    else if (y >= hi) { band = k0 + 1; lo = hi; hi = Line(k0 + 2); }
+                    float f = (y - lo) / Math.Max(0.05f, hi - lo);
+                    float calm = 1 - 0.65f * Sat(rel); // 越往上越平缓
+                    float amp = (0.08f + 0.12f * Unit(Hash.Of(band, 0, ps + 303))) * (0.6f + 0.4f * Noise1(along / 1.9f + band * 7.31f, ps + 304));
                     float q = (f - 0.62f) / 0.62f;
                     float prof = 1 - q * q; prof = prof < 0 ? 0 : prof;
-                    off = 0.03f + amp * prof;
-                    ao = (0.4f + 0.6f * Smooth(0.0f, 0.3f, f)) * (0.9f + 0.1f * Unit(Hash.Of(band, 1, ps + 305)));
+                    off = 0.04f + amp * (prof * calm + (1 - calm) * 0.6f);
+                    ao = (1 - (1 - (0.4f + 0.6f * Smooth(0.0f, 0.3f, f))) * (0.4f + 0.6f * calm)) * (0.9f + 0.1f * Unit(Hash.Of(band, 1, ps + 305)));
                     break;
                 }
                 default:
@@ -861,71 +886,6 @@ namespace Wort.Generation
                     else if (d < d2) d2 = d;
                 }
             e = ((float)Math.Sqrt(d2) - (float)Math.Sqrt(d1)) * 0.5f;
-        }
-
-        /// <summary>
-        /// 人类区样式的顶沿路沿石：沿露出的顶边（落差 ≥ 2 层）切成一块块浅色石头，每块盖住倒角、往里约 0.3–0.45m、略高出顶面。
-        /// 石块按世界沿墙坐标划分（跨格连续）；石块中心在本格的由本格画，伸到下一格要看那一格同一侧也是同样的崖边，否则在格边截断。
-        /// 只在该处权重最大的样式是人类区时画。石块不超出碰撞格的水平范围。
-        /// </summary>
-        static void RimStones(RegionMap map, Builder bd, int x, int z, int s, int h)
-        {
-            int nx = Grid.DX4[s], nz = Grid.DZ4[s], tx = -nz, tz = nx;
-            float cxw = x + 0.5f, czw = z + 0.5f;
-            float c = cxw * tx + czw * tz; // 本格中心的沿墙坐标
-            float plane = (cxw + nx * 0.5f) * nx + (czw + nz * 0.5f) * nz;
-            uint seed = (uint)((int)Math.Floor(plane * 4 + 0.5f) * 7919 + s * 104729 + 17);
-            const float P = 0.52f;
-            float Bound(int k) => k * P + (Unit(Hash.Of(k, 0, seed)) - 0.5f) * 0.2f;
-            // 往前 / 往后一格是否同样的崖边（同高、同一侧也落差 ≥ 2）
-            bool Cont(int sg) => Low(map, x, z, sg * tx, sg * tz) == h && Low(map, x, z, sg * tx + nx, sg * tz + nz) <= h - 2;
-            bool contA = Cont(-1), contB = Cont(1);
-            // 不延续时截断位置：外角留出竖向倒角，凹角贴到格边
-            float endA = c - 0.5f + (Low(map, x, z, -tx, -tz) < h ? Bevel : 0), endB = c + 0.5f - (Low(map, x, z, tx, tz) < h ? Bevel : 0);
-            int k0 = (int)Math.Floor((c - 0.5f) / P) - 1;
-            for (int k = k0; k <= k0 + 4; k++)
-            {
-                float a = Bound(k), b = Bound(k + 1), m = (a + b) * 0.5f;
-                if (m < c - 0.5f || m >= c + 0.5f) continue;
-                if (!contA && a < endA) a = endA;
-                if (!contB && b > endB) b = endB;
-                a += 0.012f; b -= 0.012f;
-                if (b - a < 0.12f) continue;
-                float mu = (a + b) * 0.5f - c;
-                if (bd.Look.MainStyle(cxw + tx * mu - nx * 0.3f, czw + tz * mu - nz * 0.3f) != CliffStyle.Human) continue;
-                uint hs = Hash.Of(k, 1, seed);
-                float D = 0.4f + 0.16f * Unit(hs), T = h + 0.05f + 0.07f * Unit(hs >> 8);
-                // 截面：外沿在格边（k = 0），往里 D；五边形，里侧中间凸出一点
-                float ua = a - c, ub = b - c, um = mu + (Unit(hs >> 4) - 0.5f) * 0.12f;
-                var fu = new[] { ua, ub, ub, um, ua };
-                var fk = new[] { 0f, 0f, D * (0.75f + 0.2f * Unit(hs >> 12)), D, D * (0.75f + 0.2f * Unit(hs >> 14)) };
-                float cu = 0, ck = 0; for (int q = 0; q < 5; q++) { cu += fu[q]; ck += fk[q]; } cu /= 5; ck /= 5;
-                float WX(float u, float kk) => cxw + nx * (0.5f - kk) + tx * u;
-                float WZ(float u, float kk) => czw + nz * (0.5f - kk) + tz * u;
-                var bx = new float[5]; var by = new float[5]; var bz = new float[5];
-                var qx = new float[5]; var qy = new float[5]; var qz = new float[5];
-                for (int q = 0; q < 5; q++)
-                {
-                    bx[q] = WX(fu[q], fk[q]); bz[q] = WZ(fu[q], fk[q]);
-                    by[q] = fk[q] < 1e-4f ? h - Bevel : h - 0.03f;
-                    // 顶面往中心收 0.04m（倒一圈斜边），每个顶点高度略有起伏
-                    float iu = fu[q] + (cu - fu[q]) * 0.22f, ik = fk[q] + (ck - fk[q]) * 0.22f;
-                    if (fk[q] < 1e-4f) ik = Math.Max(ik, 0.03f);
-                    qx[q] = WX(iu, ik); qz[q] = WZ(iu, ik);
-                    qy[q] = T + (Unit(Hash.Of(k, q + 2, seed)) - 0.5f) * 0.03f;
-                }
-                bd.CurAccent = 1;
-                float ccx = WX(cu, ck), ccz = WZ(cu, ck), ccy = T + 0.01f;
-                for (int q = 0; q < 5; q++)
-                {
-                    int q2 = (q + 1) % 5;
-                    bd.TriAo(Rock, 0, 1, 0, ccx, ccy, ccz, 1, qx[q], qy[q], qz[q], 1, qx[q2], qy[q2], qz[q2], 1);
-                    float hx = (bx[q] + bx[q2]) * 0.5f - ccx, hz = (bz[q] + bz[q2]) * 0.5f - ccz;
-                    bd.TriAo(Rock, hx, 0.3f, hz, bx[q], by[q], bz[q], 0.7f, qx[q], qy[q], qz[q], 0.95f, qx[q2], qy[q2], qz[q2], 0.95f);
-                    bd.TriAo(Rock, hx, 0.3f, hz, bx[q], by[q], bz[q], 0.7f, qx[q2], qy[q2], qz[q2], 0.95f, bx[q2], by[q2], bz[q2], 0.7f);
-                }
-                bd.CurAccent = 0;
-            }
         }
 
         /// <summary>
@@ -1035,8 +995,10 @@ namespace Wort.Generation
             public float[] RoadMask; public int MW, MH;
             public List<RoadSurface.Mouth> Mouths;
             public LookField Look;
-            /// <summary>接下来写的三角形的点缀色权重（路沿石 = 1）。</summary>
+            /// <summary>接下来写的三角形的点缀色权重（预留给点缀色，目前都是 0）。</summary>
             public float CurAccent;
+            /// <summary>当前这面墙的底（崖脚）和顶（崖顶）高度，样式按墙上的相对高度变化（沼泽越往上越平缓）。</summary>
+            public float WallBase, WallTop;
 
             public void Quad(int mat, float hx, float hy, float hz,
                 float ax, float ay, float az, float bx, float by, float bz, float cx, float cy, float cz, float dx, float dy, float dz)
