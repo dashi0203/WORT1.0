@@ -131,8 +131,8 @@ namespace Wort.Tools
             if (view != null)
             {
                 var vp = view.Split(','); double vx = double.Parse(vp[0]), vz = double.Parse(vp[1]), vw2 = double.Parse(vp[2]), vppm = double.Parse(vp[3]);
-                int vh = map.Height[map.Index((int)vx, (int)vz)];
-                r.RenderView(vx - vw2 / 2, vz + vh - vw2 * 3 / 8, vw2, vw2 * 3 / 4, vppm, null).Save(Path.Combine(outDir, "zoom_view.png"));
+                double vc = vp.Length > 4 ? double.Parse(vp[4]) : vz + map.Height[map.Index((int)vx, (int)vz)]; // 第 5 个值：画面中心的 z + 高度
+                r.RenderView(vx - vw2 / 2, vc - vw2 * 3 / 8, vw2, vw2 * 3 / 4, vppm, null).Save(Path.Combine(outDir, "zoom_view.png"));
             }
             // 坡道特写（24 px/m）：前 4 个坡道，坡道在画面中间
             for (int k = 0; k < Math.Min(4, map.Ramps.Count); k++)

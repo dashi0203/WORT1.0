@@ -534,8 +534,9 @@ namespace Wort.Generation
                                 float qx = kx + nx * Fillet, qz = kz + nz * Fillet;
                                 if (yTop > y0) bd.Quad(Rock, nx - tx * sg, 0, nz - tz * sg, PX(ue, 0), y0, PZ(ue, 0), PX(ue, 0), yTop, PZ(ue, 0), qx, yTop, qz, qx, y0, qz);
                                 // 对角格比本格低（但高于墙脚）：内倒角只到对角格的倒角底，再补到对角格顶面的一小片，否则凹角处露缝
-                                // 对角格不低于本格、这是最上面一段：内倒角只到墙顶（h − Bevel），墙顶到顶面的那一角补一块斜面和一小片竖面
-                                if (hq >= h && segTop && yTop > y0)
+                                // 对角格比本格高、这是最上面一段：内倒角只到墙顶（h − Bevel），墙顶到顶面的那一角补一块斜面和一小片竖面。
+                                // 对角格和本格同高时不补：下面“两道倒角之间再补一片”已经处理，再补会重叠，竖面还会从凹角戳出来
+                                if (hq > h && segTop && yTop > y0)
                                 {
                                     bd.Tri(Rock, nx - tx * sg, 1, nz - tz * sg, PX(ue, 0), yTop, PZ(ue, 0), qx, yTop, qz, kx, h, kz);
                                     // 竖面朝向不好判断，两面都画（Unity 默认剔除背面）
