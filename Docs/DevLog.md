@@ -14,6 +14,10 @@ GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
 - 三套瓦片：Limestone（人类区）、OliveStrata（沼泽）、RustCrag（森林），材质统一 `Wort/TileSurface`。
 - 空白测试地 + Minecraft 式体素笔刷（`TerrainLab` 生成器 `TestGround`）。**Unity 侧还没编译过。**
 
+Unity 首测（负责人）：编译通过；瓦片不受光、没影子（转灯明暗不变），角色正常。
+原因：PC 渲染器是 Forward+，`Wort/TileSurface`（和 `Wort/TerrainBlend`）没声明 `_CLUSTER_LIGHT_LOOP` / `_FORWARD_PLUS`，
+URP 的 `GetMainLight` 于是从逐物体灯光数据取衰减，而 Forward+ 不填 → 太阳光乘成 0。已补关键字（另加 Unity 6 软阴影变体），主光源不再乘 distanceAttenuation。**待本地确认。**
+
 等负责人 / Codex：
 1. 本地按上一次给的一次性步骤拉新（先把本地未跟踪的 `Assets/Wort/Art/Tilesets` 挪到项目外备份），在 Unity 里试体素笔刷，发 Console 和截图。
 2. RustCrag 多层墙每 1m 一道横向亮带：Codex 改贴图，还是着色器里压。

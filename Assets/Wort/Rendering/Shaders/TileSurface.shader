@@ -45,7 +45,11 @@ Shader "Wort/TileSurface"
             #pragma vertex vert
             #pragma fragment frag
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
-            #pragma multi_compile_fragment _ _SHADOWS_SOFT
+            #pragma multi_compile_fragment _ _SHADOWS_SOFT _SHADOWS_SOFT_LOW _SHADOWS_SOFT_MEDIUM _SHADOWS_SOFT_HIGH
+            // Forward+（PC 渲染器用的就是它）：不声明这两个关键字时，URP 的 GetMainLight 会从逐物体灯光数据取衰减，
+            // 而 Forward+ 不填这份数据 → 太阳光被乘成 0，只剩环境光（负责人 2026-11-12：瓦片不受光、没影子）。Unity 6 叫 _CLUSTER_LIGHT_LOOP，旧版叫 _FORWARD_PLUS。
+            #pragma multi_compile _ _CLUSTER_LIGHT_LOOP
+            #pragma multi_compile _ _FORWARD_PLUS
             #pragma multi_compile_fog
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
@@ -150,7 +154,7 @@ Shader "Wort/TileSurface"
 
                 Light light = GetMainLight(TransformWorldToShadowCoord(i.positionWS));
                 float ndl = lerp(saturate(dot(ng, light.direction)), saturate(dot(nm, light.direction)), _DetailNormal);
-                half3 diffuse = light.color * ndl * light.shadowAttenuation * light.distanceAttenuation;
+                half3 diffuse = light.color * ndl * light.shadowAttenuation; // 主光源不乘 distanceAttenuation（方向光本来就是 1；见上面 Forward+ 的说明）
                 half3 color = albedo * (diffuse + SampleSH(ng)) * lipShade;
                 color = MixFog(color, i.fog);
                 return half4(color, 1);
