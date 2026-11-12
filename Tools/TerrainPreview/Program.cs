@@ -22,6 +22,7 @@ namespace Wort.Tools
             bool terrace = false;
             int chunks = 5;
             int refresh = 6;
+            string rid = null; // --rid 世界种子:刷新种子，重放某一次随机刷新
             bool random = false;
             bool cliff = false; // 地形外观方案 B（CliffMesher）
             for (int i = 0; i < args.Length - 1; i++)
@@ -31,8 +32,14 @@ namespace Wort.Tools
                 if (args[i] == "--layout") layout = args[i + 1];
                 if (args[i] == "--chunks") chunks = int.Parse(args[i + 1]);
                 if (args[i] == "--refresh") refresh = int.Parse(args[i + 1]);
+                if (args[i] == "--rid") rid = args[i + 1];
             }
             foreach (var a in args) { if (a == "--terrace") terrace = true; if (a == "--random") random = true; if (a == "--debug") GenDebug.Log = new System.Text.StringBuilder(); if (a == "--cliff") cliff = true; }
+            if (rid != null)
+            {
+                if (!RandomRegion.TryParseId(rid, out uint ws, out uint rs)) { Console.Error.WriteLine($"刷新 ID 格式不对：{rid}（应为 世界种子:8 位十六进制，如 3:9F2A61C0）"); return 1; }
+                return RandomMode.Run(ws, 1, outDir, rs);
+            }
             if (random) return RandomMode.Run(seed, refresh, outDir);
             if (terrace) return TerraceMode.Run(seed, outDir, chunks, cliff);
             if (layout != null) return LayoutMode.Run(layout, outDir);

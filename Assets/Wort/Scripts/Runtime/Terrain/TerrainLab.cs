@@ -137,9 +137,16 @@ namespace Wort.Terrain
         private byte[] bakedCls;
         private List<RegionEntrance> candidates;
 
+        // 按刷新 ID 重放时用的刷新种子（只对 replayWorldSeed 这个世界种子有效）；“重新生成随机 chunk”会清掉它
+        private uint? replaySeed;
+        private uint replayWorldSeed;
+
         public bool CanRefreshRandom => generator == GeneratorKind.Terrace5x5 && randomChunk;
         public int RefreshIndex => refreshIndex;
         public string LastRefreshReport { get; private set; }
+        /// <summary>最近一次随机刷新的 ID（世界种子:刷新种子），可复制后用“按 ID 重放”或预览工具 --rid 复现。</summary>
+        public string LastRefreshId { get; private set; }
+        public bool IsReplaying => replaySeed.HasValue;
 
         /// <summary>固定世界只烘焙一次（同一种子缓存），随机区域按 refreshIndex 生成。</summary>
         private RegionMap RefreshRandom(uint useed, out RandomRegionResult result)
@@ -150,11 +157,18 @@ namespace Wort.Terrain
                 candidates = RandomRegion.AutoCandidates(baked, bakedCls, RandomChunks, useed);
                 bakedSeed = useed;
             }
+            if (replaySeed.HasValue && replayWorldSeed != useed)
+                replaySeed = null;
+            uint rs = replaySeed ?? RandomRegion.RefreshSeed(useed, 1, refreshIndex);
             var sw = Stopwatch.StartNew();
-            result = RandomRegion.Refresh(baked, bakedCls, RandomChunks, candidates, useed, 1, refreshIndex, new RandomRegionSettings());
-            LastRefreshReport = $"刷新 {refreshIndex + 1}：{(result.Ok ? "通过" : "失败")}，尝试 {result.Attempts} 次，区域生成 {sw.ElapsedMilliseconds} ms，checksum 0x{result.Map.Checksum():X8}";
+            result = RandomRegion.RefreshWithSeed(baked, bakedCls, RandomChunks, candidates, rs, new RandomRegionSettings());
+            LastRefreshId = RandomRegion.FormatId(useed, rs);
+            string which = replaySeed.HasValue ? "重放" : $"刷新 {refreshIndex + 1}";
+            LastRefreshReport = $"{which}  ID {LastRefreshId}：{(result.Ok ? "通过" : "失败")}，尝试 {result.Attempts} 次，区域生成 {sw.ElapsedMilliseconds} ms，checksum 0x{result.Map.Checksum():X8}";
+            if (result.AttemptLog.Count > 0)
+                LastRefreshReport += "\n" + string.Join("\n", result.AttemptLog);
             if (!result.Ok)
-                Debug.LogWarning("[TerrainLab] 随机 chunk 校验失败：\n" + string.Join("\n", result.Report), this);
+                Debug.LogWarning($"[TerrainLab] 随机 chunk 校验失败（ID {LastRefreshId}）：\n" + string.Join("\n", result.Report), this);
             return result.Map;
         }
 
@@ -166,13 +180,39 @@ namespace Wort.Terrain
         {
             if (!CanRefreshRandom)
                 return;
-            var root = transform.Find(RootName);
-            if (root == null || LastMap == null)
+            replaySeed = null;
+            if (transform.Find(RootName) == null || LastMap == null)
             {
                 Generate();
                 return;
             }
             refreshIndex++;
+            RebuildRandomChunks();
+        }
+
+        /// <summary>
+        /// 按刷新 ID（如 <c>3:9F2A61C0</c>）重放某次随机刷新。ID 里的世界种子和当前不同时，先换种子并整张重新生成。
+        /// </summary>
+        public bool ReplayRefresh(string id, out string error)
+        {
+            error = null;
+            if (!CanRefreshRandom) { error = "需要 Terrace5x5 并勾选随机 chunk"; return false; }
+            if (!RandomRegion.TryParseId(id, out uint ws, out uint rs)) { error = "格式应为 世界种子:8 位十六进制，如 3:9F2A61C0"; return false; }
+            replaySeed = rs;
+            replayWorldSeed = ws;
+            if (unchecked((uint)seed) != ws || transform.Find(RootName) == null || LastMap == null)
+            {
+                seed = unchecked((int)ws);
+                Generate();
+                return true;
+            }
+            RebuildRandomChunks();
+            return true;
+        }
+
+        private void RebuildRandomChunks()
+        {
+            var root = transform.Find(RootName);
             uint useed = unchecked((uint)seed);
             var swAll = Stopwatch.StartNew();
             var map = RefreshRandom(useed, out _);

@@ -7,6 +7,8 @@ namespace Wort.Editor
     [CustomEditor(typeof(TerrainLab))]
     public sealed class TerrainLabEditor : UnityEditor.Editor
     {
+        private string replayId = "";
+
         public override void OnInspectorGUI()
         {
             DrawDefaultInspector();
@@ -39,6 +41,25 @@ namespace Wort.Editor
                 }
                 if (!string.IsNullOrEmpty(lab.LastRefreshReport))
                     EditorGUILayout.HelpBox(lab.LastRefreshReport, MessageType.None);
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.SelectableLabel($"刷新 ID：{lab.LastRefreshId ?? "（未生成）"}", GUILayout.Height(18));
+                    using (new EditorGUI.DisabledScope(string.IsNullOrEmpty(lab.LastRefreshId)))
+                        if (GUILayout.Button("复制", GUILayout.Width(60)))
+                            EditorGUIUtility.systemCopyBuffer = lab.LastRefreshId;
+                }
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    replayId = EditorGUILayout.TextField("重放 ID", replayId);
+                    if (GUILayout.Button("按 ID 重放", GUILayout.Width(90)))
+                    {
+                        Undo.RecordObject(lab, "Replay Random Chunk");
+                        if (!lab.ReplayRefresh(replayId, out string error))
+                            Debug.LogWarning($"[TerrainLab] 重放失败：{error}", lab);
+                        EditorUtility.SetDirty(lab);
+                        SceneView.RepaintAll();
+                    }
+                }
             }
 
             var map = lab.LastMap;

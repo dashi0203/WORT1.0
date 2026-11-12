@@ -9,12 +9,13 @@ namespace Wort.Tools
 {
     /// <summary>
     /// 随机 chunk 刷新原型：dotnet run -c Release -- --random [--seed 3] [--refresh 6] [--out DIR]
+    /// 重放某一次刷新：--rid 3:9F2A61C0（控制台和图片文件名里都有这个 ID）。
     /// 固定世界 = TerraceField（5×5，种子 seed），随机区域 = 中间 3×3 的右上角 chunk（cx 3, cz 3）。
     /// 输出 refresh_k.png（区域 + 外圈 16m）、world_k.png（整张俯视）、控制台打印每次的结构与校验。
     /// </summary>
     static class RandomMode
     {
-        public static int Run(uint seed, int refreshes, string outDir)
+        public static int Run(uint seed, int refreshes, string outDir, uint? replaySeed = null)
         {
             Directory.CreateDirectory(outDir);
             var chunks = new List<(int, int)> { (3, 3) };
@@ -26,16 +27,19 @@ namespace Wort.Tools
             for (int k = 0; k < refreshes; k++)
             {
                 var sw = Stopwatch.StartNew();
-                var r = RandomRegion.Refresh(baked, cls, chunks, cands, seed, 1, k, s);
+                uint rs = replaySeed ?? RandomRegion.RefreshSeed(seed, 1, k);
+                var r = RandomRegion.RefreshWithSeed(baked, cls, chunks, cands, rs, s);
                 long ms = sw.ElapsedMilliseconds;
                 if (!r.Ok) fails++;
-                Console.WriteLine($"刷新 {k + 1}：{(r.Ok ? "通过" : "失败")}，尝试 {r.Attempts} 次，{ms}ms，出入口 " + string.Join(" ", r.Entrances.ConvertAll(e => e.Open ? "开" : "封")) + $"，checksum 0x{r.Map.Checksum():X8}");
+                string id = RandomRegion.FormatId(seed, rs);
+                Console.WriteLine($"刷新 {k + 1}  ID {id}：{(r.Ok ? "通过" : "失败")}，尝试 {r.Attempts} 次，{ms}ms，出入口 " + string.Join(" ", r.Entrances.ConvertAll(e => e.Open ? "开" : "封")) + $"，checksum 0x{r.Map.Checksum():X8}");
+                foreach (var line in r.AttemptLog) Console.WriteLine("  " + line);
                 if (GenDebug.On) File.WriteAllBytes(Path.Combine(outDir, $"heights_{k + 1}.bin"), System.Linq.Enumerable.SelectMany(r.Map.Height, v => BitConverter.GetBytes(v)).ToArray()); // 每格高度（int32 小端），清理 / 重构时逐格比对用
                 foreach (var line in r.Report) Console.WriteLine("  " + line);
                 if (GenDebug.On && GenDebug.Log.Length > 0) { Console.Write(GenDebug.Log); GenDebug.Log.Clear(); }
-                Draw(r, baked, r.Classes ?? cls).Save(Path.Combine(outDir, $"refresh_{k + 1}.png"));
-                Relief(r, r.Classes ?? cls).Save(Path.Combine(outDir, $"relief_{k + 1}.png"));
-                Shear(r).Save(Path.Combine(outDir, $"shear_{k + 1}.png"));
+                Draw(r, baked, r.Classes ?? cls).Save(Path.Combine(outDir, $"refresh_{k + 1}_{rs:X8}.png"));
+                Relief(r, r.Classes ?? cls).Save(Path.Combine(outDir, $"relief_{k + 1}_{rs:X8}.png"));
+                Shear(r).Save(Path.Combine(outDir, $"shear_{k + 1}_{rs:X8}.png"));
             }
             return fails == 0 ? 0 : 2;
         }

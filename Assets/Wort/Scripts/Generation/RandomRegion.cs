@@ -75,13 +75,17 @@ namespace Wort.Generation
         public List<(int x, int z)> Rewards = new List<(int x, int z)>();
         public (int x, int z)? OneWay;
         public int Attempts;
+        /// <summary>这次刷新的刷新种子（和世界种子组成刷新 ID）；AttemptSeed 是最终采用的那次重试的种子。</summary>
+        public uint RefreshSeed, AttemptSeed;
+        /// <summary>之前失败的重试及原因。</summary>
+        public List<string> AttemptLog = new List<string>();
         public bool Ok;
         public List<string> Report = new List<string>();
     }
 
     /// <summary>
     /// 随机区域的关卡生成器（《随机区域与关卡生成》）：在烘焙好的固定世界里，把指定的随机 chunk 重新生成一遍。
-    /// 只改随机区域里的地表；固定格子一格不动。纯 C#、确定性（种子 = 世界种子 + 区域编号 + 刷新次数）。
+    /// 只改随机区域里的地表；固定格子一格不动。纯 C#、确定性（刷新种子 = 世界种子 + 区域编号 + 刷新次数；刷新 ID = 世界种子:刷新种子，可复制重放）。
     /// </summary>
     public static class RandomRegion
     {
@@ -183,15 +187,49 @@ namespace Wort.Generation
             return res;
         }
 
+        /// <summary>某次刷新的刷新种子：世界种子 + 区域编号 + 第几次刷新。和世界种子一起组成可复制的刷新 ID（见 <see cref="FormatId"/>）。</summary>
+        public static uint RefreshSeed(uint worldSeed, int regionId, int refreshIndex)
+            => Hash.Of(Hash.Of(worldSeed, (uint)regionId * 7919u + 17u), (uint)refreshIndex * 104729u + 1u);
+
+        /// <summary>刷新 ID：“世界种子:刷新种子（8 位十六进制）”，如 <c>3:9F2A61C0</c>。</summary>
+        public static string FormatId(uint worldSeed, uint refreshSeed) => $"{worldSeed}:{refreshSeed:X8}";
+
+        /// <summary>解析刷新 ID（容许空格、0x 前缀、小写）。</summary>
+        public static bool TryParseId(string id, out uint worldSeed, out uint refreshSeed)
+        {
+            worldSeed = 0; refreshSeed = 0;
+            if (string.IsNullOrWhiteSpace(id)) return false;
+            var parts = id.Trim().Split(':');
+            if (parts.Length != 2) return false;
+            string hex = parts[1].Trim();
+            if (hex.StartsWith("0x") || hex.StartsWith("0X")) hex = hex.Substring(2);
+            return uint.TryParse(parts[0].Trim(), out worldSeed)
+                && uint.TryParse(hex, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out refreshSeed);
+        }
+
         public static RandomRegionResult Refresh(RegionMap baked, byte[] cls, IList<(int cx, int cz)> chunks,
             IList<RegionEntrance> candidates, uint worldSeed, int regionId, int refreshIndex, RandomRegionSettings s)
+            => RefreshWithSeed(baked, cls, chunks, candidates, RefreshSeed(worldSeed, regionId, refreshIndex), s);
+
+        /// <summary>按刷新种子生成（重放某个刷新 ID 用）。每次重试的种子都从刷新种子派生，失败原因记在 <c>AttemptLog</c>。</summary>
+        public static RandomRegionResult RefreshWithSeed(RegionMap baked, byte[] cls, IList<(int cx, int cz)> chunks,
+            IList<RegionEntrance> candidates, uint refreshSeed, RandomRegionSettings s)
         {
             RandomRegionResult last = null;
+            var log = new List<string>();
             for (int attempt = 0; attempt < s.MaxAttempts; attempt++)
             {
-                uint seed = Hash.Of(Hash.Of(worldSeed, (uint)regionId * 7919u + 17u), (uint)refreshIndex * 104729u + (uint)attempt);
+                uint seed = Hash.Of(refreshSeed, (uint)attempt);
                 var r = TryOnce(baked, cls, chunks, candidates, seed, s);
                 r.Attempts = attempt + 1;
+                r.RefreshSeed = refreshSeed;
+                r.AttemptSeed = seed;
+                if (!r.Ok)
+                {
+                    string why = r.Report.Find(l => l.StartsWith("[失败]")) ?? (r.Report.Count > 0 ? r.Report[r.Report.Count - 1] : "未知原因");
+                    log.Add($"第 {attempt + 1} 次（种子 {seed:X8}）失败：{why}");
+                }
+                r.AttemptLog = log;
                 last = r;
                 if (r.Ok) return r;
             }
