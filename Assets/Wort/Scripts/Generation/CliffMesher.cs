@@ -354,9 +354,13 @@ namespace Wort.Generation
         static void Column(RegionMap map, Builder bd, Fbm fRim, int x, int z, float[] road)
         {
             int h = H(map, x, z);
+            // 8 个邻格靠本格那条边 / 那个角的高度，先算好（顶点循环里会反复用）
+            var low9 = new int[9];
+            for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) low9[(dz + 1) * 3 + dx + 1] = (dx == 0 && dz == 0) ? h : Low(map, x, z, dx, dz);
+            int L(int dx, int dz) => low9[(dz + 1) * 3 + dx + 1];
             float cxw = x + 0.5f, czw = z + 0.5f;
             var exposed = new bool[4];
-            for (int s = 0; s < 4; s++) exposed[s] = Low(map, x, z, Grid.DX4[s], Grid.DZ4[s]) < h;
+            for (int s = 0; s < 4; s++) exposed[s] = L(Grid.DX4[s], Grid.DZ4[s]) < h;
 
             // ---- 挨着斜坡侧面的崖边：露出的高度沿边变化（坡顶处为 0），倒角宽度和岩石边随之收窄，坡面平滑并进台面 ----
             var sideSlope = new bool[4];
@@ -398,8 +402,9 @@ namespace Wort.Generation
             }
             bool rim = false;
             for (int s = 0; s < 4; s++) if (exposed[s]) rim = true;
-            for (int dz = -1; dz <= 1; dz += 2) for (int dx = -1; dx <= 1; dx += 2) if (Low(map, x, z, dx, dz) < h) rim = true;
-            if (rim || RoadSurface.Near(road, map.W, map.H, x, z)) // 平地格（不靠崖边、不靠路）在 MergeFlat 里按矩形合并
+            for (int dz = -1; dz <= 1; dz += 2) for (int dx = -1; dx <= 1; dx += 2) if (L(dx, dz) < h) rim = true;
+            bool nearRoad = RoadSurface.Near(road, map.W, map.H, x, z);
+            if (rim || nearRoad) // 平地格（不靠崖边、不靠路）在 MergeFlat 里按矩形合并
             {
                 const int K = 4;
                 var bl = new float[(K + 1) * (K + 1)];
@@ -408,19 +413,22 @@ namespace Wort.Generation
                     for (int i = 0; i <= K; i++)
                     {
                         TopV(i, j, K, out float px, out float pz);
-                        // 路面离边距离：四邻 / 对角任何高差（更低的崖边、更高的崖脚）都算边
+                        // 路面离边距离：四邻 / 对角任何高差（更低的崖边、更高的崖脚）都算边。不挨着路的格没有路面，跳过（省掉大量计算）
                         float dr = 9;
+                        if (nearRoad)
+                        {
                         for (int s = 0; s < 4; s++)
-                            if (Low(map, x, z, Grid.DX4[s], Grid.DZ4[s]) != h) dr = Math.Min(dr, 0.5f - ((px - cxw) * Grid.DX4[s] + (pz - czw) * Grid.DZ4[s]));
+                            if (L(Grid.DX4[s], Grid.DZ4[s]) != h) dr = Math.Min(dr, 0.5f - ((px - cxw) * Grid.DX4[s] + (pz - czw) * Grid.DZ4[s]));
                         for (int dz = -1; dz <= 1; dz += 2)
                             for (int dx = -1; dx <= 1; dx += 2)
-                                if (Low(map, x, z, dx, dz) != h)
+                                if (L(dx, dz) != h)
                                 {
                                     float kx = cxw + dx * 0.5f - px, kz = czw + dz * 0.5f - pz;
                                     dr = Math.Min(dr, (float)Math.Sqrt(kx * kx + kz * kz));
                                 }
                         float drn = dr + (float)fRim.Sample(px * 1.7 + 5.1, pz * 1.7) * 0.12f;
                         rf[j * (K + 1) + i] = RoadEdge(drn);
+                        }
                         float d = 9;
                         for (int s = 0; s < 4; s++)
                             if (exposed[s])
@@ -431,7 +439,7 @@ namespace Wort.Generation
                             }
                         for (int dz = -1; dz <= 1; dz += 2)
                             for (int dx = -1; dx <= 1; dx += 2)
-                                if (Low(map, x, z, dx, dz) < h)
+                                if (L(dx, dz) < h)
                                 {
                                     float kx = cxw + dx * 0.5f - px, kz = czw + dz * 0.5f - pz;
                                     d = Math.Min(d, (float)Math.Sqrt(kx * kx + kz * kz));
@@ -835,7 +843,13 @@ namespace Wort.Generation
                 M.Positions.Add(x - Ox); M.Positions.Add(y); M.Positions.Add(z - Oz);
                 M.Normals.Add(nx); M.Normals.Add(ny); M.Normals.Add(nz);
                 M.Blend.Add(blend);
-                M.Road.Add(ny > 0.6f && RoadMask != null ? Math.Min(1f, RoadSurface.Weight(RoadMask, MW, MH, x, z) * roadK * RoadSurface.Funnel(Mouths, x, z)) : 0f);
+                float rw = 0f;
+                if (ny > 0.6f && RoadMask != null && roadK > 0f)
+                {
+                    rw = RoadSurface.Weight(RoadMask, MW, MH, x, z) * roadK;
+                    if (rw > 0f) rw = Math.Min(1f, rw * RoadSurface.Funnel(Mouths, x, z)); // 漏斗要查所有坡道口，只在真有路面时算
+                }
+                M.Road.Add(rw);
             }
         }
     }

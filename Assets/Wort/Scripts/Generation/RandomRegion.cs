@@ -271,6 +271,13 @@ namespace Wort.Generation
         static RandomRegionResult TryOnce(RegionMap baked, byte[] cls, IList<(int cx, int cz)> chunks,
             IList<RegionEntrance> candidates, uint seed, RandomRegionSettings s)
         {
+            // 调试（--debug）：每一步的耗时
+            var swT = System.Diagnostics.Stopwatch.StartNew(); string lastT = "准备";
+            void T(string next)
+            {
+                if (GenDebug.On) GenDebug.Log.AppendLine($"    [耗时] {lastT}：{swT.Elapsed.TotalMilliseconds:0.0} ms");
+                lastT = next; swT.Restart();
+            }
             var R = new RandomRegionResult();
             var m = Clone(baked);
             R.Map = m;
@@ -290,6 +297,7 @@ namespace Wort.Generation
             foreach (int i in win) if (region[i]) cls[i] = TerraceField.Ground;
             R.Classes = cls;
 
+            T("1");
             // ---------- 1. 抽开放的出入口 ----------
             int nc = candidates.Count;
             int open = nc == 0 ? 0 : Math.Min(3, Math.Min(nc, rng.Next() < 0.45 ? 1 : (rng.Next() < 0.8 ? 2 : 3)));
@@ -303,6 +311,7 @@ namespace Wort.Generation
                 R.Entrances.Add(e);
             }
 
+            T("2");
             // ---------- 2. 接缝带：离区域边 ≤ SeamWidth 的格；房间区 = 其余 ----------
             var distOut = Grid.DistanceInside(region, W, H); // 到区域外最近格的距离
             var seam = new bool[N];
@@ -362,6 +371,7 @@ namespace Wort.Generation
             foreach (int i in win) if (region[i] && !inner[i] && !mass[i]) seam[i] = true;
             R.Seam = seam;
 
+            T("3");
             // ---------- 3. 切房间（按房间区的总面积） ----------
             int area = 0, bx0 = W, bz0 = H, bx1 = 0, bz1 = 0;
             foreach (int i in win)
@@ -514,6 +524,7 @@ namespace Wort.Generation
 
             }
 
+            T("4");
             // ---------- 4. 窄墙：像自然地形——宽 1–4m 起伏变化，沿扭曲后的矩形边；偶尔长出岩块；外圈一道墙把房间和接缝带隔开 ----------
             var wall = new bool[N];
             var fWall = new Fbm(Hash.Of(seed, 31), 9, 2);
@@ -593,6 +604,7 @@ namespace Wort.Generation
             int nr = R.Rooms.Count;
             if (nr < 1) { R.Report.Add("切不出房间"); return R; }
 
+            T("5");
             // ---------- 5. 相邻关系：墙两侧各是哪个房间、能开口的长度 ----------
             // 分隔格：墙格，半径 2 内同时有两个不同房间的格
             var sepCells = new Dictionary<long, List<int>>();
@@ -632,6 +644,7 @@ namespace Wort.Generation
                 adjKeys.Add(kv.Key);
             }
 
+            T("6");
             // ---------- 6. 出入口接哪个房间：从出入口往里直走，碰到的第一个房间 ----------
             var entRoom = new int[R.Entrances.Count];
             var entPath = new List<int>[R.Entrances.Count];
@@ -668,6 +681,7 @@ namespace Wort.Generation
             for (int k = 0; k < R.Entrances.Count; k++) if (R.Entrances[k].Open && entRoom[k] >= 0) openIdx.Add(k);
             if (openIdx.Count == 0) { R.Report.Add("开放的出入口接不到房间"); return R; }
 
+            T("7");
             // ---------- 7. 连接图：从第一个开放出入口的房间做随机深度优先（链为主、偶有岔路），可加一条成环 ----------
             List<(int a, int b)> bestEdges = null;
             int bestScore = int.MinValue;
@@ -726,6 +740,7 @@ namespace Wort.Generation
             if (allCands.Count > 1 && rng.Next() < s.ShortPathChance) bestEdges = allCands[rng.Range(0, allCands.Count)].edges;
             R.Edges = bestEdges;
 
+            T("8");
             // ---------- 8. 地面高度场：以出入口为准（负责人 2026-11-11）——各出入口外侧固定地面高度按距离插值，再叠平缓起伏；
             //            量化成整数层，相邻格最多差 1 层，等高线是弯的 ----------
             var fFloor = new Fbm(Hash.Of(seed, 43), 24, 2);
@@ -785,6 +800,7 @@ namespace Wort.Generation
             var depth = GraphDist(nr, R.Edges, entRoom[openIdx[0]]);
             for (int k = 0; k < nr; k++) { R.Rooms[k].Floor = floor[k]; R.Rooms[k].Depth = depth[k]; }
 
+            T("9");
             // ---------- 9. 写高度：房间地面（平地）；墙 = 两侧较高地面 + 2–3 层 ----------
             int[] h = m.Height;
             var fRise = new Fbm(Hash.Of(seed, 42), 15, 2);
@@ -900,6 +916,7 @@ namespace Wort.Generation
                 if (hs != int.MinValue && h[i] < hs + 2) h[i] = hs + 2;
             }
 
+            T("10");
             // ---------- 10. 通路：在连接边对应的墙上开口，宽度随机（≥ 3m，可以很宽） ----------
             var oneWayCands = new List<(int a, int b)>();
             var openings = new Dictionary<long, List<int>>(); // 每条连接边开口的格（调试 / 最后核对用）
@@ -944,6 +961,7 @@ namespace Wort.Generation
                 }
             }
 
+            T("11");
             // ---------- 11. 出入口通道：开放的从固定侧往里铺 3–4m 宽，每格最多 1 层；关闭的不开 ----------
             var corridor = new bool[N];
             for (int k = 0; k < R.Entrances.Count; k++)
@@ -978,6 +996,7 @@ namespace Wort.Generation
             }
             R.Corridor = corridor;
 
+            T("11b");
             // ---------- 11b. 落差大的地方的过渡：山脚碎石（零散或成片，+1 层，顶部比崖顶至少低 2 层）；台阶边上贴着的石柱 ----------
             {
                 var fScree = new Fbm(Hash.Of(seed, 61), 5, 2);
@@ -1060,6 +1079,7 @@ namespace Wort.Generation
                 }
             }
 
+            T("12");
             // ---------- 12. 房间内部：浅水（1 层）、石块（1–2 层）、草丛 ----------
             var grass = new bool[N];
             var rock = new bool[N];
@@ -1118,6 +1138,7 @@ namespace Wort.Generation
                     m.Biome[i] = (byte)BiomeId.Conifer; m.Weights[(int)BiomeId.Conifer][i] = 1;
                 }
 
+            T("12b");
             // ---------- 12b. 跳跃安全（GDD 第 5 节）：墙 / 山体 / 贴高地的台阶，顶面比周围 JumpReach+1 格内所有能站的地方高 ≥ JumpUp+1 ----------
             var noStand = new bool[N];
             var ringSeamM = new bool[N];
@@ -1261,6 +1282,7 @@ namespace Wort.Generation
                 }
             }
 
+            T("12c");
             // ---------- 12c. 开口核对：连接图的每条边，不靠跳跃从一个房间中心走到另一个；走不通就挖开 ----------
             //            （斜墙 / 厚墙上，开口只清掉了分隔线那一条，两侧剩下的墙格会把开口堵死）
             {
@@ -1280,12 +1302,14 @@ namespace Wort.Generation
                 }
             }
 
+            T("13");
             // ---------- 13. 校验 ----------
             var ok = Validate(m, cls, R, region, inner, corridor, out var lines);
             R.Report.AddRange(lines);
             R.Ok = ok;
             if (!ok) return R;
 
+            T("14");
             // ---------- 14. 危险区与奖励（按面积；越深越危险，奖励放深处 / 死路 / 岛） ----------
             PlaceContent(R, s, ref rng, area, roomOf, distWall, distOpen, W);
             int deg3 = 0, deg4 = 0;
@@ -1296,6 +1320,7 @@ namespace Wort.Generation
             int pathLen = -1;
             if (openIdx.Count >= 2) pathLen = depth[entRoom[openIdx[1]]];
 
+            T("15");
             // ---------- 15. 小径（连通测试）：开放出入口 → 所在房间，再沿连接图把相邻房间的中心连起来；不靠跳跃 ----------
             {
                 var walk = new bool[N];
@@ -1390,6 +1415,7 @@ namespace Wort.Generation
                 R.Report.Add($"小径（连通测试，不算跳跃）：铺通 {ok2}/{tried} 段，按路能走到的房间 {nReached}/{nr}"
                     + (fails.Count > 0 ? "；铺不通：" + string.Join("，", fails) + (R.OneWay.HasValue ? "（本次有单向落差，经过它的那段本来就走不回来）" : "") : ""));
             }
+            T("结束");
             R.Report.Insert(0, $"房间 {nr}（目标 {target}，可切面积 {area} m²），连接 {R.Edges.Count}，3 通 {deg3}，4 通 {deg4}，死路房 {dead}，"
                 + (R.Edges.Count >= nr ? "有环" : "无环") + $"，开放出入口 {openIdx.Count}/{R.Entrances.Count}"
                 + (pathLen >= 0 ? $"，出入口之间隔 {pathLen} 个房间" : "") + (R.OneWay.HasValue ? "，有单向落差" : "")
