@@ -12,6 +12,10 @@ namespace Wort.Generation
         public readonly List<float> Blend = new List<float>();
         /// <summary>每个顶点的路面权重（0 = 无，1 = 路面，见 RoadSurface）。只有 CliffMesher 写；为空表示没有路面。</summary>
         public readonly List<float> Road = new List<float>();
+        /// <summary>每个顶点的暗部系数（1 = 不压暗，石缝 / 层缝更小）。只有带外观（LookField）的 CliffMesher 写；为空表示不用。</summary>
+        public readonly List<float> Ao = new List<float>();
+        /// <summary>每个顶点的点缀色权重（1 = 顶沿路沿石的颜色）。和 Ao 一起写。</summary>
+        public readonly List<float> Accent = new List<float>();
         public readonly List<int>[] Indices;
 
         public MeshData()

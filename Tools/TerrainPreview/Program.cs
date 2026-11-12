@@ -43,6 +43,7 @@ namespace Wort.Tools
             }
             if (random) return RandomMode.Run(seed, refresh, outDir);
             if (terrace) return TerraceMode.Run(seed, outDir, chunks, cliff);
+            if (args.Contains("--looks")) return LooksMode.Run(seed, outDir);
             if (layout != null) return LayoutMode.Run(layout, outDir);
             Directory.CreateDirectory(outDir);
 
@@ -333,11 +334,14 @@ namespace Wort.Tools
                         if (mesh.Blend.Count == mesh.VertexCount && mat != (int)VoxelMaterial.Water)
                         {
                             bool hasRoad = mesh.Road.Count == mesh.VertexCount;
+                            bool hasAo = mesh.Ao.Count == mesh.VertexCount;
                             RasterTex(img, depth, u0, v0, ppm, h, k, nx, ny, nz,
                                 p[a * 3] + ox, p[a * 3 + 1], p[a * 3 + 2] + oz, mesh.Blend[a],
                                 p[b * 3] + ox, p[b * 3 + 1], p[b * 3 + 2] + oz, mesh.Blend[b],
                                 p[c * 3] + ox, p[c * 3 + 1], p[c * 3 + 2] + oz, mesh.Blend[c],
-                                hasRoad ? mesh.Road[a] : 0, hasRoad ? mesh.Road[b] : 0, hasRoad ? mesh.Road[c] : 0);
+                                hasRoad ? mesh.Road[a] : 0, hasRoad ? mesh.Road[b] : 0, hasRoad ? mesh.Road[c] : 0,
+                                hasAo ? mesh.Ao[a] : 1, hasAo ? mesh.Ao[b] : 1, hasAo ? mesh.Ao[c] : 1,
+                                hasAo ? mesh.Accent[a] : 0, hasAo ? mesh.Accent[b] : 0, hasAo ? mesh.Accent[c] : 0);
                             continue;
                         }
                         uint col = Image.Scale(baseColor, k);
@@ -415,11 +419,28 @@ namespace Wort.Tools
         }
 
         static uint[] texDirt, texRock, texRoad; static float[] hDirt, hRock, hRoad;
+        /// <summary>按 Biome 配色（LooksMode 设置）；null = 原来的泥土 / 岩石贴图。</summary>
+        public static LookField Look;
+        static readonly float[] lookW = new float[BiomeTable.Count];
+        /// <summary>顶面大斑块（世界坐标，约 0.9m 和 0.35m 两层值噪声），打破 1m 贴图的重复，接近参考图的斑驳。</summary>
+        static float Blotch(double x, double z)
+        {
+            float N(double u, double v, uint sd)
+            {
+                int iu = (int)Math.Floor(u), iv = (int)Math.Floor(v);
+                float tu = (float)(u - iu), tv = (float)(v - iv); tu = tu * tu * (3 - 2 * tu); tv = tv * tv * (3 - 2 * tv);
+                float V(int a, int b) => (Hash.Of(a, b, sd) & 0xFFFF) / 65535f;
+                return (V(iu, iv) * (1 - tu) + V(iu + 1, iv) * tu) * (1 - tv) + (V(iu, iv + 1) * (1 - tu) + V(iu + 1, iv + 1) * tu) * tv;
+            }
+            return 0.65f * N(x / 0.9 + 0.37 * N(x / 0.5, z / 0.5, 77), z / 0.9, 71) + 0.35f * N(x / 0.35, z / 0.35, 73);
+        }
+        static float Stretch(float v, float lo, float hi) { float t = (v - lo) / (hi - lo); return t < 0 ? 0 : (t > 1 ? 1 : t); }
+        static double Lerp(uint a, uint b, float t, int sh) => ((a >> sh) & 0xFF) * (1 - t) + ((b >> sh) & 0xFF) * t;
 
         /// <summary>带贴图的三角形：按法线选投影（顶面用 xz，侧面用沿墙坐标和 y），两张 128×128 贴图按融合权重和高度混合。</summary>
         static void RasterTex(Image img, float[] depth, double u0, double v0, double ppm, int h, double k, double nx, double ny, double nz,
             double ax, double ay, double az, float ba, double bx, double by, double bz, float bb, double cx, double cy, double cz, float bc,
-            float ra = 0, float rb = 0, float rc = 0)
+            float ra = 0, float rb = 0, float rc = 0, float oa = 1, float ob = 1, float oc = 1, float ea = 0, float eb = 0, float ec = 0)
         {
             if (texDirt == null) { texDirt = TerrainTextures.Dirt(out hDirt); texRock = TerrainTextures.Rock(out hRock); texRoad = TerrainTextures.Road(out hRoad); }
             double pax = (ax - ay * ShearX - u0) * ppm, pay = h - (az + ay * Shear - v0) * ppm;
@@ -460,6 +481,30 @@ namespace Wort.Tools
                     float rw = (float)(w0 * ra + w1 * rb + w2 * rc);
                     float q = rw > 0 ? TerrainTextures.MixRoad(rw, (hDirt[t1] + hDirt[t2]) * 0.5f, (hRoad[t1] + hRoad[t2]) * 0.5f) : 0;
                     double G(int sh) => Avg(texDirt, sh) * (1 - q) + Avg(texRoad, sh) * q;
+                    if (Look != null)
+                    {
+                        // 按 Biome 配色：贴图的明暗（高度通道）在每种 Biome 的暗色 → 亮色之间取色，颜色按 Biome 权重渐变
+                        Look.BiomeWeights(wx, wz, lookW);
+                        float dv = Stretch((hDirt[t1] + hDirt[t2]) * 0.35f + Blotch(wx, wz) * 0.65f, 0.22f, 0.72f), rv = Stretch((hRock[t1] + hRock[t2]) * 0.5f, 0.15f, 0.7f);
+                        double dr0 = 0, dg0 = 0, db0 = 0, rr0 = 0, rg0 = 0, rb0 = 0, er = 0, eg = 0, eb2 = 0;
+                        for (int bi = 0; bi < lookW.Length; bi++)
+                        {
+                            float wgt = lookW[bi]; if (wgt <= 0) continue;
+                            var lk = TerrainLooks.All[bi];
+                            dr0 += wgt * Lerp(lk.DirtA, lk.DirtB, dv, 16); dg0 += wgt * Lerp(lk.DirtA, lk.DirtB, dv, 8); db0 += wgt * Lerp(lk.DirtA, lk.DirtB, dv, 0);
+                            rr0 += wgt * Lerp(lk.RockA, lk.RockB, rv, 16); rg0 += wgt * Lerp(lk.RockA, lk.RockB, rv, 8); rb0 += wgt * Lerp(lk.RockA, lk.RockB, rv, 0);
+                            uint ra2 = lk.RimA != 0 ? lk.RimA : lk.RockA, rb2 = lk.RimB != 0 ? lk.RimB : lk.RockB;
+                            er += wgt * Lerp(ra2, rb2, rv, 16); eg += wgt * Lerp(ra2, rb2, rv, 8); eb2 += wgt * Lerp(ra2, rb2, rv, 0);
+                        }
+                        float acc = (float)(w0 * ea + w1 * eb + w2 * ec), aoV = (float)(w0 * oa + w1 * ob + w2 * oc);
+                        rr0 += (er - rr0) * acc; rg0 += (eg - rg0) * acc; rb0 += (eb2 - rb0) * acc;
+                        double R2 = (dr0 * (1 - q) + Avg(texRoad, 16) * q) * (1 - m) + rr0 * m;
+                        double G2 = (dg0 * (1 - q) + Avg(texRoad, 8) * q) * (1 - m) + rg0 * m;
+                        double B2 = (db0 * (1 - q) + Avg(texRoad, 0) * q) * (1 - m) + rb0 * m;
+                        uint C8(double v) => (uint)Math.Clamp(v * aoV, 0, 255);
+                        img.Set(x, y, Image.Scale(C8(R2) << 16 | C8(G2) << 8 | C8(B2), k));
+                        continue;
+                    }
                     uint r = (uint)(G(16) * (1 - m) + Avg(texRock, 16) * m), g = (uint)(G(8) * (1 - m) + Avg(texRock, 8) * m), b = (uint)(G(0) * (1 - m) + Avg(texRock, 0) * m);
                     img.Set(x, y, Image.Scale(r << 16 | g << 8 | b, k));
                 }
