@@ -128,13 +128,14 @@ namespace Wort.Generation
         /// <summary>
         /// 把路径标成道路。width = 2 时，每格再加上行进方向右手边的一格（同样高、不是斜坡侧边、不是水、在 allowed 里）。
         /// </summary>
-        public static void Paint(RegionMap m, List<int> path, int width, bool[] allowed)
+        public static void Paint(RegionMap m, List<int> path, int width, bool[] allowed, byte kind = RegionMap.RoadPath)
         {
             int W = m.W;
+            m.EnsureRoadKind();
             for (int k = 0; k < path.Count; k++)
             {
                 int i = path[k];
-                if (!m.HasWater(i)) m.Flags[i] |= CellFlags.Road; // 涉水的格不画路面
+                if (!m.HasWater(i)) { m.Flags[i] |= CellFlags.Road; if (m.RoadKind[i] < kind) m.RoadKind[i] = kind; } // 涉水的格不画路面
                 if (width < 2) continue;
                 int j = path[Math.Min(k + 1, path.Count - 1)], p = path[Math.Max(k - 1, 0)];
                 int dx = j % W - p % W, dz = j / W - p / W;
@@ -146,6 +147,7 @@ namespace Wort.Generation
                 int n = z * W + x;
                 if ((allowed != null && !allowed[n]) || m.HasWater(n) || m.Height[n] != m.Height[i] || m.Slope[n] != m.Slope[i]) continue;
                 m.Flags[n] |= CellFlags.Road;
+                if (m.RoadKind[n] < kind) m.RoadKind[n] = kind;
             }
         }
     }

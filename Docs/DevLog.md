@@ -53,6 +53,12 @@ GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
       坡顶一端不再收窄倒角——那里是凹角（旁边台面的崖边转过来），两条倒角斜接成一块小斜面，岩石边连成 L 形；
       挖进崖里的坡道，旁边高格朝坡道的崖边：露出高度沿边变化（坡顶处为 0），倒角宽度和岩石边随之收窄（`Column` 里 `sideSlope` / `Ins`）。
   - checksum：固定世界（种子 3）`0xDA849612`；随机刷新 1 `0xDF3AB170`（含测试道路）。
+- 道路笔刷（负责人同意，含新数据文件 `Assets/Wort/Data/RoadOverlay_*.asset`）：
+  - 生成核心：`RegionMap.RoadKind`（0 / 1 小径 / 2 道路，不进 checksum）；`RoadOverlay`（`Apply` 叠加 / 擦除、`Footprint` 笔刷覆盖格、`Pick` 沿射线找地面）。
+    寻路铺的路：随机区域小径 = 1，固定世界测试路 = 2。
+  - Unity：`RoadOverlayAsset`（ScriptableObject，同一格只留最后一次修改）；`TerrainLab` 生成 / 刷新后叠加覆盖层，`PaintRoad` / `RebuildRoadChunks`（只重建受影响的 chunk）；
+    `TerrainLabEditor`：Inspector“道路笔刷”（擦除 / 小径 / 道路，宽 2 / 3 格，清空），Scene 视图左键拖动刷、画笔刷圈，支持撤销。
+  - 测试：`RoadOverlayTests`（覆盖格数、叠加 / 擦除、射线找地面）；纯 C# 部分云端已跑通。**Unity 侧云端未编译**，等本地试刷反馈。
 - 已知问题（代码核对）：池塘水面按每格地面高度写，同一个水塘可能差 1 层；房间地面是整片连续高度场，不认房间边界。排在随机 chunk 那一步改。
 
 ## 2026-11-11 晚 收工：明天从这里开始

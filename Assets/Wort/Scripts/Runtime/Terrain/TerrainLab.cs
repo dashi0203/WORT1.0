@@ -43,7 +43,11 @@ namespace Wort.Terrain
         [SerializeField, Tooltip("地形外观方案 B（CliffMesher）：立方体 + 外倒角 / 内倒角、泥土顶面、边缘一圈石头。只改画面，碰撞仍用原来的 1m 体素网格。")]
         private bool cliffDressing = true;
 
+        [SerializeField, Tooltip("手刷道路的覆盖层（Inspector 里的“道路笔刷”会自动创建）。种子 / 生成器和当前不一致时不叠加。")]
+        private RoadOverlayAsset roadOverlay;
+
         private Material[] materials;
+        private RegionVoxels lastVoxels;
         private Material blendMaterial;   // Wort/TerrainBlend（方案 B 的泥土 / 岩石融合）
         private Texture2D dirtTexture, rockTexture, roadTexture;
 
@@ -91,8 +95,10 @@ namespace Wort.Terrain
                 map = generator == GeneratorKind.Terrace5x5
                     ? TerraceField.Generate(new TerraceFieldSettings { Seed = useed }, out _)
                     : RegionGenerator.Generate(new RegionSettings { Seed = useed });
+            ApplyRoadOverlay(map);
             var settings = map.Settings;
             var voxels = new RegionVoxels(map);
+            lastVoxels = voxels;
             EnsureMaterials();
 
             var root = new GameObject(RootName) { hideFlags = HideFlags.DontSave };
@@ -220,8 +226,10 @@ namespace Wort.Terrain
             uint useed = unchecked((uint)seed);
             var swAll = Stopwatch.StartNew();
             var map = RefreshRandom(useed, out _);
+            ApplyRoadOverlay(map);
             long tRegion = swAll.ElapsedMilliseconds;
             var voxels = new RegionVoxels(map);
+            lastVoxels = voxels;
             long tVoxels = swAll.ElapsedMilliseconds - tRegion;
             EnsureMaterials();
             var (rcx, rcz) = RandomChunks[0];
@@ -245,6 +253,112 @@ namespace Wort.Terrain
             LastMap = map;
             LastMilliseconds = swAll.ElapsedMilliseconds;
             Debug.Log($"[TerrainLab] {LastRefreshReport}；体素 {tVoxels} ms；外观网格 + 碰撞 {tMesh} ms（重建 {rebuilt} 个 chunk）；合计 {swAll.ElapsedMilliseconds} ms", this);
+        }
+
+        // ---- 道路覆盖层与道路笔刷 ----
+        public RoadOverlayAsset RoadOverlay { get => roadOverlay; set => roadOverlay = value; }
+        public GeneratorKind Generator => generator;
+
+        /// <summary>覆盖层是否适用于当前种子和生成器。</summary>
+        public bool RoadOverlayMatches => roadOverlay != null && roadOverlay.seed == seed && roadOverlay.generator == generator.ToString();
+
+        private void ApplyRoadOverlay(RegionMap map)
+        {
+            if (roadOverlay == null || roadOverlay.Count == 0)
+                return;
+            if (!RoadOverlayMatches)
+            {
+                Debug.LogWarning($"[TerrainLab] 道路覆盖层 {roadOverlay.name} 对应种子 {roadOverlay.seed} / {roadOverlay.generator}，和当前不一致，没有叠加。", this);
+                return;
+            }
+            int n = roadOverlay.ApplyTo(map).Count;
+            Debug.Log($"[TerrainLab] 叠加道路覆盖层 {roadOverlay.name}：{roadOverlay.Count} 条记录，改动 {n} 格（checksum 因此和不叠加时不同）", this);
+        }
+
+        /// <summary>世界空间射线找地面上的点（区域坐标 x / z）。用地图高度逐步检测，不依赖碰撞体。</summary>
+        public bool PickGround(Ray worldRay, out Vector2 cell)
+        {
+            cell = default;
+            if (LastMap == null)
+                return false;
+            var o = transform.InverseTransformPoint(worldRay.origin);
+            var d = transform.InverseTransformDirection(worldRay.direction);
+            if (!Wort.Generation.RoadOverlay.Pick(LastMap, o.x, o.y, o.z, d.x, d.y, d.z, 2000f, out float hx, out float hz))
+                return false;
+            cell = new Vector2(hx, hz);
+            return true;
+        }
+
+        /// <summary>区域坐标 → 世界坐标（地面顶上），给 Scene 视图画笔刷圈用。</summary>
+        public Vector3 GroundToWorld(Vector2 p)
+        {
+            float y = 0f;
+            if (LastMap != null)
+            {
+                int cx = Mathf.Clamp(Mathf.FloorToInt(p.x), 0, LastMap.W - 1), cz = Mathf.Clamp(Mathf.FloorToInt(p.y), 0, LastMap.H - 1);
+                y = LastMap.Height[LastMap.Index(cx, cz)] + (LastMap.Slope[LastMap.Index(cx, cz)] >= 0 ? 0.5f : 0f);
+            }
+            return transform.TransformPoint(new Vector3(p.x, y + 0.02f, p.y));
+        }
+
+        /// <summary>
+        /// 道路笔刷：在 p（区域坐标）处按宽度刷一笔，写进覆盖层并立即改地图；返回改动的格（未重建网格，见 RebuildRoadChunks）。
+        /// kind：0 擦除，1 小径，2 道路。
+        /// </summary>
+        public List<int> PaintRoad(Vector2 p, int width, byte kind)
+        {
+            var changed = new List<int>();
+            if (LastMap == null || roadOverlay == null)
+                return changed;
+            var xs = new List<int>(); var zs = new List<int>(); var ks = new List<byte>();
+            foreach (var (x, z) in Wort.Generation.RoadOverlay.Footprint(p.x, p.y, width))
+            {
+                if (!LastMap.InBounds(x, z))
+                    continue;
+                roadOverlay.Set(x, z, kind);
+                xs.Add(x); zs.Add(z); ks.Add(kind);
+            }
+            changed.AddRange(Wort.Generation.RoadOverlay.Apply(LastMap, xs, zs, ks));
+            return changed;
+        }
+
+        /// <summary>重建这些格（及其周围 1 格）所在的 chunk：路面权重取周围格，跨 chunk 边时两边都要重建。</summary>
+        public int RebuildRoadChunks(ICollection<int> cells)
+        {
+            var root = transform.Find(RootName);
+            if (root == null || LastMap == null || cells.Count == 0)
+                return 0;
+            var map = LastMap;
+            int size = map.Settings.ChunkSize;
+            var dirty = new HashSet<(int, int)>();
+            foreach (int i in cells)
+            {
+                int x = i % map.W, z = i / map.W;
+                for (int dz = -1; dz <= 1; dz++)
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        int ax = x + dx, az = z + dz;
+                        if (map.InBounds(ax, az))
+                            dirty.Add((ax / size, az / size));
+                    }
+            }
+            if (lastVoxels == null || lastVoxels.Map != map)
+                lastVoxels = new RegionVoxels(map);
+            lastVoxels.RoadMask = null; // 路变了，遮罩重算
+            EnsureMaterials();
+            uint useed = unchecked((uint)seed);
+            foreach (var (cx, cz) in dirty)
+            {
+                var old = root.Find($"Chunk {cx},{cz}");
+                if (old != null)
+                {
+                    foreach (var filter in old.GetComponentsInChildren<MeshFilter>(true))
+                        DestroySafe(filter.sharedMesh);
+                    DestroySafe(old.gameObject);
+                }
+                BuildChunk(root, map, lastVoxels, cx, cz, useed);
+            }
+            return dirty.Count;
         }
 
         public void Clear()

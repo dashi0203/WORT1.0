@@ -113,6 +113,7 @@ namespace Wort.Generation
             Array.Copy(src.Slope, m.Slope, src.Slope.Length);
             Array.Copy(src.Tier, m.Tier, src.Tier.Length);
             Array.Copy(src.Flags, m.Flags, src.Flags.Length);
+            if (src.RoadKind != null) { m.EnsureRoadKind(); Array.Copy(src.RoadKind, m.RoadKind, src.RoadKind.Length); }
             if (src.SpanTop != null)
             {
                 m.EnsureSpans();
@@ -206,7 +207,7 @@ namespace Wort.Generation
             {
                 var path = RoadNet.Find(baked, cls, spawn, e.Z * baked.W + e.X, allowed);
                 if (path == null) { lines.Add($"固定世界道路：出生点 → 候选出入口 ({e.X},{e.Z}) 铺不通"); continue; }
-                RoadNet.Paint(baked, path, 2, allowed);
+                RoadNet.Paint(baked, path, 2, allowed, RegionMap.RoadMain);
                 ok++;
                 lines.Add($"固定世界道路：出生点 → 候选出入口 ({e.X},{e.Z}) 铺通，{path.Count} 格");
             }
