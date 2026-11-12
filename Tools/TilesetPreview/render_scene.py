@@ -5,6 +5,7 @@
 只是近似（没有阴影、没有 URP 的完整光照），最终以 Unity 为准。
 
 用法：python3 Tools/TilesetPreview/render_scene.py 提交|WT 场景路径 输出.png [shearx=0] [每米像素=48] [裁剪 x0,z0,x1,z1]
+  或：PLACEMENTS=tiles.json python3 ... WT Tileset目录 输出.png ...（按 TerrainPreview --tiles 输出的瓦片清单拼，验证选件）
   提交 = git 提交号（读该提交里的文件）；WT = 读工作区（含未提交的文件）。
   shearx ≠ 0 时横向也错切，能看见东西两侧（只是斜着看，不是游戏视角）。
   环境变量 LIGHT="x,y,z" 覆盖光照方向（指向光源），用来检查换方向后会不会两套光打架。
@@ -15,6 +16,7 @@ import sys, re, subprocess, struct, math, io, os
 import numpy as np
 from PIL import Image
 
+PLACEMENTS = os.environ.get('PLACEMENTS')  # 瓦片清单 JSON（TerrainPreview --tiles 输出）；这时 SCENE_PATH 写 Tileset 目录
 commit, scene_path, out = sys.argv[1], sys.argv[2], sys.argv[3]
 shearx = float(sys.argv[4]) if len(sys.argv) > 4 else 0.0
 ppm = float(sys.argv[5]) if len(sys.argv) > 5 else 48.0
@@ -62,7 +64,7 @@ def qmul(a, b):
     ax, ay, az, aw = a; bx, by, bz, bw = b
     return [aw * bx + ax * bw + ay * bz - az * by, aw * by - ax * bz + ay * bw + az * bx, aw * bz + ax * by - ay * bx + az * bw, aw * bw - ax * bx - ay * by - az * bz]
 
-scene = docs(show(scene_path))
+scene = docs(show(scene_path)) if not PLACEMENTS else {}
 # 普通 Transform
 tr = {}
 for fid, (cls, body, stripped) in scene.items():
@@ -153,7 +155,15 @@ for fid, (cls, body, stripped) in scene.items():
     q = [float(mods.get('m_LocalRotation.' + a, 0 if a != 'w' else 1)) for a in 'xyzw']
     pp, pq = world(parent)
     inst.append((src, [a + b for a, b in zip(pp, qrot(pq, p))], qmul(pq, q)))
-# 场景里直接放的 MeshRenderer（预览地板等）
+if PLACEMENTS:
+    import json
+    path2guid = {v: k for k, v in guid2path.items()}
+    for p in json.load(open(PLACEMENTS)):
+        sub = 'Top' if p['name'].startswith('Top_') else 'Cliff'
+        g = path2guid.get(f"{scene_path}/Prefabs/{sub}/{p['name']}.prefab")
+        if g is None: print('缺瓦片', p['name']); continue
+        a = math.radians(90 * p['rot']) / 2
+        inst.append((g, [p['x'], p['y'], p['z']], [0, math.sin(a), 0, math.cos(a)]))
 print('实例', len(inst))
 
 tris = []  # (3x3 世界坐标, 3x2 uv, 3x3 法线, 3x4 切线, 材质)
