@@ -28,6 +28,19 @@ namespace Wort.Editor
                     lab.Clear();
             }
 
+            if (lab.CanRefreshRandom)
+            {
+                if (GUILayout.Button($"重新生成随机 chunk（当前第 {lab.RefreshIndex + 1} 次）", GUILayout.Height(28)))
+                {
+                    Undo.RecordObject(lab, "Regenerate Random Chunk");
+                    lab.RegenerateRandomChunk();
+                    EditorUtility.SetDirty(lab);
+                    SceneView.RepaintAll();
+                }
+                if (!string.IsNullOrEmpty(lab.LastRefreshReport))
+                    EditorGUILayout.HelpBox(lab.LastRefreshReport, MessageType.None);
+            }
+
             var map = lab.LastMap;
             if (map != null)
             {
@@ -51,7 +64,7 @@ namespace Wort.Editor
         {
             try
             {
-                EditorUtility.DisplayProgressBar("Wort", "生成 8×8 chunk 地形…", 0.5f);
+                EditorUtility.DisplayProgressBar("Wort", "生成地形…", 0.5f);
                 lab.Generate();
             }
             finally

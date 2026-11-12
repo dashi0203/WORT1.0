@@ -1,0 +1,11 @@
+// 关键地点模板（Docs/WorldGen.md 5.4）。尺寸是外接尺寸（米），占地是带扰动的有机椭圆。占位数值，负责人可改。
+{
+  "templates": [
+    { "id": "home",      "size": [56, 52], "buffer": 4, "terrain": "flat", "prefab": "home_01" },
+    { "id": "village",   "size": [60, 54], "buffer": 4, "terrain": "flat", "prefab": "village_01" },
+    { "id": "ruinHut",   "size": [12, 12], "buffer": 4, "terrain": "flat", "prefab": "ruin_hut_01" },
+    { "id": "waystation","size": [24, 24], "buffer": 4, "terrain": "flat", "prefab": "waystation_01" },
+    { "id": "cave",      "size": [8, 8],   "buffer": 2, "terrain": "cliffBehind", "cliffDir": "W", "cliffMin": 3, "prefab": "cave_entrance_01" },
+    { "id": "marker",    "size": [6, 6],   "buffer": 2, "terrain": "flat", "prefab": "marker_01" }
+  ]
+}

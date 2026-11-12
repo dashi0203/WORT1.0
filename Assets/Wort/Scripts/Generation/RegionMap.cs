@@ -34,6 +34,12 @@ namespace Wort.Generation
         Scree = 256,       // 孤峰脚下的碎石台阶
         Outlier = 512,     // 山地外缘的残丘
         Gully = 1024,      // 冲沟
+        // 以下为 layout 管线（LayoutGenerator）使用
+        Road = 2048,       // 道路 / 小径
+        Trap = 4096,       // 检查：进得去、回不到住所
+        Leak = 8192,       // 检查：layout 出入口以外多出来的通路
+        Site = 16384,      // 关键地点占地
+        Gate = 32768,      // 出入口（坡道 / 台阶）
     }
 
     public struct RampInfo
@@ -75,6 +81,14 @@ namespace Wort.Generation
         public readonly byte[] Tier;
         public readonly CellFlags[] Flags;
 
+        /// <summary>
+        /// 悬空层（桥面、隧道顶）：每格最多一段，固体占据 SpanBottom ≤ y &lt; SpanTop。
+        /// 没有悬空层时为 null（旧生成器不用）。
+        /// </summary>
+        public int[] SpanBottom, SpanTop;
+        /// <summary>悬空层种类：1 = 桥（顶面是路），2 = 隧道顶（顶面是原地表）。</summary>
+        public byte[] SpanKind;
+
         public readonly List<RampInfo> Ramps = new List<RampInfo>();
         public readonly List<DropPoint> Drops = new List<DropPoint>();
         public readonly List<int> RiverPath = new List<int>();
@@ -108,6 +122,16 @@ namespace Wort.Generation
 
         public bool Has(int i, CellFlags f) => (Flags[i] & f) != 0;
 
+        public bool HasSpan(int i) => SpanTop != null && SpanTop[i] > SpanBottom[i];
+
+        public void EnsureSpans()
+        {
+            if (SpanTop != null) return;
+            SpanBottom = new int[Height.Length];
+            SpanTop = new int[Height.Length];
+            SpanKind = new byte[Height.Length];
+        }
+
         /// <summary>
         /// 结果校验和（FNV-1a，覆盖高度、水面、斜坡、标记）。
         /// 云端预览与 Unity 里的值相同，说明两边生成结果逐格一致。
@@ -120,6 +144,9 @@ namespace Wort.Generation
             {
                 Add(Height[i]); Add(Water[i]); Add(Slope[i]); Add((int)Flags[i]);
             }
+            if (SpanTop != null)
+                for (int i = 0; i < Height.Length; i++)
+                    if (HasSpan(i)) { Add(i); Add(SpanBottom[i]); Add(SpanTop[i]); Add(SpanKind[i]); }
             return h;
         }
 
@@ -131,6 +158,7 @@ namespace Wort.Generation
             {
                 int top = Height[i] + (Slope[i] >= 0 ? 1 : 0);
                 if (HasWater(i) && Water[i] > top) top = Water[i];
+                if (HasSpan(i) && SpanTop[i] > top) top = SpanTop[i];
                 if (Height[i] < min) min = Height[i];
                 if (top > max) max = top;
             }

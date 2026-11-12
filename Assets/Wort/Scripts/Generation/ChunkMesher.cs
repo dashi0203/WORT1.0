@@ -8,6 +8,8 @@ namespace Wort.Generation
     {
         public readonly List<float> Positions = new List<float>();
         public readonly List<float> Normals = new List<float>();
+        /// <summary>每个顶点的贴图融合权重（0 = 泥土，1 = 岩石）。只有 CliffMesher 写；为空表示不用融合。</summary>
+        public readonly List<float> Blend = new List<float>();
         public readonly List<int>[] Indices;
 
         public MeshData()
@@ -85,7 +87,7 @@ namespace Wort.Generation
             }
         }
 
-        static void EmitWater(RegionVoxels rv, MeshData mesh, int x, int y, int z, int ox, int oz)
+        internal static void EmitWater(RegionVoxels rv, MeshData mesh, int x, int y, int z, int ox, int oz)
         {
             for (int f = 0; f < 6; f++)
             {
@@ -99,7 +101,7 @@ namespace Wort.Generation
             }
         }
 
-        static void EmitSlope(RegionVoxels rv, MeshData mesh, VoxelMaterial m, int up, int x, int y, int z, int ox, int oz)
+        internal static void EmitSlope(RegionVoxels rv, MeshData mesh, VoxelMaterial m, int up, int x, int y, int z, int ox, int oz)
         {
             var side = VoxelPalette.Side(m);
             int lx = x - ox, lz = z - oz;

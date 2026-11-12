@@ -32,8 +32,11 @@ namespace Wort.Generation
         readonly int W, H;
         readonly uint seed;
 
-        RegionGenerator(RegionSettings settings)
+        readonly TerrainHooks hooks;
+
+        RegionGenerator(RegionSettings settings, TerrainHooks hooks = null)
         {
+            this.hooks = hooks;
             s = settings;
             map = new RegionMap(settings);
             W = map.W;
@@ -47,6 +50,20 @@ namespace Wort.Generation
             g.Run();
             return g.map;
         }
+
+        /// <summary>
+        /// layout 管线用：Biome 图由 layout 给出，保留区里不放台地等噪声地物，
+        /// 河之后、连通性修复之前由 layout 盖印章（海、峡谷、盆地、地点）。hooks 为 null 时与旧版逐格一致。
+        /// </summary>
+        public static RegionMap Generate(RegionSettings settings, TerrainHooks hooks)
+        {
+            var g = new RegionGenerator(settings, hooks);
+            g.Run();
+            return g.map;
+        }
+
+        bool Reserved(int i) => hooks?.Reserved != null && hooks.Reserved[i];
+        bool Organic => hooks != null && hooks.Organic;
 
         double WX(int x) => s.OriginX + x + 0.5;
         double WZ(int z) => s.OriginZ + z + 0.5;
@@ -69,13 +86,15 @@ namespace Wort.Generation
             Quantize();
             BuildMesasAndSpires();
             BuildPonds();
-            BuildRiver();
+            if (hooks == null || !hooks.SkipRiver) BuildRiver(); else map.Stats["river"] = 0;
+            hooks?.Stamp?.Invoke(map);
             FlattenHiddenStrips();
             ConnectAndRamp();
             ExtraRamps();
-            AssignSlopes();
+            if (hooks == null || !hooks.NoSlopes) AssignSlopes();
             MarkHiddenAndEdges();
             ChooseSpawn();
+            if (hooks != null && hooks.SpawnX >= 0) { map.SpawnX = hooks.SpawnX; map.SpawnZ = hooks.SpawnZ; }
             CollectStats();
         }
 
@@ -86,6 +105,17 @@ namespace Wort.Generation
         void BuildBiomeLayout()
         {
             int n = W * H;
+            if (hooks?.Biome != null)
+            {
+                Array.Copy(hooks.Biome, map.Biome, n);
+                var mm = new bool[n];
+                // 山前大悬崖带只按 layout 的山地大区算，森林里的小山包斑块不起山前高崖
+                for (int i = 0; i < n; i++) mm[i] = hooks.MountainMask != null ? hooks.MountainMask[i] : map.Biome[i] == (byte)BiomeId.Mountain;
+                // 与旧版一样按 4m 块量化：山缘的崖是 ≥ 4 格的直段，方便放坡道
+                mountainMask = Organic ? Grid.CloseRound(mm, W, H, 3) : Grid.BlockQuantize(mm, W, H, 4, 1, 3, Hash.Derive(seed, "mtn.block"), 0.6);
+                mountainMask = Grid.RemoveSmall(mountainMask, W, H, 200);
+                return;
+            }
             var warpX = Noise("layout.warpX", 120, 3);
             var warpZ = Noise("layout.warpZ", 120, 3);
             var line = Noise("layout.line", 150, 3);
@@ -177,7 +207,8 @@ namespace Wort.Generation
             {
                 var one = new float[n];
                 for (int i = 0; i < n; i++) one[i] = map.Biome[i] == b ? 1f : 0f;
-                for (int pass = 0; pass < 3; pass++) one = Grid.BoxBlur(one, W, H, BiomeBlurRadius);
+                int blur = hooks != null && hooks.BiomeBlurRadius > 0 ? hooks.BiomeBlurRadius : BiomeBlurRadius;
+                for (int pass = 0; pass < 3; pass++) one = Grid.BoxBlur(one, W, H, blur);
                 map.Weights[b] = one;
             }
         }
@@ -216,7 +247,7 @@ namespace Wort.Generation
                     double rough = map.Weights[(int)BiomeId.MixedForest][i] + map.Weights[(int)BiomeId.Conifer][i] + map.Weights[(int)BiomeId.Mountain][i];
                     // 山里压低连续起伏，让台地主导山体形状（避免一圈圈 1 层等高线）
                     double damp = 1 - 0.7 * map.Weights[(int)BiomeId.Mountain][i];
-                    macro[i] = Blend(i, p => p.MacroBase) + damp * (1.3 * low.Sample(px, pz) + 1.1 * mid.Sample(px, pz) * rough);
+                    macro[i] = Blend(i, p => hooks?.MacroBase != null ? hooks.MacroBase[(int)p.Id] : p.MacroBase) + damp * (1.3 * low.Sample(px, pz) + 1.1 * mid.Sample(px, pz) * rough);
                 }
 
             mountainDepth = Grid.DistanceInside(mountainMask, W, H);
@@ -240,7 +271,7 @@ namespace Wort.Generation
                     double gx = WX(x), gz = WZ(z);
                     int hc = 4 + (int)Math.Floor(Clamp01(cliffH.Sample(gx, gz) * 1.6 + 0.5) * 4.999); // 4–8
                     // 台阶的分界用 4m 块中心的深度，保证分界线也是直段
-                    int bx = Grid.Clamp((x / B) * B + B / 2, 0, W - 1), bz = Grid.Clamp((z / B) * B + B / 2, 0, H - 1);
+                    int bx = Organic ? x : Grid.Clamp((x / B) * B + B / 2, 0, W - 1), bz = Organic ? z : Grid.Clamp((z / B) * B + B / 2, 0, H - 1);
                     double dq = mountainDepth[bz * W + bx];
                     int l;
                     if (steep.Sample(gx, gz) > 0.02) l = hc;
@@ -322,7 +353,7 @@ namespace Wort.Generation
                     cur = best; lastDir = bestDir;
                 }
             }
-            g = Grid.BlockQuantize(g, W, H, 4, 2, 0, Hash.Derive(seed, "mtn.gullyBlock"), 0.3);
+            if (!Organic) g = Grid.BlockQuantize(g, W, H, 4, 2, 0, Hash.Derive(seed, "mtn.gullyBlock"), 0.3);
             gully = Grid.RemoveSmall(g, W, H, 60);
             int c = 0;
             for (int i = 0; i < n; i++) if (gully[i]) { map.Flags[i] |= CellFlags.Gully; c++; }
@@ -397,13 +428,22 @@ namespace Wort.Generation
                         c = Math.Max(0.0, Math.Min(0.95, c));
                         m[i] = field(gx, gz) > q.Quantile(1 - c);
                     }
-                m = Grid.Close(m, W, H, TerraceGapClose);
-                m = Grid.BlockQuantize(m, W, H, 4, (k * 3 + 1) & 3, (k * 5 + 2) & 3, Hash.Derive(seed, "terrace.block" + k), 0.6);
-                m = Grid.Open(m, W, H, TerraceMinHalfWidth);
+                if (Organic)
+                {
+                    // 有机：圆形开闭运算，不做 4m 块量化（不出直边和直角）
+                    m = Grid.CloseRound(m, W, H, TerraceGapClose + 0.5);
+                    m = Grid.OpenRound(m, W, H, TerraceMinHalfWidth);
+                }
+                else
+                {
+                    m = Grid.Close(m, W, H, TerraceGapClose);
+                    m = Grid.BlockQuantize(m, W, H, 4, (k * 3 + 1) & 3, (k * 5 + 2) & 3, Hash.Derive(seed, "terrace.block" + k), 0.6);
+                    m = Grid.Open(m, W, H, TerraceMinHalfWidth);
+                }
                 for (int i = 0; i < n; i++)
                 {
                     if (k > 0) m[i] &= tiers[k - 1][i];
-                    if (gully[i]) m[i] = false;
+                    if (gully[i] || Reserved(i)) m[i] = false;
                 }
                 m = Grid.RemoveSmall(m, W, H, TerraceMinArea);
                 tiers[k] = m;
@@ -444,13 +484,17 @@ namespace Wort.Generation
                 {
                     int i = z * W + x;
                     double d = mountainOut[i];
-                    if (mountainMask[i] || d < 7 || d > Reach || map.Tier[i] > 0 || gully[i]) continue;
+                    if (mountainMask[i] || d < 7 || d > Reach || map.Tier[i] > 0 || gully[i] || Reserved(i)) continue;
                     double f = 1 - d / Reach;
                     double c = 0.55 * f * Math.Sqrt(f); // f^1.5；不用 Math.Pow，保证跨运行时一致
                     if (hn.Sample(WX(x), WZ(z)) > q.Quantile(1 - c)) m[i] = true;
                 }
-            m = Grid.BlockQuantize(m, W, H, 4, 3, 1, Hash.Derive(seed, "mtn.outlierBlock"), 0.5);
-            m = Grid.Open(m, W, H, TerraceMinHalfWidth);
+            if (Organic) m = Grid.OpenRound(m, W, H, TerraceMinHalfWidth);
+            else
+            {
+                m = Grid.BlockQuantize(m, W, H, 4, 3, 1, Hash.Derive(seed, "mtn.outlierBlock"), 0.5);
+                m = Grid.Open(m, W, H, TerraceMinHalfWidth);
+            }
             var lab = Grid.Label(W, H, i => m[i], (a, b) => true, out var sizes);
             int count = 0;
             var counted = new bool[sizes.Count];
@@ -516,11 +560,11 @@ namespace Wort.Generation
                 for (int x = 0; x < W; x++)
                 {
                     int i = z * W + x;
-                    if (gully[i] || (map.Flags[i] & ~SoftFlags) != 0) continue;
+                    if (gully[i] || Reserved(i) || (map.Flags[i] & ~SoftFlags) != 0) continue;
                     if (nearTier[i] && Blend(i, p => p.AllowMesa ? 1 : 0) >= 0.5 && mesaN.Sample(WX(x), WZ(z)) > mesaThr)
                         mesa[i] = true;
                 }
-            mesa = Grid.Open(mesa, W, H, 2);
+            mesa = Organic ? Grid.OpenRound(mesa, W, H, 2) : Grid.Open(mesa, W, H, 2);
             map.Stats["mesas"] = RaiseBlobs(mesa, 40, 300, CellFlags.Mesa, (ringMin, ringMax, inMax, k) => Math.Max(inMax, ringMin + 4 + (int)(k & 1)));
             map.Stats["spires"] = PlaceSpires();
         }
@@ -537,7 +581,7 @@ namespace Wort.Generation
                 for (int x = 12; x < W - 12; x++)
                 {
                     int i = z * W + x;
-                    if (!mountainMask[i] || mountainDepth[i] < 14 || gully[i] || (map.Flags[i] & ~SoftFlags) != 0) continue;
+                    if (!mountainMask[i] || mountainDepth[i] < 14 || gully[i] || Reserved(i) || (map.Flags[i] & ~SoftFlags) != 0) continue;
                     if (map.Weights[(int)BiomeId.Mountain][i] < 0.7f) continue;
                     int h = map.Height[i];
                     bool nearCliff = false, isTop = true;
@@ -665,7 +709,7 @@ namespace Wort.Generation
                 for (int x = 0; x < W; x++)
                 {
                     int i = z * W + x;
-                    if (map.Tier[i] > 0 || (map.Flags[i] & ~SoftFlags) != 0) continue;
+                    if (map.Tier[i] > 0 || Reserved(i) || (map.Flags[i] & ~SoftFlags) != 0) continue;
                     double gx = WX(x), gz = WZ(z);
                     double cov = Blend(i, p => p.PondCoverage);
                     if (cov > 0 && pondN.Sample(gx, gz) > qp.Quantile(1 - cov)) pond[i] = true;
@@ -749,7 +793,7 @@ namespace Wort.Generation
                 int i = heap.Pop(out double c);
                 if (c > cost[i]) continue;
                 int x = i % W, z = i / W;
-                if (z == 0) { target = i; break; }
+                if (hooks?.RiverEnd != null ? hooks.RiverEnd[i] : z == 0) { target = i; break; }
                 for (int d = 0; d < 4; d++)
                 {
                     int nx = x + Grid.DX4[d], nz = z + Grid.DZ4[d];
@@ -761,6 +805,7 @@ namespace Wort.Generation
                     if (rise > 0) step += 3 * rise;
                     if (map.Tier[j] > 0) step += 1.5;
                     if ((map.Flags[j] & (CellFlags.Mesa | CellFlags.Spire)) != 0) step += 200;
+                    if (Reserved(j) && !(hooks.RiverEnd != null && hooks.RiverEnd[j])) step += 200;
                     if (map.HasWater(j)) step *= 0.5;
                     double nc = c + step;
                     if (nc < cost[j]) { cost[j] = nc; prev[j] = i; heap.Push(j, nc); }
@@ -851,9 +896,13 @@ namespace Wort.Generation
         // 8. 坡道与连通性：小块封闭区填平，大块在笔直崖边开 2–3 格宽坡道
         // ------------------------------------------------------------------
         int WalkHeight(int i) => map.HasWater(i) ? map.Water[i] : map.Height[i];
+        bool Deep(int i) => map.HasWater(i) && map.Water[i] - map.Height[i] > 1;
 
         int[] LabelWalk(out List<int> sizes)
         {
+            // layout 管线：深水（> 1 层）过不去，不能当作连通（峡谷大河的深水段）
+            if (hooks != null)
+                return Grid.Label(W, H, i => true, (a, b) => !Deep(a) && !Deep(b) && Math.Abs(WalkHeight(a) - WalkHeight(b)) <= 1, out sizes);
             return Grid.Label(W, H, i => true, (a, b) => Math.Abs(WalkHeight(a) - WalkHeight(b)) <= 1, out sizes);
         }
 
@@ -987,8 +1036,9 @@ namespace Wort.Generation
             int px = Grid.DX4[(dir + 1) & 3], pz = Grid.DZ4[(dir + 1) & 3];
             int dx = Grid.DX4[dir], dz = Grid.DZ4[dir];
             int ht = map.Height[z * W + x], hl = ht - drop;
-            // 高处一侧：含两侧各 1 格，共 width + 2 格笔直等高
-            for (int j = -1; j <= width; j++)
+            // 高处一侧：含两侧各 1 格，共 width + 2 格笔直等高（有机模式只要求坡道本身那 width 格）
+            int pad = Organic ? 0 : 1;
+            for (int j = -pad; j < width + pad; j++)
             {
                 int cx = x + px * j, cz = z + pz * j;
                 if (!map.InBounds(cx, cz)) return false;
@@ -1020,7 +1070,7 @@ namespace Wort.Generation
                 {
                     int c = (z + pz * j + dz * k) * W + (x + px * j + dx * k);
                     map.Height[c] = ht - k;
-                    map.Slope[c] = (sbyte)up;
+                    map.Slope[c] = hooks != null && hooks.NoSlopes ? (sbyte)-1 : (sbyte)up; // 不用斜坡时坡道是每级 1 层的台阶
                     map.Flags[c] |= CellFlags.Ramp;
                 }
             map.Ramps.Add(new RampInfo { TopX = x, TopZ = z, DownDir = dir, Width = width, Length = drop });
@@ -1361,5 +1411,34 @@ namespace Wort.Generation
             items[i] = last; keys[i] = lk;
             return top;
         }
+    }
+}
+
+namespace Wort.Generation
+{
+    /// <summary>RegionGenerator 的可选钩子（layout 管线用）。</summary>
+    public sealed class TerrainHooks
+    {
+        /// <summary>每格 Biome（BiomeId）。取代程序自由发挥的 Biome 布局。</summary>
+        public byte[] Biome;
+        /// <summary>保留区：不放台地、残丘、高台、孤峰、池塘，河尽量绕开。</summary>
+        public bool[] Reserved;
+        /// <summary>河流可以在这些格结束（如海）。</summary>
+        public bool[] RiverEnd;
+        /// <summary>河之后、连通性修复之前调用：在地形上盖 layout 的印章。</summary>
+        public System.Action<RegionMap> Stamp;
+        public int SpawnX = -1, SpawnZ = -1;
+        /// <summary>不生成程序河（河由 layout 给出，如峡谷里的大河）。</summary>
+        public bool SkipRiver;
+        /// <summary>不放任何斜坡体素：没有自然斜坡，坡道改成每级 1 层的台阶（斜坡由策划手动放）。</summary>
+        public bool NoSlopes;
+        /// <summary>有机形状：台地、山缘、残丘、高台不做 4m 块量化，开闭运算用圆形结构元（不出直边和直角）。</summary>
+        public bool Organic;
+        /// <summary>Biome 权重的盒式模糊半径（3 次）。0 = 旧版 16（过渡带约 40m）；13 ≈ 32m。</summary>
+        public int BiomeBlurRadius;
+        /// <summary>山地大区（起山前大悬崖带、冲沟、孤峰）。为空时取 Biome == 山地。</summary>
+        public bool[] MountainMask;
+        /// <summary>各 Biome 的宏观高度（按 BiomeId 下标），为空时用 BiomeTable。</summary>
+        public double[] MacroBase;
     }
 }

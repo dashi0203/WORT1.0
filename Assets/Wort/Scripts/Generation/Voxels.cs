@@ -178,7 +178,7 @@ namespace Wort.Generation
                     int h = Map.Height[i];
                     var biome = PickSurfaceBiome(i, s.OriginX + x + 0.5, s.OriginZ + z + 0.5, surfaceNoise);
                     var surface = VoxelPalette.Surface(biome);
-                    if (Map.Has(i, CellFlags.Scree)) surface = VoxelMaterial.Gravel;
+                    if (Map.Has(i, CellFlags.Scree) || Map.Has(i, CellFlags.Road)) surface = VoxelMaterial.Gravel;
                     bool water = Map.HasWater(i);
                     if (water) surface = Map.Has(i, CellFlags.River) ? VoxelMaterial.Gravel : VoxelMaterial.Mud;
                     bool rocky = biome == BiomeId.Mountain;
@@ -197,6 +197,17 @@ namespace Wort.Generation
                         chunk.Set(lx, h, lz, surface, (VoxelShape)(slope + 1));
                     if (water)
                         for (int y = h; y < Map.Water[i]; y++) chunk.Set(lx, y, lz, VoxelMaterial.Water);
+                    if (Map.HasSpan(i))
+                    {
+                        // 悬空层：桥面（路面是碎石）或隧道顶（岩石，顶面是原地表）
+                        int top = Map.SpanTop[i];
+                        for (int y = Map.SpanBottom[i]; y < top; y++)
+                        {
+                            if (y < MinY || y >= MinY + SizeY) continue;
+                            var m = y == top - 1 ? (Map.SpanKind[i] == 1 ? VoxelMaterial.Gravel : VoxelPalette.Surface(biome)) : VoxelMaterial.Rock;
+                            chunk.Set(lx, y, lz, m);
+                        }
+                    }
                 }
             return chunk;
         }

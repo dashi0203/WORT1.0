@@ -6,15 +6,20 @@ Unity 6000.3.8f1 + URP 17.3 的写实低魔 3D 开放世界生存 / 炼金 RPG�
 1. GDD（策划文档，Claude Docs）：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT
    仓库里的 `Docs/GDD.md` 是它的只读快照，读不到 Docs 工具时可以先看快照（注意同步日期）。
 2. `Docs/DevLog.md`：开发记录、已做的决定、未决问题、下一步。
+3. 做随机区域 / 关卡生成相关的任务时，再读《随机区域与关卡生成》（Claude Docs）：https://claude.ai/artifact/FLi4oaxFPRfPHC75a3KqcF
+   仓库快照 `Docs/RandomLevelGDD.md`；同步规则与主 GDD 相同（改了就重新导出、在 DevLog 记一笔）。
+   世界生成规格见 `Docs/WorldGen.md`（直接在仓库里编辑，不是快照）。
+4. 做地形外观 / 崖面 / 美术网格相关的任务时，读《地形外观与崖面美术规范》（Claude Docs）：https://claude.ai/artifact/1kS4tFDMsneZwNCLw43xPF
+   仓库快照 `Docs/TerrainArtGDD.md`；同步规则与主 GDD 相同。
 
 ## 规则（来自项目负责人）
-- 用中文交流。
+- 用中文交流，回复和文档都写中文句子。专有术语保留英文：layout、Biome、chunk、layer、checksum 等；代码里的名字（类名、文件路径、JSON 字段）也保留英文并放在反引号里。除此以外不要中英夹杂。
 - GDD 里标【已定】的不改；【暂定】的可以提建议，但要先问。
 - 小的技术决定直接按自己的建议做，在回复里说明一句即可。只有三种情况要停下来问：
   1. 与 GDD【已定】冲突；
   2. 要改动【暂定】的设计；
   3. 要往仓库里加清单以外的新类别内容。
-- 推送到会话指定的开发分支（当前一直在用 `claude/focused-galileo-rr85m8`）。
+- 推送到会话指定的开发分支（以每次会话的指定为准）。
 - 参考仓库：`dashi0203/topdowntemp` 已搬完；`dashi0203/insect` 只借鉴思路、按文件查看；
   `dashi0203/FactorioLike` 约 550MB，**绝对不要整仓克隆**，只用稀疏检出拉单个文件。
 - 本地 Unity 项目视为只读，代码一律由云端会话推送；本地反馈会附 Console 报错和截图。

@@ -32,20 +32,20 @@ git lfs pull
 
 ## 3. 切换到开发分支
 
-云端会话推送的分支是 `claude/focused-galileo-rr85m8`。
+云端会话推送的分支以每次会话指定的为准，当前是 `claude/bold-bardeen-vlwhjd`。
 
 ```bash
-git fetch origin claude/focused-galileo-rr85m8
+git fetch origin claude/bold-bardeen-vlwhjd
 ```
 
 ```bash
-git switch claude/focused-galileo-rr85m8
+git switch claude/bold-bardeen-vlwhjd
 ```
 
 之后云端每次推送新内容，在本地拉取：
 
 ```bash
-git pull origin claude/focused-galileo-rr85m8
+git pull origin claude/bold-bardeen-vlwhjd
 ```
 
 ## 4. 用 Unity 打开
@@ -65,7 +65,15 @@ git pull origin claude/focused-galileo-rr85m8
 **核对云端预览**：每次生成后 Console 会打印一行 `[TerrainLab] seed … checksum 0x…`。
 默认种子 20261109 的云端预览 checksum 是 `0xEE3CECBB`，种子 7 是 `0x3DD96B8A`。数字相同，说明 Unity 里的地形和云端预览图逐格一致。
 
-**自动测试**：Window → General → Test Runner → EditMode → Run All。`MatchesCloudPreview` 会自动比对上面两个 checksum。
+**自动测试**：Window → General → Test Runner → EditMode → Run All。`GenerationTests.MatchesCloudPreview` 会自动比对上面两个 checksum。
+`LayoutTests` 测 layout 管线（Docs/WorldGen.md）：8×8 测试 layout 的 checksum 应为 `0x8C73CCB3`，检查全部通过，盆地能进能出，没有斜坡体素，挖坑的反例要报错。
+layout 管线目前只在云端预览和测试里用，TerrainLab 场景还是旧生成器。
+
+**体素器 5×5 与崖面外观**：Terrain Lab 的 Inspector 里 `Generator` 选 `Terrace5x5`、`Seed` 填 3，生成后 checksum 应为 `0x30884FC1`。
+`Cliff Dressing` 勾上时显示崖面外观原型（方案 B：立方体 + 倒角、侧面外鼓、泥土顶面边缘一圈岩石），取消勾选是原来的方块；
+勾上时地面用 `Wort/TerrainBlend` 着色器（泥土 / 岩石两张 128×128 贴图融合）；碰撞是 1m 格按同高矩形合并的 BoxCollider 加斜坡小网格（`Collider` 子物体）。
+勾上 `Random Chunk`（默认勾上）时，右上角 chunk（3,3）是随机 chunk；Inspector 里点“重新生成随机 chunk”换一次（序号 +1），只重建它和周围一圈，
+Console 打印 `[TerrainLab] 刷新 k：通过 / 失败 …` 和各步耗时。种子 3、序号 0 的随机区域 checksum 应为 `0x99C8D394`（与云端 `--random --seed 3` 的刷新 1 相同）。反馈时请附开关前后的截图。
 
 ## 6. 本地改动约定
 
