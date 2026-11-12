@@ -1,8 +1,29 @@
 # Wort 开发记录
 
-最后更新：2026-11-12 · 分支 `claude/ecstatic-maxwell-8c9ue4`（已合并 compassionate-davinci-5t1ttq）（已合并 bold-bardeen-vlwhjd） · 最新提交见 `git log`
+最后更新：2026-11-12 · 分支 `claude/ecstatic-maxwell-8c9ue4`（当天各分支已全部合并到这里，默认分支 `claude/focused-galileo-rr85m8` 与它同步） · 最新提交见 `git log`
 
 GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
+
+## 2026-11-12 地基外观线收工：下次从这里开始
+
+分支：当天所有分支（compassionate-davinci、focused-galileo、bold-bardeen、intelligent-noether）都已合并进 `claude/ecstatic-maxwell-8c9ue4`，
+默认分支 `claude/focused-galileo-rr85m8` 快进到同一提交，已完全合并的旧分支在远端删除。下次会话从这里拉。
+
+今天这条线的结论（细节见下面几节）：
+- 地基外观改走 3D 模块化瓦片（Codex 做美术，规格 `Docs/TilesetSpec.md`）；程序化崖面的几版（位移、距离场、逐像素高度图）都不合格，代码留作实验。
+- 三套瓦片：Limestone（人类区）、OliveStrata（沼泽）、RustCrag（森林），材质统一 `Wort/TileSurface`。
+- 空白测试地 + Minecraft 式体素笔刷（`TerrainLab` 生成器 `TestGround`）。**Unity 侧还没编译过。**
+
+等负责人 / Codex：
+1. 本地按上一次给的一次性步骤拉新（先把本地未跟踪的 `Assets/Wort/Art/Tilesets` 挪到项目外备份），在 Unity 里试体素笔刷，发 Console 和截图。
+2. RustCrag 多层墙每 1m 一道横向亮带：Codex 改贴图，还是着色器里压。
+3. 唇边下那道烘焙暗影是否太重（Limestone）。
+
+下次候选：
+1. 按 Unity 反馈修编译错误、调笔刷手感。
+2. 顶沿 / 崖壁两端的轮廓挤出（合并网格时按世界噪声推顶点）。
+3. 斜坡件与水面（瓦片暂不支持）；瓦片接回 Terrace5x5 大地图（按 Biome 选套件、过渡带分块）。
+4. 路面遮罩贴图（`_WortGroundMask`）由 TerrainLab 生成。
 
 ## 2026-11-12（续）空白测试地与 Minecraft 式体素笔刷；三套 Tileset 接入
 
