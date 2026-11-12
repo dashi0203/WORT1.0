@@ -307,18 +307,21 @@ namespace Wort.Generation
                         float jy = ((hsh & 0xFF) / 255f - 0.5f) * 0.44f * Math.Min(step, 0.5f);
                         float ju = end ? 0 : (((hsh >> 8) & 0xFF) / 255f - 0.5f) * 0.12f;
                         // 斜边附近：错开和鼓包都逐渐减弱（离斜边 0.4m 以内），列挤在一起时不沿墙错开，免得三角形交叉
-                        float below = top0 + w - Y, fade = below / 0.4f; fade = fade < 0 ? 0 : (fade > 1 ? 1 : fade);
+                        // 北面的加强鼓包只在下半截：离顶边 1.2m 内减到 0，免得从倒角后面冒出来，看着像倒角 / 岩石边往外扩
+                        float below = top0 + w - Y, fade = below / (north ? 1.2f : 0.4f); fade = fade < 0 ? 0 : (fade > 1 ? 1 : fade);
                         if (!end) { jy *= fade; ju *= fade * (1 - ws); }
                         Y += jy; along += ju; X += tx * ju; Z += tz * ju;
                         float qb = 1 - vb.F1(along, Y) * 1.6f; qb = qb < 0 ? 0 : qb;
                         float qs = 1 - vs.F1(along, Y) * 1.7f; qs = qs < 0 ? 0 : qs;
                         float off = Bulge * bulgeK * (0.05f + 0.45f * qb + 0.6f * qs) * (end ? 1 : fade);
-                        { float ft = 1 - (Y - e) / 0.7f; if (ft > 0) off += FootFlare * flareK * ft * ft; }
+                        { float ft = 1 - (Y - e) / 0.7f; if (ft > 0) off += Math.Min(FootFlare * flareK, 0.5f * (top0 + w - e)) * ft * ft; }
                         X += nx * off; Z += nz * off;
                     }
                     else if (r == 0 && !lowEnd && !highEnd && !diag)
                     {
-                        X += nx * FootFlare * flareK; Z += nz * FootFlare * flareK;
+                        // 崖脚外扩不超过这里墙高的一半：矮的一段外扩太多会从顶边后面露出来
+                        float fl0 = Math.Max(0f, Math.Min(FootFlare * flareK, 0.5f * (top0 + w - e)));
+                        X += nx * fl0; Z += nz * fl0;
                     }
                     px[k] = X; py[k] = Y; pz[k] = Z;
                 }
@@ -468,7 +471,11 @@ namespace Wort.Generation
                                 if (yTop > y0) bd.Quad(Rock, nx - tx * sg, 0, nz - tz * sg, PX(ue, 0), y0, PZ(ue, 0), PX(ue, 0), yTop, PZ(ue, 0), qx, yTop, qz, qx, y0, qz);
                                 // 对角格比本格低（但高于墙脚）：内倒角只到对角格的倒角底，再补到对角格顶面的一小片，否则凹角处露缝
                                 if (hq < h && yTop > y0 && yTop >= hq - Bevel - 1e-4f && yTop < y1)
+                                {
                                     bd.Tri(Rock, nx - tx * sg, 1, nz - tz * sg, PX(ue, 0), yTop, PZ(ue, 0), qx, yTop, qz, kx, hq, kz);
+                                    // 墙端到凹角竖边之间、对角格倒角底 → 对角格顶面的一小条竖面（否则从镜头看是一条细缝）
+                                    bd.Tri(Rock, nx, 0, nz, PX(ue, 0), yTop, PZ(ue, 0), PX(ue, 0), Math.Min(y1, hq), PZ(ue, 0), kx, Math.Min(y1, hq), kz);
+                                }
                             }
                         }
                     k0 = k1;
