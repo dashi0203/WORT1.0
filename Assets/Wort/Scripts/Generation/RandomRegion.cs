@@ -35,6 +35,9 @@ namespace Wort.Generation
         public double DangerMin = 0.5, DangerMax = 1.0, RewardMin = 0.25, RewardMax = 0.75;
         /// <summary>每个房间出现浅水的概率。负责人 2026-11-12：房间要平整，水域和其他房间内容以后由内容规则加，地形生成不再做（代码留着给“整间沼泽房”等内容规则用）。</summary>
         public double WaterChance = 0;
+        /// <summary>每个房间最多几个石块（1–2 层小石台）、是否标草丛区。负责人 2026-11-12：都交给以后的内容规则，地形生成不做。</summary>
+        public int MaxRocks = 0;
+        public bool GrassMarks = false;
         /// <summary>校验失败时最多换几次种子。</summary>
         public int MaxAttempts = 24;
         /// <summary>房间形状：true = 自然地形（Voronoi 多边形房间）；false = 地牢（矩形房间）（负责人 2026-11-11）。</summary>
@@ -1080,10 +1083,10 @@ namespace Wort.Generation
                             bool wet = shape == 0 ? Math.Abs(v) < 0.09 : (v > 0.3 && v < 0.62);
                             if (wet) { h[i] = fl[i] - 1; m.Water[i] = fl[i]; m.Flags[i] |= CellFlags.Pond; continue; }
                         }
-                        if (fGrass.Sample(x, z) > 0.28) grass[i] = true;
+                        if (s.GrassMarks && fGrass.Sample(x, z) > 0.28) grass[i] = true;
                     }
                 // 石块：0–2 个，离墙 ≥ 3、离开口 ≥ 4
-                int rocks = rng.Range(0, 3);
+                int rocks = s.MaxRocks > 0 ? rng.Range(0, s.MaxRocks + 1) : 0;
                 for (int t = 0; t < rocks; t++)
                 {
                     for (int tryk = 0; tryk < 12; tryk++)
