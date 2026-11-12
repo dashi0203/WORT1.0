@@ -125,6 +125,11 @@ namespace Wort.Generation
                 Array.Copy(src.SpanKind, m.SpanKind, src.SpanKind.Length);
             }
             m.SpawnX = src.SpawnX; m.SpawnZ = src.SpawnZ;
+            // 坡道、落差点、河道、统计也要带上（坡道口漏斗、统计显示都靠它们）
+            m.Ramps.AddRange(src.Ramps);
+            m.Drops.AddRange(src.Drops);
+            m.RiverPath.AddRange(src.RiverPath);
+            foreach (var kv in src.Stats) m.Stats[kv.Key] = kv.Value;
             return m;
         }
 

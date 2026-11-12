@@ -74,6 +74,9 @@ namespace Wort.Generation
             var list = new List<Mouth>();
             foreach (var r in m.Ramps)
             {
+                // 坡道已经不在了（比如被随机区域重新生成覆盖），跳过
+                int fx = r.TopX + Grid.DX4[r.DownDir], fz = r.TopZ + Grid.DZ4[r.DownDir];
+                if (!m.InBounds(fx, fz) || (m.Flags[m.Index(fx, fz)] & CellFlags.Ramp) == 0) continue;
                 int d = r.DownDir, p = (d + 1) & 3;
                 float dx = Grid.DX4[d], dz = Grid.DZ4[d], px = Grid.DX4[p], pz = Grid.DZ4[p];
                 float cx = r.TopX + 0.5f + px * (r.Width - 1) * 0.5f, cz = r.TopZ + 0.5f + pz * (r.Width - 1) * 0.5f;
