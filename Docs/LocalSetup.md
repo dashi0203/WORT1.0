@@ -98,3 +98,31 @@ git restore .
 ```
 
 - 反馈问题时，请附上 Console 报错的完整文字（右键 → Copy）和画面截图。
+
+## 7. 让 Codex 拉新（固定模板）
+
+每次云端推送后，Claude 会在回复末尾附上下面这段，直接复制给 Codex 即可。分支变了时 Claude 会同步改这里。
+
+```text
+只做下面这几步，不要操作 Unity 界面，不要用 computer use，不要新建、修改、提交或删除任何文件：
+
+1. 在项目目录运行 git status，把输出原样发给我。
+   - 如果被改动的文件只有这 4 个，直接继续：
+     Assets/Wort/Rendering/PC_RPAsset.asset
+     Packages/packages-lock.json
+     ProjectSettings/EditorBuildSettings.asset
+     ProjectSettings/EditorSettings.asset
+   - 如果还有别的被改动的文件（尤其是 .cs 或 .shader），先停下来告诉我，不要自己还原。
+   - 未跟踪的文件一律不要动。
+2. git fetch origin
+3. git switch claude/compassionate-davinci-5t1ttq
+4. git pull
+5. git lfs pull
+6. 依次运行这三条，把输出都发给我：
+   git log -1 --oneline
+   git rev-parse --short HEAD
+   git rev-parse --short origin/claude/compassionate-davinci-5t1ttq
+   后两条输出一样，就说明已经是最新；不一样就停下来告诉我。
+
+做完就结束，不要打开或操作 Unity，也不要做其他检查。
+```
