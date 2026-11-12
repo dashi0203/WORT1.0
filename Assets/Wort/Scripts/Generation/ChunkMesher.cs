@@ -10,6 +10,8 @@ namespace Wort.Generation
         public readonly List<float> Normals = new List<float>();
         /// <summary>每个顶点的贴图融合权重（0 = 泥土，1 = 岩石）。只有 CliffMesher 写；为空表示不用融合。</summary>
         public readonly List<float> Blend = new List<float>();
+        /// <summary>每个顶点的路面权重（0 = 无，1 = 路面，见 RoadSurface）。只有 CliffMesher 写；为空表示没有路面。</summary>
+        public readonly List<float> Road = new List<float>();
         public readonly List<int>[] Indices;
 
         public MeshData()

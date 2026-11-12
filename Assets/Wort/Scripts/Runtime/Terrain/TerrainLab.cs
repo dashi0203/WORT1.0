@@ -45,7 +45,7 @@ namespace Wort.Terrain
 
         private Material[] materials;
         private Material blendMaterial;   // Wort/TerrainBlend（方案 B 的泥土 / 岩石融合）
-        private Texture2D dirtTexture, rockTexture;
+        private Texture2D dirtTexture, rockTexture, roadTexture;
 
         public int Seed
         {
@@ -75,6 +75,7 @@ namespace Wort.Terrain
             DestroySafe(blendMaterial);
             DestroySafe(dirtTexture);
             DestroySafe(rockTexture);
+            DestroySafe(roadTexture);
             blendMaterial = null;
         }
 
@@ -155,6 +156,9 @@ namespace Wort.Terrain
             {
                 baked = TerraceField.Generate(new TerraceFieldSettings { Seed = useed, RandomChunks = RandomChunks }, out bakedCls);
                 candidates = RandomRegion.AutoCandidates(baked, bakedCls, RandomChunks, useed);
+                // 连通测试：出生点到每个候选出入口铺路（路面显示），铺不通的打印警告
+                foreach (var line in RandomRegion.ConnectFixed(baked, bakedCls, RandomChunks, candidates))
+                    if (line.Contains("铺不通")) Debug.LogWarning("[TerrainLab] " + line, this); else Debug.Log("[TerrainLab] " + line, this);
                 bakedSeed = useed;
             }
             if (replaySeed.HasValue && replayWorldSeed != useed)
@@ -325,9 +329,12 @@ namespace Wort.Terrain
             bool blended = !water && data.Blend.Count == count && blendMaterial != null;
             if (blended)
             {
+                // r = 岩石融合权重，g = 路面权重（RoadSurface）
+                bool road = data.Road.Count == count;
                 var colors = new List<Color32>(count);
                 for (int i = 0; i < count; i++)
-                    colors.Add(new Color32((byte)Mathf.RoundToInt(Mathf.Clamp01(data.Blend[i]) * 255f), 0, 0, 255));
+                    colors.Add(new Color32((byte)Mathf.RoundToInt(Mathf.Clamp01(data.Blend[i]) * 255f),
+                        road ? (byte)Mathf.RoundToInt(Mathf.Clamp01(data.Road[i]) * 255f) : (byte)0, 0, 255));
                 mesh.SetColors(colors);
             }
             mesh.subMeshCount = subs.Count;
@@ -377,9 +384,11 @@ namespace Wort.Terrain
             }
             dirtTexture = MakeTexture("Dirt", TerrainTextures.Dirt(out var dh), dh);
             rockTexture = MakeTexture("Rock", TerrainTextures.Rock(out var rh), rh);
+            roadTexture = MakeTexture("Road", TerrainTextures.Road(out var oh), oh);
             blendMaterial = new Material(shader) { name = "Terrain Blend", hideFlags = HideFlags.DontSave };
             blendMaterial.SetTexture("_DirtTex", dirtTexture);
             blendMaterial.SetTexture("_RockTex", rockTexture);
+            blendMaterial.SetTexture("_RoadTex", roadTexture);
         }
 
         private static Texture2D MakeTexture(string name, uint[] rgb, float[] height)

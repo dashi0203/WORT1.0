@@ -1,3 +1,4 @@
+using System.Linq;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -329,10 +330,12 @@ namespace Wort.Tools
                         if (ny > 0.99) k *= 0.82 + 0.36 * Math.Clamp((p[a * 3 + 1] - minY) / (double)Math.Max(1, maxY - minY), 0, 1);
                         if (mesh.Blend.Count == mesh.VertexCount && mat != (int)VoxelMaterial.Water)
                         {
+                            bool hasRoad = mesh.Road.Count == mesh.VertexCount;
                             RasterTex(img, depth, u0, v0, ppm, h, k, nx, ny, nz,
                                 p[a * 3] + ox, p[a * 3 + 1], p[a * 3 + 2] + oz, mesh.Blend[a],
                                 p[b * 3] + ox, p[b * 3 + 1], p[b * 3 + 2] + oz, mesh.Blend[b],
-                                p[c * 3] + ox, p[c * 3 + 1], p[c * 3 + 2] + oz, mesh.Blend[c]);
+                                p[c * 3] + ox, p[c * 3 + 1], p[c * 3 + 2] + oz, mesh.Blend[c],
+                                hasRoad ? mesh.Road[a] : 0, hasRoad ? mesh.Road[b] : 0, hasRoad ? mesh.Road[c] : 0);
                             continue;
                         }
                         uint col = Image.Scale(baseColor, k);
@@ -344,6 +347,30 @@ namespace Wort.Tools
                 }
             }
 
+            var pick = Environment.GetEnvironmentVariable("WORT_PICK");
+            if (pick != null && w == 640)
+            {
+                var pp = pick.Split(','); double qx = double.Parse(pp[0]) + 0.5, qy = double.Parse(pp[1]) + 0.5;
+                foreach (var (mesh, ox, oz) in meshes)
+                {
+                    var p = mesh.Positions;
+                    for (int mat = 0; mat < mesh.Indices.Length; mat++)
+                    {
+                        var idx = mesh.Indices[mat];
+                        for (int t = 0; t < idx.Count; t += 3)
+                        {
+                            var pts = new double[3, 3];
+                            for (int q = 0; q < 3; q++) { int vi = idx[t + q]; pts[q, 0] = p[vi * 3] + ox; pts[q, 1] = p[vi * 3 + 1]; pts[q, 2] = p[vi * 3 + 2] + oz; }
+                            double X(int q) => (pts[q, 0] - u0) * ppm; double Yp(int q) => h - (pts[q, 2] + pts[q, 1] * Shear - v0) * ppm;
+                            double ar = (X(1) - X(0)) * (Yp(2) - Yp(0)) - (Yp(1) - Yp(0)) * (X(2) - X(0));
+                            if (Math.Abs(ar) < 1e-9) continue;
+                            double b0 = ((X(1) - qx) * (Yp(2) - qy) - (Yp(1) - qy) * (X(2) - qx)) / ar, b1 = ((X(2) - qx) * (Yp(0) - qy) - (Yp(2) - qy) * (X(0) - qx)) / ar, b2 = 1 - b0 - b1;
+                            double best = -Math.Min(b0, Math.Min(b1, b2)) * 10;
+                            if (best < 1.5) Console.WriteLine($"PICK u0={u0:0.###} v0={v0:0.###} tri mat{mat} d={best:0.0} " + string.Join(" ", Enumerable.Range(0, 3).Select(q => $"({pts[q, 0]:0.###},{pts[q, 1]:0.###},{pts[q, 2]:0.###})")));
+                        }
+                    }
+                }
+            }
             // 预览专用：深度突变处描暗边，便于分辨台地层次（Unity 里靠光照和阴影）
             var src = (byte[])img.Rgb.Clone();
             for (int y = 1; y < h - 1; y++)
@@ -385,13 +412,14 @@ namespace Wort.Tools
                 }
         }
 
-        static uint[] texDirt, texRock; static float[] hDirt, hRock;
+        static uint[] texDirt, texRock, texRoad; static float[] hDirt, hRock, hRoad;
 
         /// <summary>带贴图的三角形：按法线选投影（顶面用 xz，侧面用沿墙坐标和 y），两张 128×128 贴图按融合权重和高度混合。</summary>
         static void RasterTex(Image img, float[] depth, double u0, double v0, double ppm, int h, double k, double nx, double ny, double nz,
-            double ax, double ay, double az, float ba, double bx, double by, double bz, float bb, double cx, double cy, double cz, float bc)
+            double ax, double ay, double az, float ba, double bx, double by, double bz, float bb, double cx, double cy, double cz, float bc,
+            float ra = 0, float rb = 0, float rc = 0)
         {
-            if (texDirt == null) { texDirt = TerrainTextures.Dirt(out hDirt); texRock = TerrainTextures.Rock(out hRock); }
+            if (texDirt == null) { texDirt = TerrainTextures.Dirt(out hDirt); texRock = TerrainTextures.Rock(out hRock); texRoad = TerrainTextures.Road(out hRoad); }
             double pax = (ax - u0) * ppm, pay = h - (az + ay * Shear - v0) * ppm;
             double pbx = (bx - u0) * ppm, pby = h - (bz + by * Shear - v0) * ppm;
             double pcx = (cx - u0) * ppm, pcy = h - (cz + cy * Shear - v0) * ppm;
@@ -426,7 +454,11 @@ namespace Wort.Tools
                     float m = TerrainTextures.Mix(bl, (hDirt[t1] + hDirt[t2]) * 0.5f, (hRock[t1] + hRock[t2]) * 0.5f);
                     uint Ch(uint c, int sh) => (c >> sh) & 0xFF;
                     double Avg(uint[] tex, int sh) => (Ch(tex[t1], sh) + Ch(tex[t2], sh)) * 0.5;
-                    uint r = (uint)(Avg(texDirt, 16) * (1 - m) + Avg(texRock, 16) * m), g = (uint)(Avg(texDirt, 8) * (1 - m) + Avg(texRock, 8) * m), b = (uint)(Avg(texDirt, 0) * (1 - m) + Avg(texRock, 0) * m);
+                    // 路面先盖在泥土上，岩石边再盖在上面（与着色器相同）
+                    float rw = (float)(w0 * ra + w1 * rb + w2 * rc);
+                    float q = rw > 0 ? TerrainTextures.MixRoad(rw, (hDirt[t1] + hDirt[t2]) * 0.5f, (hRoad[t1] + hRoad[t2]) * 0.5f) : 0;
+                    double G(int sh) => Avg(texDirt, sh) * (1 - q) + Avg(texRoad, sh) * q;
+                    uint r = (uint)(G(16) * (1 - m) + Avg(texRock, 16) * m), g = (uint)(G(8) * (1 - m) + Avg(texRock, 8) * m), b = (uint)(G(0) * (1 - m) + Avg(texRock, 0) * m);
                     img.Set(x, y, Image.Scale(r << 16 | g << 8 | b, k));
                 }
         }

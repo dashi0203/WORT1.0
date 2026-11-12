@@ -11,7 +11,10 @@ namespace Wort.Generation
     ///   着色器再按岩石贴图的高低起伏决定交界（贴图见 TerrainTextures，128×128）；
     /// - 侧面是岩石，有体积：参考 topdowntemp 的悬崖件，每层侧面往外鼓约 0.17m、层中间一道折痕，格与格交界处收回；
     /// - 不变形的平地顶面按同高矩形合并。
-    /// 画面上的地面永远不超出碰撞格（倒角只往里收）。水面、斜坡沿用 ChunkMesher。
+    /// - 斜坡（坡道）也在这里画：坡面是泥土 / 路面，两侧露出的部分是岩石墙（和崖面同样的外鼓、崖脚外扩）；
+    ///   坡顶接台面处不画墙、不倒角、不长岩石边，路面连续；坡道挖进崖里时，旁边高格的崖面顺着斜边露出来。
+    /// - 路面：每个朝上的顶点按 RoadSurface 的遮罩写 `MeshData.Road`；路面附近的格逐格细分，不参与平地合并。
+    /// 画面上的地面永远不超出碰撞格（倒角只往里收）。水面沿用 ChunkMesher。
     /// 不用 System.Random / Math.Sin 等，结果在 .NET 与 Unity 一致。
     /// </summary>
     public static class CliffMesher
@@ -21,6 +24,9 @@ namespace Wort.Generation
         public const float FootFlare = 0.18f; // 崖脚横截面往外扩（m，贴地处最大，0.7m 以上为 0）
         public const float Bulge = 0.26f;  // 侧面往外鼓（m，Voronoi 石块中心处）
         const float RimIn = 0.12f, RimOut = 0.5f, RimNoise = 0.1f; // 顶面融合：离崖边 ≤ RimIn 全岩石，≥ RimOut 全泥土
+        // 路面离崖边 / 崖脚（任何高差处）要留出泥土和岩石边：≤ RoadIn 没有路面，≥ RoadOut 完整路面（负责人 2026-11-12）
+        const float RoadIn = 0.35f, RoadOut = 0.6f;
+        static float RoadEdge(float d) { float t = (d - RoadIn) / (RoadOut - RoadIn); t = t < 0 ? 0 : (t > 1 ? 1 : t); return t * t * (3 - 2 * t); }
 
         // 子网格：融合材质的地面都放在 Soil 里（着色器按 Blend 混合两张贴图）
         const int Rock = (int)VoxelMaterial.Soil, Dirt = (int)VoxelMaterial.Soil;
@@ -31,22 +37,25 @@ namespace Wort.Generation
             var mesh = new MeshData();
             int size = map.Settings.ChunkSize, ox = cx * size, oz = cz * size;
             // 预留容量（每 chunk 约 5–6 万三角形），避免 List 反复扩容拷贝
-            mesh.Positions.Capacity = 600000; mesh.Normals.Capacity = 600000; mesh.Blend.Capacity = 200000;
+            mesh.Positions.Capacity = 600000; mesh.Normals.Capacity = 600000; mesh.Blend.Capacity = 200000; mesh.Road.Capacity = 200000;
             mesh.Indices[Dirt].Capacity = 200000;
             var fRim = new Fbm(Hash.Of(seed, 911), 0.6, 2);
-            
-            var b = new Builder { M = mesh, Ox = ox, Oz = oz };
+            var road = rv.RoadMask ?? (rv.RoadMask = RoadSurface.BuildMask(map));
+
+            var b = new Builder { M = mesh, Ox = ox, Oz = oz, RoadMask = road, MW = map.W, MH = map.H };
             for (int lz = 0; lz < size; lz++)
                 for (int lx = 0; lx < size; lx++)
                 {
                     int x = ox + lx, z = oz + lz;
                     if (x >= map.W || z >= map.H) continue;
-                    Column(map, b, fRim, x, z);
+                    if (map.Slope[map.Index(x, z)] >= 0) SlopeColumn(map, b, fRim, x, z);
+                    else Column(map, b, fRim, x, z, road);
                 }
-            MergeFlat(map, b, ox, oz, size);
-            // 水面、斜坡：沿用体素网格的做法（融合权重补 0 = 泥土）
-            AppendWaterAndSlopes(rv, mesh, cx, cz, true);
+            MergeFlat(map, b, ox, oz, size, road);
+            // 水面：沿用体素网格的做法（融合权重、路面权重补 0）
+            AppendWaterAndSlopes(rv, mesh, cx, cz, true, false);
             while (mesh.Blend.Count < mesh.VertexCount) mesh.Blend.Add(0);
+            while (mesh.Road.Count < mesh.VertexCount) mesh.Road.Add(0);
             return mesh;
         }
 
@@ -54,11 +63,11 @@ namespace Wort.Generation
         public static MeshData SlopesOnly(RegionVoxels rv, int cx, int cz)
         {
             var mesh = new MeshData();
-            AppendWaterAndSlopes(rv, mesh, cx, cz, false);
+            AppendWaterAndSlopes(rv, mesh, cx, cz, false, true);
             return mesh;
         }
 
-        static void AppendWaterAndSlopes(RegionVoxels rv, MeshData mesh, int cx, int cz, bool water)
+        static void AppendWaterAndSlopes(RegionVoxels rv, MeshData mesh, int cx, int cz, bool water, bool slopes)
         {
             int size = rv.Map.Settings.ChunkSize, ox = cx * size, oz = cz * size;
             // 只看有水 / 斜坡的格（不再扫整个 chunk 的体素体积）
@@ -70,7 +79,7 @@ namespace Wort.Generation
                     int x = ox + lx, z = oz + lz;
                     if (x >= map.W || z >= map.H) continue;
                     int i = map.Index(x, z), h = map.Height[i];
-                    if (map.Slope[i] >= 0 && h >= chunk.MinY && h < chunk.MinY + chunk.SizeY)
+                    if (slopes && map.Slope[i] >= 0 && h >= chunk.MinY && h < chunk.MinY + chunk.SizeY)
                     {
                         var s = chunk.GetShape(lx, h, lz);
                         if (s != VoxelShape.Full) ChunkMesher.EmitSlope(rv, mesh, chunk.GetMaterial(lx, h, lz), (int)s - 1, x, h, z, ox, oz);
@@ -87,34 +96,247 @@ namespace Wort.Generation
             return m.Height[z * m.W + x];
         }
 
+        /// <summary>
+        /// 邻格 (x + dx, z + dz) 靠近本格那条边 / 那个角的高度：斜坡朝本格升起时是坡顶（高度 + 1），否则是格高度（斜坡取低端）。
+        /// 用来判断本格那一侧是否露出：坡顶接台面时不算露出（不画墙、不倒角、不长岩石边）。
+        /// </summary>
+        static int Low(RegionMap m, int x, int z, int dx, int dz)
+        {
+            int ax = x + dx, az = z + dz;
+            if (ax < 0) ax = 0; if (az < 0) az = 0; if (ax >= m.W) ax = m.W - 1; if (az >= m.H) az = m.H - 1;
+            int i = az * m.W + ax, up = m.Slope[i], h = m.Height[i];
+            if (up < 0) return h;
+            int ux = Grid.DX4[up], uz = Grid.DZ4[up];
+            return (dx != 0 && ux == -dx) || (dz != 0 && uz == -dz) ? h + 1 : h;
+        }
+
+        /// <summary>
+        /// 斜坡格，做法与崖顶相同：
+        /// - 坡面在露出的侧边往里收 Bevel，再倒一条随坡倾斜的斜面；侧边一圈岩石往里渐变到泥土 / 路面；
+        /// - 侧面是一整块鼓包岩石墙（崖脚 → 斜边），顶边顺着坡斜着走（SlopeSideWall）；
+        /// - 坡顶接台面、坡底接平地处不画墙、不倒角，路面连续。
+        /// </summary>
+        static void SlopeColumn(RegionMap map, Builder bd, Fbm fRim, int x, int z)
+        {
+            int h = H(map, x, z), up = map.Slope[map.Index(x, z)], dn = (up + 2) & 3;
+            int ux = Grid.DX4[up], uz = Grid.DZ4[up];
+            float cxw = x + 0.5f, czw = z + 0.5f;
+            const int K = 4;
+            float Y(float px, float pz) => h + ((px - cxw) * ux + (pz - czw) * uz + 0.5f);
+            var side = new bool[4]; var edge = new bool[4]; var low = new int[4];
+            for (int s = 0; s < 4; s++)
+            {
+                bool sideways = s != up && s != dn;
+                low[s] = Low(map, x, z, Grid.DX4[s], Grid.DZ4[s]);
+                int ni = map.Index(Math.Clamp(x + Grid.DX4[s], 0, map.W - 1), Math.Clamp(z + Grid.DZ4[s], 0, map.H - 1));
+                bool sameRamp = map.Slope[ni] == up && map.Height[ni] == h; // 并排的同一条坡道
+                side[s] = sideways && !sameRamp && low[s] <= h;   // 侧边露出（至少高的一端露出）
+                // 路面的边：侧面不是同一条坡道（低处的崖边或高处的崖脚）
+                edge[s] = sideways && !sameRamp;
+            }
+            // ---- 坡面：露出的侧边收进 Bevel ----
+            float x0 = x + (side[3] ? Bevel : 0), x1 = x + 1 - (side[1] ? Bevel : 0);
+            float z0 = z + (side[2] ? Bevel : 0), z1 = z + 1 - (side[0] ? Bevel : 0);
+            var bl = new float[(K + 1) * (K + 1)];
+            var rf = new float[(K + 1) * (K + 1)];
+            for (int j = 0; j <= K; j++)
+                for (int i = 0; i <= K; i++)
+                {
+                    float px = x0 + (x1 - x0) * i / K, pz = z0 + (z1 - z0) * j / K, d = 9, dr = 9;
+                    for (int s = 0; s < 4; s++)
+                    {
+                        float ds = 0.5f - ((px - cxw) * Grid.DX4[s] + (pz - czw) * Grid.DZ4[s]);
+                        if (side[s]) d = Math.Min(d, ds);
+                        if (edge[s]) dr = Math.Min(dr, ds);
+                    }
+                    rf[j * (K + 1) + i] = RoadEdge(dr + (float)fRim.Sample(px * 1.7 + 5.1, pz * 1.7) * 0.12f);
+                    d += (float)fRim.Sample(px * 2.3, pz * 2.3) * RimNoise;
+                    float t = (d - RimIn) / (RimOut - RimIn); t = t < 0 ? 0 : (t > 1 ? 1 : t);
+                    bl[j * (K + 1) + i] = 1 - t * t * (3 - 2 * t);
+                }
+            for (int j = 0; j < K; j++)
+                for (int i = 0; i < K; i++)
+                {
+                    float ax = x0 + (x1 - x0) * i / K, bx = x0 + (x1 - x0) * (i + 1) / K, az = z0 + (z1 - z0) * j / K, bz = z0 + (z1 - z0) * (j + 1) / K;
+                    float b00 = bl[j * (K + 1) + i], b10 = bl[j * (K + 1) + i + 1], b01 = bl[(j + 1) * (K + 1) + i], b11 = bl[(j + 1) * (K + 1) + i + 1];
+                    float r00 = rf[j * (K + 1) + i], r10 = rf[j * (K + 1) + i + 1], r01 = rf[(j + 1) * (K + 1) + i], r11 = rf[(j + 1) * (K + 1) + i + 1];
+                    bd.TriBR(Dirt, -ux, 1, -uz, ax, Y(ax, az), az, b00, r00, ax, Y(ax, bz), bz, b01, r01, bx, Y(bx, bz), bz, b11, r11);
+                    bd.TriBR(Dirt, -ux, 1, -uz, ax, Y(ax, az), az, b00, r00, bx, Y(bx, bz), bz, b11, r11, bx, Y(bx, az), az, b10, r10);
+                }
+            // ---- 四个侧面 ----
+            for (int s = 0; s < 4; s++)
+            {
+                int nx = Grid.DX4[s], nz = Grid.DZ4[s], tx = -nz, tz = nx;
+                int e = low[s];
+                float ax = cxw + nx * 0.5f - tx * 0.5f, az = czw + nz * 0.5f - tz * 0.5f;
+                float bx = cxw + nx * 0.5f + tx * 0.5f, bz = czw + nz * 0.5f + tz * 0.5f;
+                if (s == up)
+                {
+                    // 背面（坡顶一侧）比邻格高：少见，平的岩石面
+                    float y0 = Math.Max(e, h);
+                    if (y0 < h + 1) bd.Quad(Rock, nx, 0, nz, ax, y0, az, ax, h + 1, az, bx, h + 1, bz, bx, y0, bz);
+                    continue;
+                }
+                if (s == dn)
+                {
+                    if (e < h) Wall(bd, nx, nz, ax, az, bx, bz, e, h, 4, 1, 0, 1, 0, true, false);
+                    continue;
+                }
+                if (!side[s])
+                {
+                    // 侧邻更高（坡道挖进崖里）：高格的墙顶有倒角往里收，补上斜坡自己的侧面三角，免得露出细缝
+                    if (!edge[s]) continue; // 并排的同一条坡道
+                    float yA = Y(ax, az), yB = Y(bx, bz);
+                    if (yA > yB) bd.Tri(Rock, nx, 0, nz, bx, h, bz, ax, h, az, ax, yA, az);
+                    else bd.Tri(Rock, nx, 0, nz, ax, h, az, bx, h, bz, bx, yB, bz);
+                    continue;
+                }
+                // 侧面：沿墙方向 t 上，哪一端是坡的高端
+                int sgHigh = tx * ux + tz * uz > 0 ? 1 : -1;
+                float lx = sgHigh > 0 ? ax : bx, lz = sgHigh > 0 ? az : bz, hx = sgHigh > 0 ? bx : ax, hz = sgHigh > 0 ? bz : az;
+                // 两端和同一平面上相邻格的墙在公共竖边上一起鼓（规则与 Column 相同，墙顶按各端的高度）
+                var lo = new float[2]; var hi = new float[2]; // [0] = 低端，[1] = 高端
+                for (int k = 0; k < 2; k++)
+                {
+                    int sg = k == 0 ? -sgHigh : sgHigh, top = k == 0 ? h : h + 1;
+                    lo[k] = 1e9f; hi[k] = -1e9f;
+                    int hp = Low(map, x, z, sg * tx, sg * tz), hd = Low(map, x, z, nx + sg * tx, nz + sg * tz);
+                    if (hp <= hd) continue;
+                    lo[k] = Math.Max(e, hd) + 0.01f;
+                    hi[k] = hp == top ? top - Bevel - 0.01f : Math.Min(top, hp) - Bevel - 0.49f;
+                }
+                SlopeSideWall(bd, nx, nz, lx, lz, hx, hz, e, h, lo[0], hi[0], lo[1], hi[1]);
+                // 斜着的顶边倒角：墙顶（格边，坡高 − Bevel）→ 坡面边（收进 Bevel）。
+                // 侧邻和坡底同高时，倒角外沿不能低于邻格地面（否则低端露出一个看穿的小三角），这一段外沿贴着地面走
+                float ix = -nx * Bevel, iz = -nz * Bevel;
+                float w0 = e > h - Bevel ? Math.Min(1f, e - (h - Bevel)) : 0f;
+                float mx = lx + (hx - lx) * w0, mz = lz + (hz - lz) * w0;
+                if (w0 > 0)
+                    bd.Quad(Rock, nx, 1, nz, lx, e, lz, mx, e, mz, mx + ix, h + w0, mz + iz, lx + ix, h, lz + iz);
+                bd.Quad(Rock, nx, 1, nz, mx, h + w0 - Bevel, mz, hx, h + 1 - Bevel, hz, hx + ix, h + 1, hz + iz, mx + ix, h + w0, mz + iz);
+                // 两端补小三角（相邻格那一侧没有同样的倒角时不留缺口；有的话被盖住）
+                if (w0 == 0) bd.Tri(Rock, -(hx - lx), 0, -(hz - lz), lx, h - Bevel, lz, lx, h, lz, lx + ix, h, lz + iz);
+                bd.Tri(Rock, hx - lx, 0, hz - lz, hx, h + 1 - Bevel, hz, hx, h + 1, hz, hx + ix, h + 1, hz + iz);
+            }
+        }
+
+        /// <summary>
+        /// 斜坡侧面的岩石墙：从崖脚 e 到斜着的顶边（低端 h − Bevel，高端 h + 1 − Bevel）。
+        /// 行按世界高度对齐（和 Wall 相同），每行从斜边到高端均分列；鼓包、错开、崖脚外扩的算法与 Wall 相同，
+        /// 斜边上的点不动（接倒角），两端的列只在 [lo, hi] 里动（和相邻格的墙一致）。
+        /// </summary>
+        static void SlopeSideWall(Builder bd, float nx, float nz, float lx, float lz, float hx, float hz, int e, int h,
+            float loL, float hiL, float loH, float hiH)
+        {
+            // 北面（坡道背面）也鼓，而且鼓得更多，让坡道外形不那么横平竖直（负责人 2026-11-12）；
+            // 端头不动，因为相邻崖面的北墙不细分、不鼓
+            bool south = nz < -0.5f, north = nz > 0.5f;
+            float step = south ? 0.25f : 0.5f;
+            int C = south ? 8 : (north ? 4 : 2);
+            float bulgeK = north ? 1.8f : 1f, flareK = north ? 2f : 1f;
+            if (north) { loL = 1e9f; hiL = -1e9f; loH = 1e9f; hiH = -1e9f; }
+            float top0 = h - Bevel, top1 = h + 1 - Bevel;
+            var rows = new List<float> { e };
+            for (float y = (float)Math.Floor(e / step + 1.001f) * step; y < top1 - step * 0.4f; y += step) rows.Add(y);
+            rows.Add(top1);
+            int R = rows.Count - 1;
+            float tx = -nz, tz = nx;
+            float plane = lx * nx + lz * nz;
+            float alongL = lx * tx + lz * tz, alongH = hx * tx + hz * tz;
+            var vb = vorBig ?? (vorBig = new VorCache()); var vs = vorSmall ?? (vorSmall = new VorCache());
+            vb.Init(Math.Min(alongL, alongH) - 0.3f, Math.Max(alongL, alongH) + 0.3f, e - 0.3f, top1 + 0.3f, 2.2f, (uint)(plane * 977 + 3));
+            vs.Init(Math.Min(alongL, alongH) - 0.3f, Math.Max(alongL, alongH) + 0.3f, e - 0.3f, top1 + 0.3f, 0.65f, (uint)(plane * 977 + 11));
+            int nv = (C + 1) * (R + 1);
+            var px = new float[nv]; var py = new float[nv]; var pz = new float[nv];
+            for (int r = 0; r <= R; r++)
+            {
+                float y = rows[r];
+                float ws = y > top0 ? Math.Min(1f, y - top0) : 0f; // 这一行从斜边开始的位置（0 = 低端）
+                for (int c = 0; c <= C; c++)
+                {
+                    int k = r * (C + 1) + c;
+                    float w = ws + (1 - ws) * c / C;
+                    float X = lx + (hx - lx) * w, Z = lz + (hz - lz) * w, Y = y;
+                    bool diag = c == 0 && ws > 0, lowEnd = c == 0 && ws == 0, highEnd = c == C;
+                    bool move;
+                    if (r == R || diag) move = false;
+                    else if (lowEnd) move = r > 0 && Y > loL && Y < hiL;
+                    else if (highEnd) move = r > 0 && Y > loH && Y < hiH;
+                    else move = r > 0;
+                    if (move)
+                    {
+                        float along = X * tx + Z * tz;
+                        bool end = lowEnd || highEnd;
+                        uint hsh = Hash.Of((int)Math.Floor(along * 8 + 0.5f), (int)Math.Floor(Y * 8 + 0.5f), (uint)(plane * 131 + 7));
+                        float jy = ((hsh & 0xFF) / 255f - 0.5f) * 0.44f * Math.Min(step, 0.5f);
+                        float ju = end ? 0 : (((hsh >> 8) & 0xFF) / 255f - 0.5f) * 0.12f;
+                        // 斜边附近：错开和鼓包都逐渐减弱（离斜边 0.4m 以内），列挤在一起时不沿墙错开，免得三角形交叉
+                        float below = top0 + w - Y, fade = below / 0.4f; fade = fade < 0 ? 0 : (fade > 1 ? 1 : fade);
+                        if (!end) { jy *= fade; ju *= fade * (1 - ws); }
+                        Y += jy; along += ju; X += tx * ju; Z += tz * ju;
+                        float qb = 1 - vb.F1(along, Y) * 1.6f; qb = qb < 0 ? 0 : qb;
+                        float qs = 1 - vs.F1(along, Y) * 1.7f; qs = qs < 0 ? 0 : qs;
+                        float off = Bulge * bulgeK * (0.05f + 0.45f * qb + 0.6f * qs) * (end ? 1 : fade);
+                        { float ft = 1 - (Y - e) / 0.7f; if (ft > 0) off += FootFlare * flareK * ft * ft; }
+                        X += nx * off; Z += nz * off;
+                    }
+                    else if (r == 0 && !lowEnd && !highEnd && !diag)
+                    {
+                        X += nx * FootFlare * flareK; Z += nz * FootFlare * flareK;
+                    }
+                    px[k] = X; py[k] = Y; pz[k] = Z;
+                }
+            }
+            for (int r = 0; r < R; r++)
+                for (int c = 0; c < C; c++)
+                {
+                    int a = r * (C + 1) + c, b2 = a + 1, d = a + C + 1, f = d + 1;
+                    bd.Tri(Rock, nx, 0, nz, px[a], py[a], pz[a], px[d], py[d], pz[d], px[f], py[f], pz[f]);
+                    bd.Tri(Rock, nx, 0, nz, px[a], py[a], pz[a], px[f], py[f], pz[f], px[b2], py[b2], pz[b2]);
+                }
+        }
+
         /// <summary>一格：顶面（含边缘材质）、每个露出侧面的墙、顶边倒角、角上的倒角面。墙归高的那一格。</summary>
-        static void Column(RegionMap map, Builder bd, Fbm fRim, int x, int z)
+        static void Column(RegionMap map, Builder bd, Fbm fRim, int x, int z, float[] road)
         {
             int h = H(map, x, z);
             float cxw = x + 0.5f, czw = z + 0.5f;
             var exposed = new bool[4];
-            for (int s = 0; s < 4; s++) exposed[s] = H(map, x + Grid.DX4[s], z + Grid.DZ4[s]) < h;
+            for (int s = 0; s < 4; s++) exposed[s] = Low(map, x, z, Grid.DX4[s], Grid.DZ4[s]) < h;
 
             // ---- 顶面：露出的边往里收 Bevel ----
             float x0 = x + (exposed[3] ? Bevel : 0), x1 = x + 1 - (exposed[1] ? Bevel : 0);
             float z0 = z + (exposed[2] ? Bevel : 0), z1 = z + 1 - (exposed[0] ? Bevel : 0);
             bool rim = false;
             for (int s = 0; s < 4; s++) if (exposed[s]) rim = true;
-            for (int dz = -1; dz <= 1; dz += 2) for (int dx = -1; dx <= 1; dx += 2) if (H(map, x + dx, z + dz) < h) rim = true;
-            if (rim) // 平地格（不靠崖边）在 MergeFlat 里按矩形合并
+            for (int dz = -1; dz <= 1; dz += 2) for (int dx = -1; dx <= 1; dx += 2) if (Low(map, x, z, dx, dz) < h) rim = true;
+            if (rim || RoadSurface.Near(road, map.W, map.H, x, z)) // 平地格（不靠崖边、不靠路）在 MergeFlat 里按矩形合并
             {
                 const int K = 4;
                 var bl = new float[(K + 1) * (K + 1)];
+                var rf = new float[(K + 1) * (K + 1)];
                 for (int j = 0; j <= K; j++)
                     for (int i = 0; i <= K; i++)
                     {
                         float px = x0 + (x1 - x0) * i / K, pz = z0 + (z1 - z0) * j / K;
+                        // 路面离边距离：四邻 / 对角任何高差（更低的崖边、更高的崖脚）都算边
+                        float dr = 9;
+                        for (int s = 0; s < 4; s++)
+                            if (Low(map, x, z, Grid.DX4[s], Grid.DZ4[s]) != h) dr = Math.Min(dr, 0.5f - ((px - cxw) * Grid.DX4[s] + (pz - czw) * Grid.DZ4[s]));
+                        for (int dz = -1; dz <= 1; dz += 2)
+                            for (int dx = -1; dx <= 1; dx += 2)
+                                if (Low(map, x, z, dx, dz) != h)
+                                {
+                                    float kx = cxw + dx * 0.5f - px, kz = czw + dz * 0.5f - pz;
+                                    dr = Math.Min(dr, (float)Math.Sqrt(kx * kx + kz * kz));
+                                }
+                        rf[j * (K + 1) + i] = RoadEdge(dr + (float)fRim.Sample(px * 1.7 + 5.1, pz * 1.7) * 0.12f);
                         float d = 9;
                         for (int s = 0; s < 4; s++)
                             if (exposed[s]) d = Math.Min(d, 0.5f - ((px - cxw) * Grid.DX4[s] + (pz - czw) * Grid.DZ4[s]));
                         for (int dz = -1; dz <= 1; dz += 2)
                             for (int dx = -1; dx <= 1; dx += 2)
-                                if (H(map, x + dx, z + dz) < h)
+                                if (Low(map, x, z, dx, dz) < h)
                                 {
                                     float kx = cxw + dx * 0.5f - px, kz = czw + dz * 0.5f - pz;
                                     d = Math.Min(d, (float)Math.Sqrt(kx * kx + kz * kz));
@@ -129,8 +351,9 @@ namespace Wort.Generation
                         float ax = x0 + (x1 - x0) * i / K, bx = x0 + (x1 - x0) * (i + 1) / K;
                         float az = z0 + (z1 - z0) * j / K, bz = z0 + (z1 - z0) * (j + 1) / K;
                         float b00 = bl[j * (K + 1) + i], b10 = bl[j * (K + 1) + i + 1], b01 = bl[(j + 1) * (K + 1) + i], b11 = bl[(j + 1) * (K + 1) + i + 1];
-                        bd.TriB(Dirt, 0, 1, 0, ax, h, az, b00, ax, h, bz, b01, bx, h, bz, b11);
-                        bd.TriB(Dirt, 0, 1, 0, ax, h, az, b00, bx, h, bz, b11, bx, h, az, b10);
+                        float r00 = rf[j * (K + 1) + i], r10 = rf[j * (K + 1) + i + 1], r01 = rf[(j + 1) * (K + 1) + i], r11 = rf[(j + 1) * (K + 1) + i + 1];
+                        bd.TriBR(Dirt, 0, 1, 0, ax, h, az, b00, r00, ax, h, bz, b01, r01, bx, h, bz, b11, r11);
+                        bd.TriBR(Dirt, 0, 1, 0, ax, h, az, b00, r00, bx, h, bz, b11, r11, bx, h, az, b10, r10);
                     }
             }
 
@@ -140,7 +363,7 @@ namespace Wort.Generation
                 if (!exposed[s]) continue;
                 int nx = Grid.DX4[s], nz = Grid.DZ4[s];
                 int tx = -nz, tz = nx;                      // 沿墙方向
-                int hn = H(map, x + nx, z + nz);
+                int hn = Low(map, x, z, nx, nz);
                 bool ns = nz != 0;                          // 南北向的墙负责角上的共享面
                 // 墙上一点：u ∈ [-0.5, 0.5] 沿墙，k = 往格内收的距离
                 float PX(float u, float k) => cxw + nx * (0.5f - k) + tx * u;
@@ -155,7 +378,7 @@ namespace Wort.Generation
                     for (int e = 0; e < 2; e++)
                     {
                         int sg = e == 0 ? -1 : 1;
-                        int hp = H(map, x + sg * tx, z + sg * tz), hd = H(map, x + nx + sg * tx, z + nz + sg * tz);
+                        int hp = Low(map, x, z, sg * tx, sg * tz), hd = Low(map, x, z, nx + sg * tx, nz + sg * tz);
                         bool perpSolid = hp > y, diagSolid = hd > y;
                         int kind = !perpSolid && !diagSolid ? 1 : (perpSolid && diagSolid ? 2 : 0);
                         if (e == 0) kindA[k] = kind; else kindB[k] = kind;
@@ -178,7 +401,7 @@ namespace Wort.Generation
                         endLo[e] = 1e9f; endHi[e] = -1e9f;
                         if ((e == 0 ? kA : kB) != 0) continue;
                         int sg = e == 0 ? -1 : 1;
-                        int hp = H(map, x + sg * tx, z + sg * tz), hd = H(map, x + nx + sg * tx, z + nz + sg * tz);
+                        int hp = Low(map, x, z, sg * tx, sg * tz), hd = Low(map, x, z, nx + sg * tx, nz + sg * tz);
                         if (hp <= hd) continue;
                         endLo[e] = Math.Max(hn, hd) + 0.01f;
                         endHi[e] = hp == h ? h - Bevel - 0.01f : Math.Min(h, hp) - Bevel - 0.49f;
@@ -202,11 +425,14 @@ namespace Wort.Generation
                             }
                             else if (kind == 2)
                             {
-                                int hq = H(map, x + nx + sg * tx, z + nz + sg * tz);
+                                int hq = Low(map, x, z, nx + sg * tx, nz + sg * tz);
                                 float yTop = Math.Min(y1, hq - Bevel);
                                 float kx = cxw + nx * 0.5f + tx * sg * 0.5f, kz = czw + nz * 0.5f + tz * sg * 0.5f; // 凹角的竖边
                                 float qx = kx + nx * Fillet, qz = kz + nz * Fillet;
                                 if (yTop > y0) bd.Quad(Rock, nx - tx * sg, 0, nz - tz * sg, PX(ue, 0), y0, PZ(ue, 0), PX(ue, 0), yTop, PZ(ue, 0), qx, yTop, qz, qx, y0, qz);
+                                // 对角格比本格低（但高于墙脚）：内倒角只到对角格的倒角底，再补到对角格顶面的一小片，否则凹角处露缝
+                                if (hq < h && yTop > y0 && yTop >= hq - Bevel - 1e-4f && yTop < y1)
+                                    bd.Tri(Rock, nx - tx * sg, 1, nz - tz * sg, PX(ue, 0), yTop, PZ(ue, 0), qx, yTop, qz, kx, hq, kz);
                             }
                         }
                     k0 = k1;
@@ -221,7 +447,7 @@ namespace Wort.Generation
                     for (int e = 0; e < 2; e++)
                     {
                         int sg = e == 0 ? -1 : 1;
-                        bool perpExposed = H(map, x + sg * tx, z + sg * tz) < h;
+                        bool perpExposed = Low(map, x, z, sg * tx, sg * tz) < h;
                         tEnd[e] = perpExposed ? Bevel : 0;
                     }
                     float tu0 = -0.5f + tEnd[0], tu1 = 0.5f - tEnd[1];
@@ -245,13 +471,13 @@ namespace Wort.Generation
                             // 旁边是同高 / 更高的格：倒角的端头补一个三角（角点在 h 上）。
                             // 旁边那格同高、同一侧也露出时，两段倒角本来就连成一条，端头不补（否则是一片悬在斜面上的小三角）
                             float kx = PX(sg * 0.5f, 0), kz = PZ(sg * 0.5f, 0);
-                            int hp2 = H(map, x + sg * tx, z + sg * tz), hpn = H(map, x + sg * tx + nx, z + sg * tz + nz);
+                            int hp2 = Low(map, x, z, sg * tx, sg * tz), hpn = Low(map, x, z, sg * tx + nx, sg * tz + nz);
                             bool continues = hp2 == h && hpn < h;
                             if (!continues)
                                 bd.Tri(Rock, nx - tx * sg * 0.3f, 1, nz - tz * sg * 0.3f,
                                     PX(ut, Bevel), h, PZ(ut, Bevel), kx, h, kz, PX(ub, 0), y1, PZ(ub, 0));
                             // 凹角且对角格同高：两道倒角之间再补一片（内倒角的顶部），南北向的墙负责
-                            int hq = H(map, x + nx + sg * tx, z + nz + sg * tz);
+                            int hq = Low(map, x, z, nx + sg * tx, nz + sg * tz);
                             if (ns && endKind[e] == 2 && hq == h)
                             {
                                 float qx = kx + nx * Fillet, qz = kz + nz * Fillet;
@@ -390,7 +616,7 @@ namespace Wort.Generation
         }
 
         /// <summary>不靠崖边的平地格（四邻和四个对角都不比它低），同高的按矩形贪心合并成一块顶面（泥土）。</summary>
-        static void MergeFlat(RegionMap map, Builder bd, int ox, int oz, int size)
+        static void MergeFlat(RegionMap map, Builder bd, int ox, int oz, int size, float[] road)
         {
             var done = new bool[size * size];
             bool Flat(int lx, int lz)
@@ -398,7 +624,8 @@ namespace Wort.Generation
                 int x = ox + lx, z = oz + lz;
                 if (x >= map.W || z >= map.H) return false;
                 int h = H(map, x, z);
-                for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) if (H(map, x + dx, z + dz) < h) return false;
+                if (map.Slope[map.Index(x, z)] >= 0 || RoadSurface.Near(road, map.W, map.H, x, z)) return false;
+                for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) if ((dx != 0 || dz != 0) && Low(map, x, z, dx, dz) < h) return false;
                 return true;
             }
             var flat = new bool[size * size];
@@ -424,6 +651,7 @@ namespace Wort.Generation
         sealed class Builder
         {
             public MeshData M; public int Ox, Oz;
+            public float[] RoadMask; public int MW, MH;
 
             public void Quad(int mat, float hx, float hy, float hz,
                 float ax, float ay, float az, float bx, float by, float bz, float cx, float cy, float cz, float dx, float dy, float dz)
@@ -439,6 +667,11 @@ namespace Wort.Generation
             /// <summary>带每个顶点融合权重的三角形。</summary>
             public void TriB(int mat, float hx, float hy, float hz,
                 float ax, float ay, float az, float ba, float bx, float by, float bz, float bb, float cx, float cy, float cz, float bc)
+                => TriBR(mat, hx, hy, hz, ax, ay, az, ba, 1, bx, by, bz, bb, 1, cx, cy, cz, bc, 1);
+
+            /// <summary>带融合权重和路面系数（离边越近越小，乘在路面遮罩上）的三角形。</summary>
+            public void TriBR(int mat, float hx, float hy, float hz,
+                float ax, float ay, float az, float ba, float ra, float bx, float by, float bz, float bb, float rb, float cx, float cy, float cz, float bc, float rc)
             {
                 float ux = bx - ax, uy = by - ay, uz = bz - az, wx = cx - ax, wy = cy - ay, wz = cz - az;
                 float nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
@@ -449,17 +682,18 @@ namespace Wort.Generation
                 if (!same) { nx = -nx; ny = -ny; nz = -nz; }
                 var list = M.Indices[mat];
                 int v0 = M.VertexCount;
-                Add(ax, ay, az, nx, ny, nz, ba);
-                if (same) { Add(bx, by, bz, nx, ny, nz, bb); Add(cx, cy, cz, nx, ny, nz, bc); }
-                else { Add(cx, cy, cz, nx, ny, nz, bc); Add(bx, by, bz, nx, ny, nz, bb); }
+                Add(ax, ay, az, nx, ny, nz, ba, ra);
+                if (same) { Add(bx, by, bz, nx, ny, nz, bb, rb); Add(cx, cy, cz, nx, ny, nz, bc, rc); }
+                else { Add(cx, cy, cz, nx, ny, nz, bc, rc); Add(bx, by, bz, nx, ny, nz, bb, rb); }
                 list.Add(v0); list.Add(v0 + 1); list.Add(v0 + 2);
             }
 
-            void Add(float x, float y, float z, float nx, float ny, float nz, float blend)
+            void Add(float x, float y, float z, float nx, float ny, float nz, float blend, float roadK)
             {
                 M.Positions.Add(x - Ox); M.Positions.Add(y); M.Positions.Add(z - Oz);
                 M.Normals.Add(nx); M.Normals.Add(ny); M.Normals.Add(nz);
                 M.Blend.Add(blend);
+                M.Road.Add(ny > 0.6f && RoadMask != null ? RoadSurface.Weight(RoadMask, MW, MH, x, z) * roadK : 0f);
             }
         }
     }

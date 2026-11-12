@@ -19,6 +19,8 @@ namespace Wort.Generation
         public int MinRampedPlateau = 60;
         /// <summary>坡道宽（格）。</summary>
         public int RampWidth = 2;
+        /// <summary>坡道里两格斜坡之间的平台长度（格）。负责人 2026-11-12：坡道要更缓，仍不出现连续两格斜坡。</summary>
+        public int RampFlat = 2;
         /// <summary>
         /// 随机 chunk（随机区域）。外圈不可通行高地挨着它们的那一段在烘焙时就压低、做成逐级下降（从最外圈开始融合），
         /// 免得随机区域刷新时贴着一道离谱的高崖（负责人 2026-11-11）。
@@ -1004,7 +1006,7 @@ namespace Wort.Generation
                     int fGeom = 0, fLost = 0;
                     foreach (var c in cands)
                     {
-                        if (!TryRamp(m, cls, c, s.RampWidth, out var undo) && !TryRampInner(m, cls, c, s.RampWidth, out undo)) { fGeom++; continue; }
+                        if (!TryRamp(m, cls, c, s.RampWidth, s.RampFlat, out var undo) && !TryRampInner(m, cls, c, s.RampWidth, s.RampFlat, out undo)) { fGeom++; continue; }
                         var g2 = Good(m, cls, spawn);
                         bool lost = false;
                         int newCount = 0;
@@ -1103,7 +1105,7 @@ namespace Wort.Generation
                 cands.Sort((p, q) => p.Diff != q.Diff ? p.Diff.CompareTo(q.Diff) : p.Key.CompareTo(q.Key));
                 foreach (var c in cands)
                 {
-                    if (!TryRamp(m, cls, c, s.RampWidth, out var undo)) continue;
+                    if (!TryRamp(m, cls, c, s.RampWidth, s.RampFlat, out var undo)) continue;
                     var g2 = Good(m, cls, spawn);
                     bool lost = false;
                     for (int i = 0; i < N; i++) if (good[i] && !g2[i]) { lost = true; break; }
@@ -1117,10 +1119,10 @@ namespace Wort.Generation
         struct Saved { public int I, H; public sbyte S; public CellFlags F; }
 
         /// <summary>
-        /// 在低的一侧铺坡道：从高格往外，斜坡、平台、斜坡、平台……（单格斜坡，不连续），宽 width 格。
-        /// 高差 d 时占地 2d−1 格，外面还要 1 格同高平地落脚。
+        /// 在低的一侧铺坡道：从高格往外，斜坡、flat 格平台、斜坡……（单格斜坡，不连续），宽 width 格。
+        /// 高差 d 时占地 d + (d−1)·flat 格，外面还要 1 格同高平地落脚。
         /// </summary>
-        static bool TryRamp(RegionMap m, byte[] cls, Cand c, int width, out List<Saved> undo)
+        static bool TryRamp(RegionMap m, byte[] cls, Cand c, int width, int flat, out List<Saved> undo)
         {
             undo = null;
             int W = m.W;
@@ -1129,7 +1131,7 @@ namespace Wort.Generation
             int low = T - c.Diff;
             int px = Grid.DX4[(c.Dir + 1) & 3], pz = Grid.DZ4[(c.Dir + 1) & 3];
             int dx = Grid.DX4[c.Dir], dz = Grid.DZ4[c.Dir];
-            int L = 2 * c.Diff - 1;
+            int L = c.Diff + (c.Diff - 1) * flat;
             for (int k = 0; k < width; k++)
             {
                 int hx = tx + px * k, hz = tz + pz * k;
@@ -1153,9 +1155,9 @@ namespace Wort.Generation
                 {
                     int x = hx + dx * j, z = hz + dz * j, i = z * W + x;
                     undo.Add(new Saved { I = i, H = m.Height[i], S = m.Slope[i], F = m.Flags[i] });
-                    int step = (j - 1) / 2;            // 第几级
+                    int step = (j - 1) / (1 + flat);   // 第几级
                     m.Height[i] = T - 1 - step;
-                    m.Slope[i] = (j % 2 == 1) ? (sbyte)Opp(c.Dir) : (sbyte)-1; // 奇数格是斜坡，偶数格是平台
+                    m.Slope[i] = ((j - 1) % (1 + flat) == 0) ? (sbyte)Opp(c.Dir) : (sbyte)-1; // 每级第一格是斜坡，其余是平台
                     m.Flags[i] |= CellFlags.Ramp;
                 }
             }
@@ -1164,7 +1166,7 @@ namespace Wort.Generation
         }
 
         /// <summary>备选：坡道挖进高的一侧（从崖边往里：斜坡、平台、斜坡……，最后接回台面）。</summary>
-        static bool TryRampInner(RegionMap m, byte[] cls, Cand c, int width, out List<Saved> undo)
+        static bool TryRampInner(RegionMap m, byte[] cls, Cand c, int width, int flat, out List<Saved> undo)
         {
             undo = null;
             int W = m.W;
@@ -1173,7 +1175,7 @@ namespace Wort.Generation
             int dx = Grid.DX4[up], dz = Grid.DZ4[up];
             int px = Grid.DX4[(c.Dir + 1) & 3], pz = Grid.DZ4[(c.Dir + 1) & 3];
             int tx = c.Top % W, tz = c.Top / W;
-            int L = 2 * c.Diff - 1;
+            int L = c.Diff + (c.Diff - 1) * flat;
             for (int k = 0; k < width; k++)
             {
                 int ex = tx + px * k, ez = tz + pz * k;
@@ -1198,9 +1200,8 @@ namespace Wort.Generation
                 {
                     int x = ex + dx * j, z = ez + dz * j, i = z * W + x;
                     undo.Add(new Saved { I = i, H = m.Height[i], S = m.Slope[i], F = m.Flags[i] });
-                    int step = (j + 1) / 2;
-                    m.Height[i] = low + step;
-                    m.Slope[i] = (j % 2 == 0) ? (sbyte)up : (sbyte)-1; // 偶数格是斜坡，奇数格是平台
+                    m.Height[i] = low + (j + flat) / (1 + flat);
+                    m.Slope[i] = (j % (1 + flat) == 0) ? (sbyte)up : (sbyte)-1; // 每级第一格是斜坡，其余是平台
                     m.Flags[i] |= CellFlags.Ramp;
                 }
             }

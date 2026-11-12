@@ -136,6 +136,8 @@ namespace Wort.Generation
         public readonly RegionMap Map;
         public readonly VoxelChunk[] Chunks;
         public readonly int MinY, SizeY;
+        /// <summary>路面遮罩（RoadSurface.BuildMask），第一次画网格时算好缓存。</summary>
+        public float[] RoadMask;
 
         public RegionVoxels(RegionMap map)
         {

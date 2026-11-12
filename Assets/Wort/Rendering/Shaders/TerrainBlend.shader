@@ -1,4 +1,5 @@
-// 地形融合着色器（《地形外观与崖面美术规范》方案 B）：泥土 / 岩石两张贴图按顶点色 r（CliffMesher 写的融合权重）混合。
+// 地形融合着色器（《地形外观与崖面美术规范》方案 B）：泥土 / 岩石两张贴图按顶点色 r（CliffMesher 写的融合权重）混合；
+// 路面贴图按顶点色 g（RoadSurface 的路面权重）先盖在泥土上，岩石再盖在最上面。路面交界公式与 TerrainTextures.MixRoad 相同。
 // - 投影：顶面用世界 xz，侧面用沿墙坐标和 y（按法线选），1m 一张；再取一组 2.3m 一张的坐标平均，减轻平铺重复；
 // - 交界：权重 + 两张贴图 alpha（高度）之差，高的先露出来，公式与 Wort.Generation.TerrainTextures.Mix 相同；
 // - 光照：主光漫反射 + 阴影 + 环境光（SH）。阴影投射 / 深度沿用 URP Lit 的 pass。
@@ -8,6 +9,7 @@ Shader "Wort/TerrainBlend"
     {
         _DirtTex ("Dirt (RGB, A = height)", 2D) = "white" {}
         _RockTex ("Rock (RGB, A = height)", 2D) = "gray" {}
+        _RoadTex ("Road (RGB, A = height)", 2D) = "gray" {}
         _Contrast ("Height Contrast", Float) = 0.6
         _EdgeWidth ("Edge Width", Float) = 0.12
     }
@@ -30,9 +32,11 @@ Shader "Wort/TerrainBlend"
 
             TEXTURE2D(_DirtTex); SAMPLER(sampler_DirtTex);
             TEXTURE2D(_RockTex); SAMPLER(sampler_RockTex);
+            TEXTURE2D(_RoadTex); SAMPLER(sampler_RoadTex);
             CBUFFER_START(UnityPerMaterial)
                 float4 _DirtTex_ST;
                 float4 _RockTex_ST;
+                float4 _RoadTex_ST;
                 float _Contrast;
                 float _EdgeWidth;
             CBUFFER_END
@@ -44,6 +48,7 @@ Shader "Wort/TerrainBlend"
                 float3 positionWS : TEXCOORD0;
                 float3 normalWS : TEXCOORD1;
                 float blend : TEXCOORD2;
+                float road : TEXCOORD4;
                 float fog : TEXCOORD3;
             };
 
@@ -55,6 +60,7 @@ Shader "Wort/TerrainBlend"
                 o.positionWS = p.positionWS;
                 o.normalWS = TransformObjectToWorldNormal(v.normalOS);
                 o.blend = v.color.r;
+                o.road = v.color.g;
                 o.fog = ComputeFogFactor(p.positionCS.z);
                 return o;
             }
@@ -66,6 +72,16 @@ Shader "Wort/TerrainBlend"
                 float2 uv2 = uv * 0.43 + float2(0.31, 0.17);
                 half4 d = (SAMPLE_TEXTURE2D(_DirtTex, sampler_DirtTex, uv) + SAMPLE_TEXTURE2D(_DirtTex, sampler_DirtTex, uv2)) * 0.5;
                 half4 r = (SAMPLE_TEXTURE2D(_RockTex, sampler_RockTex, uv) + SAMPLE_TEXTURE2D(_RockTex, sampler_RockTex, uv2)) * 0.5;
+                // 路面盖在泥土上（只在朝上的面）
+                float q = 0;
+                if (i.road > 0.001 && n.y > 0.6)
+                {
+                    half4 rd = (SAMPLE_TEXTURE2D(_RoadTex, sampler_RoadTex, uv) + SAMPLE_TEXTURE2D(_RoadTex, sampler_RoadTex, uv2)) * 0.5;
+                    float wr = i.road;
+                    float tr = wr + (rd.a - d.a) * 0.8 * (1 - abs(2 * wr - 1));
+                    q = saturate((tr - 0.5) / 0.15 + 0.5);
+                    d.rgb = lerp(d.rgb, rd.rgb, q);
+                }
                 float w = i.blend;
                 float t = w + (r.a - d.a) * _Contrast * (1 - abs(2 * w - 1));
                 float m = saturate((t - 0.5) / _EdgeWidth + 0.5);

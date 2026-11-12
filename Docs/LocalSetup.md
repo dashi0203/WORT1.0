@@ -69,14 +69,17 @@ git pull origin claude/bold-bardeen-vlwhjd
 `LayoutTests` 测 layout 管线（Docs/WorldGen.md）：8×8 测试 layout 的 checksum 应为 `0x8C73CCB3`，检查全部通过，盆地能进能出，没有斜坡体素，挖坑的反例要报错。
 layout 管线目前只在云端预览和测试里用，TerrainLab 场景还是旧生成器。
 
-**体素器 5×5 与崖面外观**：Terrain Lab 的 Inspector 里 `Generator` 选 `Terrace5x5`、`Seed` 填 3，生成后 checksum 应为 `0x30884FC1`。
+**体素器 5×5 与崖面外观**：Terrain Lab 的 Inspector 里 `Generator` 选 `Terrace5x5`、`Seed` 填 3，生成后 checksum 应为 `0xDA849612`（不勾 `Random Chunk` 时）。
 `Cliff Dressing` 勾上时显示崖面外观原型（方案 B：立方体 + 倒角、侧面外鼓、泥土顶面边缘一圈岩石），取消勾选是原来的方块；
 勾上时地面用 `Wort/TerrainBlend` 着色器（泥土 / 岩石两张 128×128 贴图融合）；碰撞是 1m 格按同高矩形合并的 BoxCollider 加斜坡小网格（`Collider` 子物体）。
 勾上 `Random Chunk`（默认勾上）时，右上角 chunk（3,3）是随机 chunk；Inspector 里点“重新生成随机 chunk”换一次（序号 +1），只重建它和周围一圈，
 Console 打印 `[TerrainLab] 刷新 k  ID 3:xxxxxxxx：通过 / 失败 …`、之前失败的重试及原因，以及各步耗时。种子 3、序号 0 的刷新 ID 应为 `3:0FD0E8BD`，
-随机区域 checksum 应为 `0x0088F7E9`（与云端 `--random --seed 3` 的刷新 1 相同）。反馈时请附开关前后的截图。
+随机区域 checksum 应为 `0x2A8FBBED`（与云端 `--random --seed 3` 的刷新 1 相同）。反馈时请附开关前后的截图。
 **刷新 ID**：Inspector 里显示当前的刷新 ID，可点“复制”；把 ID 填进“重放 ID”再点“按 ID 重放”，就能复现那一次刷新（ID 里的世界种子和当前不同时会先换种子、整张重新生成）。
 云端用 `--rid 3:0FD0E8BD` 复现同一次。反馈随机 chunk 的问题时请附上 ID。
+**坡道与路面**（2026-11-12）：坡道画成和崖面同一套外观（坡面边缘倒角、岩石边、侧面鼓包墙），坡面和坡顶 / 坡底各 1 格显示路面；
+勾 `Random Chunk` 时还会从出生点到随机 chunk 的两个候选出入口铺测试道路，随机 chunk 里沿房间连接图铺小径（连通测试）。
+Console 会打印“固定世界道路：……铺通 / 铺不通”。路面用第三张贴图（`Wort/TerrainBlend` 的 `_RoadTex`，顶点色 g 通道），请看路边是否自然、有没有接缝。
 
 ## 6. 本地改动约定
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Wort.Generation
 {
@@ -79,6 +80,8 @@ namespace Wort.Generation
         public uint RefreshSeed, AttemptSeed;
         /// <summary>之前失败的重试及原因。</summary>
         public List<string> AttemptLog = new List<string>();
+        /// <summary>小径铺不通的段（连通测试）。空 = 全部铺通。</summary>
+        public List<string> RoadFails = new List<string>();
         public bool Ok;
         public List<string> Report = new List<string>();
     }
@@ -185,6 +188,29 @@ namespace Wort.Generation
                     res.Add(new RegionEntrance { X = pick % W, Z = pick / W, Dir = TerraceField.Opp(d) });
                 }
             return res;
+        }
+
+        /// <summary>
+        /// 连通测试用的固定世界道路：从出生点到每个候选出入口各铺一条路（只走固定世界，不进随机区域，不靠跳跃）。
+        /// 直接改 baked（之后的刷新都带着这些路）。返回报告行。
+        /// </summary>
+        public static List<string> ConnectFixed(RegionMap baked, byte[] cls, IList<(int cx, int cz)> chunks, IList<RegionEntrance> candidates)
+        {
+            var lines = new List<string>();
+            var region = RegionMask(baked, cls, chunks);
+            var allowed = new bool[region.Length];
+            for (int i = 0; i < allowed.Length; i++) allowed[i] = !region[i];
+            int spawn = baked.Index(baked.SpawnX, baked.SpawnZ);
+            int ok = 0;
+            foreach (var e in candidates)
+            {
+                var path = RoadNet.Find(baked, cls, spawn, e.Z * baked.W + e.X, allowed);
+                if (path == null) { lines.Add($"固定世界道路：出生点 → 候选出入口 ({e.X},{e.Z}) 铺不通"); continue; }
+                RoadNet.Paint(baked, path, 2, allowed);
+                ok++;
+                lines.Add($"固定世界道路：出生点 → 候选出入口 ({e.X},{e.Z}) 铺通，{path.Count} 格");
+            }
+            return lines;
         }
 
         /// <summary>某次刷新的刷新种子：世界种子 + 区域编号 + 第几次刷新。和世界种子一起组成可复制的刷新 ID（见 <see cref="FormatId"/>）。</summary>
@@ -753,7 +779,7 @@ namespace Wort.Generation
                 if (!region[i]) continue;
                 m.Slope[i] = -1;
                 m.Water[i] = RegionMap.NoWater;
-                m.Flags[i] &= ~(CellFlags.Ramp | CellFlags.Pond | CellFlags.CliffEdge | CellFlags.Unreachable);
+                m.Flags[i] &= ~(CellFlags.Ramp | CellFlags.Pond | CellFlags.CliffEdge | CellFlags.Unreachable | CellFlags.Road);
                 if (roomOf[i] >= 0)
                 {
                     int x = i % W, z = i / W;
@@ -1190,6 +1216,101 @@ namespace Wort.Generation
             int dead = 0; foreach (int v in dg) if (v == 1) dead++;
             int pathLen = -1;
             if (openIdx.Count >= 2) pathLen = depth[entRoom[openIdx[1]]];
+
+            // ---------- 15. 小径（连通测试）：开放出入口 → 所在房间，再沿连接图把相邻房间的中心连起来；不靠跳跃 ----------
+            {
+                var walk = new bool[N];
+                foreach (int i in win) walk[i] = region[i] && !noStand[i];
+                var center = new int[nr];
+                var best = new float[nr];
+                for (int k = 0; k < nr; k++) { center[k] = -1; best[k] = -1; }
+                foreach (int i in win)
+                {
+                    int k = roomOf[i];
+                    if (k < 0 || m.HasWater(i) || rock[i] || !walk[i]) continue;
+                    if (distWall[i] > best[k] || (distWall[i] == best[k] && i < center[k])) { best[k] = distWall[i]; center[k] = i; }
+                }
+                var reached = new bool[nr];
+                var fails = new List<string>();
+                int ok2 = 0, tried = 0;
+                foreach (int k in openIdx)
+                {
+                    var e = R.Entrances[k];
+                    int ei = e.Z * W + e.X, c = center[entRoom[k]];
+                    tried++;
+                    var wk = (bool[])walk.Clone(); wk[ei] = true;
+                    var path = c >= 0 ? RoadNet.Find(m, cls, ei, c, wk) : null;
+                    if (path == null) { fails.Add($"出入口 ({e.X},{e.Z}) → 房间 {entRoom[k]}"); continue; }
+                    RoadNet.Paint(m, path, 2, wk);
+                    reached[entRoom[k]] = true; ok2++;
+                }
+                var okEdges = new List<(int a, int b)>();
+                foreach (var (a, b) in R.Edges)
+                {
+                    tried++;
+                    var path = center[a] >= 0 && center[b] >= 0 ? RoadNet.Find(m, cls, center[a], center[b], walk) : null;
+                    if (path == null)
+                    {
+                        fails.Add($"房间 {a} → 房间 {b}");
+                        if (GenDebug.On)
+                        {
+                            // 两个房间之间相邻格的高差分布（找出卡住的地方）
+                            var hist = new SortedDictionary<int, int>();
+                            foreach (int i in win)
+                            {
+                                if (roomOf[i] != a || !walk[i]) continue;
+                                int ix = i % W, iz = i / W;
+                                for (int d = 0; d < 4; d++)
+                                {
+                                    int n = (iz + Grid.DZ4[d]) * W + ix + Grid.DX4[d];
+                                    if (n < 0 || n >= N || !walk[n] || roomOf[n] == a) continue;
+                                    int dh = m.Height[n] - m.Height[i];
+                                    hist[dh] = hist.TryGetValue(dh, out int c0) ? c0 + 1 : 1;
+                                }
+                            }
+                            var rr = RoadNet.Reach(m, cls, center[a], walk);
+                            int ra = 0, ta = 0, rb2 = 0, tb = 0;
+                            foreach (int i in win) { if (roomOf[i] == a && walk[i]) { ta++; if (rr[i]) ra++; } if (roomOf[i] == b && walk[i]) { tb++; if (rr[i]) rb2++; } }
+                            GenDebug.Log.AppendLine($"  [路] 从房间 {a} 中心 ({center[a] % W},{center[a] / W}) 按路能到：房间 {a} {ra}/{ta} 格，房间 {b} {rb2}/{tb} 格；房间 {b} 中心 ({center[b] % W},{center[b] / W})");
+                            {
+                                int bi = -1, bj = -1, bd = int.MaxValue;
+                                var la = new List<int>(); var lb = new List<int>();
+                                foreach (int i in win) { if (roomOf[i] == a) la.Add(i); else if (roomOf[i] == b) lb.Add(i); }
+                                foreach (int i in la) foreach (int j in lb) { int dd = Math.Abs(i % W - j % W) + Math.Abs(i / W - j / W); if (dd < bd) { bd = dd; bi = i; bj = j; } }
+                                int mx = (bi % W + bj % W) / 2, mz = (bi / W + bj / W) / 2;
+                                var sb = new System.Text.StringBuilder($"  [路] 房间 {a}/{b} 最近处 ({mx},{mz})，距离 {bd}；高度（a/b = 房间，# 不能站，~ 水，. 其他）：\n");
+                                for (int zz = mz + 5; zz >= mz - 5; zz--)
+                                {
+                                    sb.Append("     ");
+                                    for (int xx = mx - 7; xx <= mx + 7; xx++)
+                                    {
+                                        int i = zz * W + xx;
+                                        char tag = roomOf[i] == a ? 'a' : roomOf[i] == b ? 'b' : noStand[i] ? '#' : m.HasWater(i) ? '~' : '.';
+                                        sb.Append($"{m.Height[i],3}{tag}");
+                                    }
+                                    sb.Append('\n');
+                                }
+                                GenDebug.Log.Append(sb);
+                            }
+                            GenDebug.Log.AppendLine($"  [路] 房间 {a}（地面 {R.Rooms[a].Floor}）→ 房间 {b}（地面 {R.Rooms[b].Floor}）铺不通；房间 {a} 边上走得到的邻格高差：" + string.Join(" ", hist.Select(kv => $"{kv.Key:+0;-0;0}×{kv.Value}")));
+                        }
+                        continue;
+                    }
+                    RoadNet.Paint(m, path, 2, walk);
+                    okEdges.Add((a, b)); ok2++;
+                }
+                // 按路能走到的房间：从出入口所在房间沿铺通的连接扩散
+                for (bool grew = true; grew;)
+                {
+                    grew = false;
+                    foreach (var (a, b) in okEdges)
+                        if (reached[a] != reached[b]) { reached[a] = reached[b] = true; grew = true; }
+                }
+                int nReached = 0; foreach (bool v in reached) if (v) nReached++;
+                R.RoadFails = fails;
+                R.Report.Add($"小径（连通测试，不算跳跃）：铺通 {ok2}/{tried} 段，按路能走到的房间 {nReached}/{nr}"
+                    + (fails.Count > 0 ? "；铺不通：" + string.Join("，", fails) + (R.OneWay.HasValue ? "（本次有单向落差，经过它的那段本来就走不回来）" : "") : ""));
+            }
             R.Report.Insert(0, $"房间 {nr}（目标 {target}，可切面积 {area} m²），连接 {R.Edges.Count}，3 通 {deg3}，4 通 {deg4}，死路房 {dead}，"
                 + (R.Edges.Count >= nr ? "有环" : "无环") + $"，开放出入口 {openIdx.Count}/{R.Entrances.Count}"
                 + (pathLen >= 0 ? $"，出入口之间隔 {pathLen} 个房间" : "") + (R.OneWay.HasValue ? "，有单向落差" : "")

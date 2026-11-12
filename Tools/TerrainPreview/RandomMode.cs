@@ -21,6 +21,7 @@ namespace Wort.Tools
             var chunks = new List<(int, int)> { (3, 3) };
             var baked = TerraceField.Generate(new TerraceFieldSettings { Seed = seed, RandomChunks = chunks }, out var cls);
             var cands = RandomRegion.AutoCandidates(baked, cls, chunks, seed);
+            foreach (var line in RandomRegion.ConnectFixed(baked, cls, chunks, cands)) Console.WriteLine(line);
             Console.WriteLine($"固定世界：TerraceField seed {seed}；随机 chunk (3,3)；候选出入口 {cands.Count} 个：" + string.Join(" ", cands.ConvertAll(e => $"({e.X},{e.Z})→{"北东南西"[e.Dir]}")));
             var s = new RandomRegionSettings();
             int fails = 0;
@@ -70,6 +71,7 @@ namespace Wort.Tools
                         if (reg && m.Has(i, CellFlags.Spire)) col = 0xB8B4AA;
                         if (reg && r.Seam[i]) col = Image.Mix(col, 0x6E5A48, 0.45);
                         if (reg && r.Corridor[i]) col = 0xC9A878;
+                        if (m.Has(i, CellFlags.Road)) col = Image.Mix(col, 0xE8C878, 0.7);
                     }
                     if (m.HasWater(i)) col = m.Has(i, CellFlags.River) ? 0x2F6FB8u : 0x4A8FC8u;
                     if (!reg && cls[i] != TerraceField.Border) col = Image.Scale(col, 0.75); // 固定世界压暗一点

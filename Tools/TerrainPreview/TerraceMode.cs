@@ -56,6 +56,17 @@ namespace Wort.Tools
             if (cliff) Console.WriteLine($"  外观网格 {tCliff:0} ms（每 chunk {tCliff / meshes.Count:0.0} ms），碰撞盒 {nBoxes} 个、{tBoxes:0} ms（每 chunk {nBoxes / meshes.Count} 个、{tBoxes / meshes.Count:0.00} ms）");
             foreach (var kv in map.Stats) Console.WriteLine($"  {kv.Key} = {kv.Value}");
             Console.WriteLine($"  checksum = 0x{map.Checksum():X8}");
+            var dumpAt = Environment.GetEnvironmentVariable("WORT_DUMP");
+            if (dumpAt != null)
+            {
+                var dp = dumpAt.Split(','); int qx = int.Parse(dp[0]), qz = int.Parse(dp[1]);
+                for (int zz = qz + 3; zz >= qz - 3; zz--)
+                {
+                    var line = new System.Text.StringBuilder($"  z{zz,4}:");
+                    for (int xx = qx - 4; xx <= qx + 4; xx++) { int i = map.Index(xx, zz); line.Append($" {map.Height[i],3}{(map.Slope[i] >= 0 ? "NESW"[map.Slope[i]] : (map.Has(i, CellFlags.Ramp) ? 'r' : '.'))}"); }
+                    Console.WriteLine(line);
+                }
+            }
             if (GenDebug.On)
             {
                 var cnt = new int[5]; var hs = new SortedDictionary<int,int>();
@@ -99,6 +110,15 @@ namespace Wort.Tools
             {
                 int hz = map.Height[map.Index(zx, zz)];
                 r.RenderView(zx - vw / 2, zz + hz - vw * 3 / 8, vw, vw * 3 / 4, ppm, null).Save(Path.Combine(outDir, $"zoom_{name}.png"));
+            }
+            // 坡道特写（24 px/m）：前 4 个坡道，坡道在画面中间
+            for (int k = 0; k < Math.Min(4, map.Ramps.Count); k++)
+            {
+                var rp = map.Ramps[k];
+                int mx = rp.TopX + Grid.DX4[rp.DownDir] * rp.Length / 2, mz = rp.TopZ + Grid.DZ4[rp.DownDir] * rp.Length / 2;
+                int hz = map.Height[map.Index(mx, mz)];
+                r.RenderView(mx - 10, mz + hz - 7, 20, 15, 24.0, null).Save(Path.Combine(outDir, $"zoom_ramp{k + 1}.png"));
+                r.RenderView(mx - 5, mz + hz - 3.5, 10, 7.5, 64.0, null).Save(Path.Combine(outDir, $"zoom_ramp{k + 1}_close.png"));
             }
             return 0;
         }

@@ -3,7 +3,7 @@ using System;
 namespace Wort.Generation
 {
     /// <summary>
-    /// 占位贴图（程序生成，128×128，可平铺，1 张 = 1m）：泥土、岩石。以后换成美术贴图，接口不变。
+    /// 占位贴图（程序生成，128×128，可平铺，1 张 = 1m）：泥土、岩石、路面。以后换成美术贴图，接口不变。
     /// 预览工具和 Unity 共用同一份，结果一致。像素为 0xRRGGBB；岩石另给一张高度（0–1），融合时让石头从泥土里“透出来”。
     /// </summary>
     public static class TerrainTextures
@@ -12,8 +12,9 @@ namespace Wort.Generation
 
         public static uint[] Dirt(out float[] height) => Make(0xD1A, out height, false);
         public static uint[] Rock(out float[] height) => Make(0x60C, out height, true);
+        public static uint[] Road(out float[] height) => Make(0x40AD, out height, false, true);
 
-        static uint[] Make(uint seed, out float[] height, bool rock)
+        static uint[] Make(uint seed, out float[] height, bool rock, bool road = false)
         {
             int n = Size;
             var col = new uint[n * n];
@@ -35,7 +36,16 @@ namespace Wort.Generation
                 {
                     float big = Noise(32, seed, x, y), mid = Noise(16, seed + 1, x, y), fine = Noise(4, seed + 2, x, y), grain = Noise(2, seed + 3, x, y);
                     float r, g, b, hgt;
-                    if (!rock)
+                    if (road)
+                    {
+                        // 路面：踩实的浅黄褐土，比泥土稍浅、平整；只有零星小碎石，不要看成石头
+                        float v = 0.5f * big + 0.3f * mid + 0.2f * grain;
+                        float gravel = Noise(2, seed + 4, x, y) * 0.6f + Noise(8, seed + 5, x, y) * 0.4f;
+                        hgt = 0.35f + 0.3f * v;
+                        r = 0.52f + 0.14f * v; g = 0.40f + 0.11f * v; b = 0.27f + 0.08f * v;
+                        if (gravel > 0.82f) { float k = 0.60f + 0.2f * fine; r = k * 0.95f; g = k * 0.86f; b = k * 0.72f; hgt = 0.7f; }
+                    }
+                    else if (!rock)
                     {
                         // 泥土：暖褐，大块深浅 + 细颗粒；零星小石子
                         float v = 0.55f * big + 0.25f * mid + 0.2f * grain;
@@ -70,6 +80,17 @@ namespace Wort.Generation
         /// 融合：权重 w（0 泥土 … 1 岩石）加上两张贴图的高度差，得到岩石占比。高的那张先露出来，交界不是一条直的渐变。
         /// Unity 着色器里用同一个公式（Wort/TerrainBlend）。
         /// </summary>
+        /// <summary>
+        /// 路面融合：权重 w（0 泥土 … 1 路面，来自 <see cref="RoadSurface"/>）加上两张贴图的高度差，得到路面占比；
+        /// 路边是一圈被踩出来的碎边，不是直线。Unity 着色器里用同一个公式（Wort/TerrainBlend）。
+        /// </summary>
+        public static float MixRoad(float w, float dirtH, float roadH)
+        {
+            float t = w + (roadH - dirtH) * 0.8f * (1 - Math.Abs(2 * w - 1));
+            t = (t - 0.5f) / 0.15f + 0.5f;
+            return t < 0 ? 0 : (t > 1 ? 1 : t);
+        }
+
         public static float Mix(float w, float dirtH, float rockH)
         {
             float t = w + (rockH - dirtH) * 0.6f * (1 - Math.Abs(2 * w - 1));
