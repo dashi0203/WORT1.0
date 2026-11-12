@@ -110,10 +110,11 @@ namespace Wort.Terrain
 
             var root = new GameObject(RootName) { hideFlags = HideFlags.DontSave };
             root.transform.SetParent(transform, false);
-            int triangles = 0;
+            var all = new List<(int cx, int cz)>();
             for (int cz = 0; cz < settings.ChunksZ; cz++)
                 for (int cx = 0; cx < settings.ChunksX; cx++)
-                    triangles += BuildChunk(root.transform, map, voxels, cx, cz, useed);
+                    all.Add((cx, cz));
+            int triangles = BuildChunks(root.transform, map, voxels, all, useed, out long tCompute, out long tApply);
             BuildRoomHints(root.transform);
             sw.Stop();
             LastMap = map;
@@ -125,24 +126,74 @@ namespace Wort.Terrain
             if (CanRefreshRandom)
                 Debug.Log($"[TerrainLab] {LastRefreshReport}", this);
             string what = CanRefreshRandom ? "含随机区域的地图" : "固定世界";
-            Debug.Log($"[TerrainLab] seed {seed}  {what} checksum 0x{map.Checksum():X8}  {sw.ElapsedMilliseconds} ms  " +
+            Debug.Log($"[TerrainLab] seed {seed}  {what} checksum 0x{map.Checksum():X8}  {sw.ElapsedMilliseconds} ms（网格计算 {tCompute} ms，建物体 {tApply} ms）  " +
                       $"triangles {triangles}  ramps {ramps}  slopes {slope / 10f:0.0}%  spawn ({map.SpawnX}, {map.SpawnZ})", this);
         }
 
-        private int BuildChunk(Transform root, RegionMap map, RegionVoxels voxels, int cx, int cz, uint useed)
+        /// <summary>一个 chunk 的计算结果（纯 C#，可以在后台线程算）：外观网格、碰撞盒、斜坡碰撞网格。</summary>
+        private sealed class ChunkBuild
+        {
+            public int Cx, Cz;
+            public MeshData Visual;
+            public List<ColliderBoxes.Box> Boxes;
+            public MeshData Slopes;
+        }
+
+        /// <summary>只做计算，不碰任何 Unity 对象（所以能并行）。</summary>
+        private ChunkBuild ComputeChunk(RegionMap map, RegionVoxels voxels, int cx, int cz, uint useed)
+        {
+            var b = new ChunkBuild { Cx = cx, Cz = cz };
+            b.Visual = cliffDressing ? CliffMesher.Build(voxels, cx, cz, useed) : ChunkMesher.Build(voxels, cx, cz);
+            if (addColliders && cliffDressing)
+            {
+                b.Boxes = ColliderBoxes.Build(map, cx, cz);
+                b.Slopes = CliffMesher.SlopesOnly(voxels, cx, cz);
+            }
+            return b;
+        }
+
+        /// <summary>主线程：把计算结果建成 Unity 的网格和物体。</summary>
+        private int ApplyChunk(Transform root, RegionMap map, ChunkBuild b)
         {
             var settings = map.Settings;
-            var data = ChunkMesher.Build(voxels, cx, cz);
-            var visual = cliffDressing ? CliffMesher.Build(voxels, cx, cz, useed) : data;
-            var chunk = new GameObject($"Chunk {cx},{cz}") { hideFlags = HideFlags.DontSave };
+            var chunk = new GameObject($"Chunk {b.Cx},{b.Cz}") { hideFlags = HideFlags.DontSave };
             chunk.transform.SetParent(root, false);
-            chunk.transform.localPosition = new Vector3(cx * settings.ChunkSize, 0f, cz * settings.ChunkSize);
+            chunk.transform.localPosition = new Vector3(b.Cx * settings.ChunkSize, 0f, b.Cz * settings.ChunkSize);
             chunk.isStatic = true;
-            AddPart(chunk, "Ground", visual, false, addColliders && !cliffDressing);
-            AddPart(chunk, "Water", visual, true, false);
+            AddPart(chunk, "Ground", b.Visual, false, addColliders && !cliffDressing);
+            AddPart(chunk, "Water", b.Visual, true, false);
             if (addColliders && cliffDressing)
-                AddBoxColliders(chunk, map, voxels, cx, cz); // 碰撞仍按 1m 格：同高矩形合并成碰撞盒 + 斜坡小网格
-            return visual.TriangleCount;
+                AddBoxColliders(chunk, map, b); // 碰撞仍按 1m 格：同高矩形合并成碰撞盒 + 斜坡小网格
+            return b.Visual.TriangleCount;
+        }
+
+        /// <summary>
+        /// 重建一批 chunk：先删旧的，网格 / 碰撞的计算在后台线程并行（生成核心是纯 C#），再在主线程依次建 Unity 物体。
+        /// 返回三角形总数；tCompute / tApply 是两段各自的耗时（ms）。
+        /// </summary>
+        private int BuildChunks(Transform root, RegionMap map, RegionVoxels voxels, IList<(int cx, int cz)> list, uint useed,
+            out long tCompute, out long tApply)
+        {
+            foreach (var (cx, cz) in list)
+            {
+                var old = root.Find($"Chunk {cx},{cz}");
+                if (old == null) continue;
+                foreach (var filter in old.GetComponentsInChildren<MeshFilter>(true))
+                    DestroySafe(filter.sharedMesh);
+                DestroySafe(old.gameObject);
+            }
+            var sw = Stopwatch.StartNew();
+            // 共用的缓存先在主线程算好，避免多个线程同时去算
+            if (voxels.RoadMask == null) voxels.RoadMask = RoadSurface.BuildMask(map);
+            if (voxels.RoadMouths == null) voxels.RoadMouths = RoadSurface.BuildMouths(map);
+            var builds = new ChunkBuild[list.Count];
+            System.Threading.Tasks.Parallel.For(0, list.Count, k => builds[k] = ComputeChunk(map, voxels, list[k].cx, list[k].cz, useed));
+            tCompute = sw.ElapsedMilliseconds;
+            int triangles = 0;
+            foreach (var b in builds)
+                triangles += ApplyChunk(root, map, b);
+            tApply = sw.ElapsedMilliseconds - tCompute;
+            return triangles;
         }
 
         // ---- 随机 chunk（5×5 右上角，chunk 3,3）----
@@ -233,6 +284,7 @@ namespace Wort.Terrain
             var root = transform.Find(RootName);
             uint useed = unchecked((uint)seed);
             var swAll = Stopwatch.StartNew();
+            var oldMap = LastMap;
             var map = RefreshRandom(useed, out lastRandom);
             ApplyRoadOverlay(map);
             long tRegion = swAll.ElapsedMilliseconds;
@@ -240,28 +292,33 @@ namespace Wort.Terrain
             lastVoxels = voxels;
             long tVoxels = swAll.ElapsedMilliseconds - tRegion;
             EnsureMaterials();
+            // 要重建的 chunk：随机 chunk 本身和上下左右 4 个（接缝带就在它们旁边）；
+            // 斜角的 4 个只被随机 chunk 角上那一格影响（网格只看相邻 1 格），那一格这次没变就不重建
             var (rcx, rcz) = RandomChunks[0];
-            int rebuilt = 0;
+            int size = map.Settings.ChunkSize;
+            var list = new List<(int cx, int cz)>();
             for (int cz = rcz - 1; cz <= rcz + 1; cz++)
                 for (int cx = rcx - 1; cx <= rcx + 1; cx++)
                 {
                     if (cx < 0 || cz < 0 || cx >= map.Settings.ChunksX || cz >= map.Settings.ChunksZ)
                         continue;
-                    var old = root.Find($"Chunk {cx},{cz}");
-                    if (old != null)
+                    bool diagonal = cx != rcx && cz != rcz;
+                    if (diagonal && oldMap != null && oldMap.W == map.W && oldMap.H == map.H)
                     {
-                        foreach (var filter in old.GetComponentsInChildren<MeshFilter>(true))
-                            DestroySafe(filter.sharedMesh);
-                        DestroySafe(old.gameObject);
+                        int kx = cx < rcx ? rcx * size : rcx * size + size - 1, kz = cz < rcz ? rcz * size : rcz * size + size - 1;
+                        int i = map.Index(kx, kz);
+                        bool same = oldMap.Height[i] == map.Height[i] && oldMap.Slope[i] == map.Slope[i]
+                            && oldMap.Water[i] == map.Water[i] && oldMap.Flags[i] == map.Flags[i];
+                        if (same) continue;
                     }
-                    BuildChunk(root, map, voxels, cx, cz, useed);
-                    rebuilt++;
+                    list.Add((cx, cz));
                 }
+            BuildChunks(root, map, voxels, list, useed, out long tCompute, out long tApply);
             BuildRoomHints(root);
             long tMesh = swAll.ElapsedMilliseconds - tRegion - tVoxels;
             LastMap = map;
             LastMilliseconds = swAll.ElapsedMilliseconds;
-            Debug.Log($"[TerrainLab] {LastRefreshReport}；体素 {tVoxels} ms；外观网格 + 碰撞 {tMesh} ms（重建 {rebuilt} 个 chunk）；合计 {swAll.ElapsedMilliseconds} ms", this);
+            Debug.Log($"[TerrainLab] {LastRefreshReport}；体素 {tVoxels} ms；外观网格 + 碰撞 {tMesh} ms（网格计算 {tCompute} ms，并行；建物体 {tApply} ms；重建 {list.Count} 个 chunk）；合计 {swAll.ElapsedMilliseconds} ms", this);
         }
 
         // ---- 房间提示（随机区域） ----
@@ -442,17 +499,7 @@ namespace Wort.Terrain
             lastVoxels.RoadMask = null; // 路变了，遮罩重算（坡道口不变）
             EnsureMaterials();
             uint useed = unchecked((uint)seed);
-            foreach (var (cx, cz) in dirty)
-            {
-                var old = root.Find($"Chunk {cx},{cz}");
-                if (old != null)
-                {
-                    foreach (var filter in old.GetComponentsInChildren<MeshFilter>(true))
-                        DestroySafe(filter.sharedMesh);
-                    DestroySafe(old.gameObject);
-                }
-                BuildChunk(root, map, lastVoxels, cx, cz, useed);
-            }
+            BuildChunks(root, map, lastVoxels, new List<(int cx, int cz)>(dirty), useed, out _, out _);
             return dirty.Count;
         }
 
@@ -484,21 +531,22 @@ namespace Wort.Terrain
                 go.AddComponent<MeshCollider>().sharedMesh = mesh;
         }
 
-        private void AddBoxColliders(GameObject chunk, RegionMap map, RegionVoxels voxels, int cx, int cz)
+        private void AddBoxColliders(GameObject chunk, RegionMap map, ChunkBuild b)
         {
+            int cx = b.Cx, cz = b.Cz;
             var go = new GameObject("Collider") { hideFlags = HideFlags.DontSave };
             go.transform.SetParent(chunk.transform, false);
             go.isStatic = true;
             map.HeightRange(out int minH, out _);
             float bottom = minH - 2;
             int ox = cx * map.Settings.ChunkSize, oz = cz * map.Settings.ChunkSize;
-            foreach (var b in ColliderBoxes.Build(map, cx, cz))
+            foreach (var bx in b.Boxes)
             {
                 var box = go.AddComponent<BoxCollider>();
-                box.center = new Vector3((b.X0 + b.X1) * 0.5f - ox, (bottom + b.Top) * 0.5f, (b.Z0 + b.Z1) * 0.5f - oz);
-                box.size = new Vector3(b.X1 - b.X0, b.Top - bottom, b.Z1 - b.Z0);
+                box.center = new Vector3((bx.X0 + bx.X1) * 0.5f - ox, (bottom + bx.Top) * 0.5f, (bx.Z0 + bx.Z1) * 0.5f - oz);
+                box.size = new Vector3(bx.X1 - bx.X0, bx.Top - bottom, bx.Z1 - bx.Z0);
             }
-            var slopes = BuildMesh(CliffMesher.SlopesOnly(voxels, cx, cz), false, out _);
+            var slopes = BuildMesh(b.Slopes, false, out _);
             if (slopes != null)
             {
                 slopes.name = $"{chunk.name} Slope Collider";
