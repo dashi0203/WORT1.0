@@ -787,6 +787,22 @@ namespace Wort.Generation
                     h[i] = fl[i] + (distWall[i] >= 3 && fBump.Sample(x, z) > 0.5 ? 1 : 0);
                 }
             }
+            if (GenDebug.On)
+            {
+                // 调试：每个房间里地面的组成——高度场本身的层数（等高线台阶）和小起伏（+1 的小包）
+                for (int k = 0; k < nr; k++)
+                {
+                    var levels = new SortedDictionary<int, int>(); int bumps = 0, cells = 0;
+                    foreach (int i in win)
+                    {
+                        if (roomOf[i] != k) continue;
+                        cells++;
+                        levels[fl[i]] = levels.TryGetValue(fl[i], out int c0) ? c0 + 1 : 1;
+                        if (h[i] > fl[i]) bumps++;
+                    }
+                    GenDebug.Log.AppendLine($"  [房间地面] 房间 {k}：{cells} 格；高度场分层 " + string.Join(" ", levels.Select(kv => $"{kv.Key}层×{kv.Value}")) + $"；小起伏 +1 的格 {bumps}");
+                }
+            }
             foreach (int i in win)
             {
                 if (!wall[i] || !inner[i]) continue;
@@ -1207,6 +1223,32 @@ namespace Wort.Generation
                 if (!changed) break;
             }
             R.NoStand = noStand;
+
+            if (GenDebug.On)
+            {
+                // 调试：最终每个房间里比房间基准高的格是什么造成的
+                for (int k = 0; k < nr; k++)
+                {
+                    int f0 = R.Rooms[k].Floor, cells = 0, up1 = 0, up2 = 0, rocks = 0, spires = 0, scree = 0, ns = 0, down = 0;
+                    foreach (int i in win)
+                    {
+                        if (roomOf[i] != k) continue;
+                        cells++;
+                        int dh = m.Height[i] - f0;
+                        if (rock[i]) rocks++;
+                        else if (m.Has(i, CellFlags.Spire)) spires++;
+                        else if (m.Has(i, CellFlags.Scree)) scree++;
+                        else if (noStand[i]) ns++;
+                        else if (dh == 1) up1++;
+                        else if (dh >= 2) up2++;
+                        else if (dh < 0) down++;
+                    }
+                    var sd = new SortedDictionary<int, int>();
+                    foreach (int i in win) if (roomOf[i] == k && m.Has(i, CellFlags.Scree)) { int dd = (int)distWall[i]; sd[dd] = sd.TryGetValue(dd, out int c1) ? c1 + 1 : 1; }
+                    GenDebug.Log.AppendLine($"  [房间最终] 房间 {k} 碎石离墙距离（格）：" + string.Join(" ", sd.Select(kv => $"{kv.Key}:{kv.Value}")));
+                    GenDebug.Log.AppendLine($"  [房间最终] 房间 {k}（基准 {f0} 层，{cells} 格）：高 1 层 {up1}，高 ≥2 层 {up2}，低于基准 {down}，石块 {rocks}，石柱 {spires}，碎石 {scree}，不能站（墙 / 抬高）{ns}");
+                }
+            }
 
             // ---------- 12c. 开口核对：连接图的每条边，不靠跳跃从一个房间中心走到另一个；走不通就挖开 ----------
             //            （斜墙 / 厚墙上，开口只清掉了分隔线那一条，两侧剩下的墙格会把开口堵死）

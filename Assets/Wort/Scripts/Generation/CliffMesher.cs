@@ -27,9 +27,6 @@ namespace Wort.Generation
         // 路面离崖边 / 崖脚（任何高差处）要留出泥土和岩石边：≤ RoadIn 没有路面，≥ RoadOut 完整路面（负责人 2026-11-12）
         const float RoadIn = 0.35f, RoadOut = 0.6f;
         static float RoadEdge(float d) { float t = (d - RoadIn) / (RoadOut - RoadIn); t = t < 0 ? 0 : (t > 1 ? 1 : t); return t * t * (3 - 2 * t); }
-        // 坡道（斜坡和坡道平台）本身就是路：路面边距和岩石边都窄一些，路宽接近两头连着的道路（负责人 2026-11-12）
-        const float RampRoadIn = 0.15f, RampRoadOut = 0.35f, RampRimOut = 0.3f;
-        static float RampRoadEdge(float d) { float t = (d - RampRoadIn) / (RampRoadOut - RampRoadIn); t = t < 0 ? 0 : (t > 1 ? 1 : t); return t * t * (3 - 2 * t); }
 
         // 子网格：融合材质的地面都放在 Soil 里（着色器按 Blend 混合两张贴图）
         const int Rock = (int)VoxelMaterial.Soil, Dirt = (int)VoxelMaterial.Soil;
@@ -154,8 +151,7 @@ namespace Wort.Generation
                 float lo = tLow[s] > 0 ? 1 : Math.Min(1f, a / 0.3f), hi = tHigh[s] > 0 ? 1 : Math.Min(1f, (1 - a) / 0.3f);
                 return Math.Max(0f, Math.Min(lo, hi));
             }
-            // 岩石边在坡底淡出得更长（0.6m），和地上的路过渡平缓
-            float RimTaper(int s, float a) => tLow[s] > 0 ? 1 : Math.Min(1f, a / 0.6f);
+
             float Inset(int s, float a) => side[s] ? Bevel * Taper(s, a) : 0f;
             // 坡面网格：沿坡 a（0 = 坡底）、横向 b；两侧各收进各自的倒角宽度
             int pa = (up + 1) & 3, pb = (up + 3) & 3; // 横向两侧
@@ -182,12 +178,12 @@ namespace Wort.Generation
                         float ds = 0.5f - ((px - cxw) * Grid.DX4[s] + (pz - czw) * Grid.DZ4[s]);
                         // 岩石边随这一侧“露出的高度”变宽，并跟着倒角在不接倒角的一端淡出
                         float expo = Y(px, pz) - low[s]; expo = expo < 0 ? 0 : (expo > 1 ? 1 : expo);
-                        if (side[s]) d = Math.Min(d, ds + (1 - expo * Math.Min(Taper(s, a), RimTaper(s, a))) * 0.6f);
+                        if (side[s]) d = Math.Min(d, ds + (1 - expo * Taper(s, a)) * 0.6f);
                         if (edge[s]) dr = Math.Min(dr, ds);
                     }
-                    rf[j * (K + 1) + i] = RampRoadEdge(dr + (float)fRim.Sample(px * 1.7 + 5.1, pz * 1.7) * 0.12f);
+                    rf[j * (K + 1) + i] = RoadEdge(dr + (float)fRim.Sample(px * 1.7 + 5.1, pz * 1.7) * 0.12f);
                     d += (float)fRim.Sample(px * 2.3, pz * 2.3) * RimNoise;
-                    float t = (d - RimIn) / (RampRimOut - RimIn); t = t < 0 ? 0 : (t > 1 ? 1 : t);
+                    float t = (d - RimIn) / (RimOut - RimIn); t = t < 0 ? 0 : (t > 1 ? 1 : t);
                     bl[j * (K + 1) + i] = 1 - t * t * (3 - 2 * t);
                 }
             for (int j = 0; j < K; j++)
@@ -389,7 +385,6 @@ namespace Wort.Generation
             float x0 = x + (exposed[3] ? Bevel : 0), x1 = x + 1 - (exposed[1] ? Bevel : 0);
             float z0 = z + (exposed[2] ? Bevel : 0), z1 = z + 1 - (exposed[0] ? Bevel : 0);
             bool anySide = sideSlope[0] || sideSlope[1] || sideSlope[2] || sideSlope[3];
-            bool isRamp = (map.Flags[map.Index(x, z)] & CellFlags.Ramp) != 0; // 坡道平台
             void TopV(int i, int j, int KK, out float px, out float pz)
             {
                 if (!anySide) { px = x0 + (x1 - x0) * i / KK; pz = z0 + (z1 - z0) * j / KK; return; }
@@ -424,7 +419,7 @@ namespace Wort.Generation
                                     dr = Math.Min(dr, (float)Math.Sqrt(kx * kx + kz * kz));
                                 }
                         float drn = dr + (float)fRim.Sample(px * 1.7 + 5.1, pz * 1.7) * 0.12f;
-                        rf[j * (K + 1) + i] = isRamp ? RampRoadEdge(drn) : RoadEdge(drn);
+                        rf[j * (K + 1) + i] = RoadEdge(drn);
                         float d = 9;
                         for (int s = 0; s < 4; s++)
                             if (exposed[s])
@@ -441,7 +436,7 @@ namespace Wort.Generation
                                     d = Math.Min(d, (float)Math.Sqrt(kx * kx + kz * kz));
                                 }
                         d += (float)fRim.Sample(px * 2.3, pz * 2.3) * RimNoise;
-                        float t = (d - RimIn) / ((isRamp ? RampRimOut : RimOut) - RimIn); t = t < 0 ? 0 : (t > 1 ? 1 : t);
+                        float t = (d - RimIn) / (RimOut - RimIn); t = t < 0 ? 0 : (t > 1 ? 1 : t);
                         bl[j * (K + 1) + i] = 1 - t * t * (3 - 2 * t);
                     }
                 for (int j = 0; j < K; j++)
