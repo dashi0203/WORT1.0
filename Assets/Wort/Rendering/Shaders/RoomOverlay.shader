@@ -1,5 +1,5 @@
 // 房间提示层（调试用，负责人 2026-11-12）：贴在地面上方的一层薄薄的半透明色块。
-// 顶点色 rgb = 房间颜色；a 区分部位：≈0.25 平整区域（淡色），≈0.5 内收 1 格（台地可生成：淡色 + 斜条纹），≈1 描边。
+// 顶点色 rgb = 房间颜色；a 区分部位：≈0.25 色块（平整区域；内收 1 格、台地可生成的区域在 1cm 高处再叠一层，叠起来颜色更深），≈1 描边。
 // 不写深度、两面都画、轻微往前偏移，避免和地面闪烁。
 Shader "Wort/RoomOverlay"
 {
@@ -34,17 +34,7 @@ Shader "Wort/RoomOverlay"
 
             half4 frag(Varyings i) : SV_Target
             {
-                float a = i.color.a;
-                float alpha;
-                if (a > 0.75)
-                    alpha = 0.8;                                            // 描边
-                else if (a > 0.4)
-                {
-                    float s = frac((i.positionWS.x + i.positionWS.z) * 1.5); // 斜条纹，约 0.47m 一条
-                    alpha = s < 0.3 ? 0.45 : 0.18;                          // 内收 1 格：台地可生成
-                }
-                else
-                    alpha = 0.18;                                           // 平整区域
+                float alpha = i.color.a > 0.75 ? 0.8 : 0.2; // 描边 / 色块（两层色块叠起来就是更深的颜色）
                 return half4(i.color.rgb, alpha);
             }
             ENDHLSL

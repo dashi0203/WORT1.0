@@ -80,12 +80,12 @@ namespace Wort.Tools
                         if (reg && r.Seam[i]) col = Image.Mix(col, 0x6E5A48, 0.45);
                         if (reg && r.Corridor[i]) col = 0xC9A878;
                         if (m.Has(i, CellFlags.Road)) col = Image.Mix(col, 0xE8C878, 0.7);
-                        // 房间提示：平整区域淡淡一层房间色，内收 1 格（台地可生成）加斜条纹
+                        // 房间提示：平整区域淡淡一层房间色，内收 1 格（台地可生成）再叠一层，颜色更深
                         if (reg && zones != null && zones[i] > 0)
                         {
                             uint rc = RoomHue(r.RoomOf[i]);
-                            col = Image.Mix(col, rc, 0.22);
-                            if (zones[i] == 2 && ((x + z) & 3) == 0) col = Image.Mix(col, rc, 0.5);
+                            col = Image.Mix(col, rc, 0.2);
+                            if (zones[i] == 2) col = Image.Mix(col, rc, 0.2);
                         }
                     }
                     if (m.HasWater(i)) col = m.Has(i, CellFlags.River) ? 0x2F6FB8u : 0x4A8FC8u;

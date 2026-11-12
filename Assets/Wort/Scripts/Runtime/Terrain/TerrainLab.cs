@@ -43,7 +43,7 @@ namespace Wort.Terrain
         [SerializeField, Tooltip("地形外观方案 B（CliffMesher）：立方体 + 外倒角 / 内倒角、泥土顶面、边缘一圈石头。只改画面，碰撞仍用原来的 1m 体素网格。")]
         private bool cliffDressing = true;
 
-        [SerializeField, Tooltip("随机区域的房间提示：每个房间一层薄薄的半透明色块（平整区域淡色；往里收 1 格、以后台地可生成的区域加斜条纹；边缘描边）。只显示，不影响碰撞和 checksum。")]
+        [SerializeField, Tooltip("随机区域的房间提示：每个房间一层薄薄的半透明色块（平整区域淡色；往里收 1 格、以后台地可生成的区域再叠一层、颜色更深；边缘描边）。只显示，不影响碰撞和 checksum。")]
         private bool showRoomHints = true;
 
         [SerializeField, Tooltip("手刷道路的覆盖层（Inspector 里的“道路笔刷”会自动创建）。种子 / 生成器和当前不一致时不叠加。")]
@@ -320,7 +320,9 @@ namespace Wort.Terrain
                 int x = i % W, z = i / W, room = lastRandom.RoomOf[i];
                 var hue = RoomHues[((room % RoomHues.Length) + RoomHues.Length) % RoomHues.Length];
                 float y = map.Height[i] + Lift;
-                Quad(x, z, x + 1, z + 1, y, new Color32(hue.r, hue.g, hue.b, zones[i] == 2 ? (byte)128 : (byte)64));
+                var fill = new Color32(hue.r, hue.g, hue.b, 64);
+                Quad(x, z, x + 1, z + 1, y, fill);
+                if (zones[i] == 2) Quad(x, z, x + 1, z + 1, y + 0.01f, fill); // 内收 1 格（台地可生成）：高 1cm 再叠一层，颜色更深
                 // 描边：和不是同一房间平地的邻格之间的边
                 var edge = new Color32(hue.r, hue.g, hue.b, 255);
                 for (int d = 0; d < 4; d++)
