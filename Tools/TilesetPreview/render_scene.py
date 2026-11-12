@@ -161,15 +161,31 @@ if PLACEMENTS:
     for p in json.load(open(PLACEMENTS)):
         sub = 'Top' if p['name'].startswith('Top_') else 'Cliff'
         g = path2guid.get(f"{scene_path}/Prefabs/{sub}/{p['name']}.prefab")
+        if g is None and p['name'].endswith('_C0'):  # 没有凹角的顶面也可以叫 Top_E8
+            g = path2guid.get(f"{scene_path}/Prefabs/{sub}/{p['name'][:-3]}.prefab")
         if g is None: print('缺瓦片', p['name']); continue
         a = math.radians(90 * p['rot']) / 2
-        inst.append((g, [p['x'], p['y'], p['z']], [0, math.sin(a), 0, math.cos(a)]))
+        inst.append((g, [p['x'], p['y'], p['z']], [0, math.sin(a), 0, math.cos(a)], p.get('foot', 0)))
 print('实例', len(inst))
 
 tris = []  # (3x3 世界坐标, 3x2 uv, 3x3 法线, 3x4 切线, 材质)
-for src, p, q in inst:
+def hash_of(x, y, seed):  # Wort.Generation.Hash.Of 的 Python 版（只给底边噪声用）
+    def u(v): return v & 0xFFFFFFFF
+    h = u(seed * 0x9E3779B1 + u(x) * 0x85EBCA77 + u(y) * 0xC2B2AE3D)
+    h ^= h >> 15; h = u(h * 0x2C1B3C6D); h ^= h >> 12; h = u(h * 0x297A2D39); h ^= h >> 15
+    return h
+for it in inst:
+    src, p, q = it[:3]; foot = it[3] if len(it) > 3 else 0
     mg, mats = prefab(src)
     pos, nor, tan, uv, ind, subs = mesh(mg)
+    if foot:
+        # 贴地墙件底边中间的顶点往正面推 0.5–4cm（与 TerrainLab.FootNoise 相同的规则；哈希只是近似）
+        pos = pos.copy()
+        for i in range(len(pos)):
+            if pos[i, 1] > 0.01 or pos[i, 0] < 0.02 or pos[i, 0] > 0.98: continue
+            w = np.array(qrot(q, list(pos[i]))) + np.array(p)
+            h = hash_of(int(round(w[0] * 16)), int(round(w[2] * 16)), int(p[1] * 977 + 5))
+            pos[i, 2] -= 0.005 + 0.035 * ((h & 0xFFFF) / 65535)
     R = np.array([qrot(q, e) for e in ([1, 0, 0], [0, 1, 0], [0, 0, 1])]).T
     wp = pos @ R.T + np.array(p); wn = nor @ R.T
     wt = tan[:, :3] @ R.T if tan is not None else None

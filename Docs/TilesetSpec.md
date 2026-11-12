@@ -9,7 +9,7 @@
 - 1 格 = 1m，1 层 = 1m（与体素一致）。碰撞仍由体素层负责，瓦片只管外观。
 - 顶面瓦片 `Top_E{E}_C{C}`：1m × 1m，原点在西南角、放在该格顶面高度，y = 0 是顶面。
   E = 低于本格的四邻（东 1、北 2、西 4、南 8），C = 四邻不低但斜邻低于本格时补的凹角（东北 1、西北 2、西南 4、东南 8），十六进制。
-  共 47 种（E = 0 时 C 0–F；露边时只留合法组合），一套都要有。
+  共 47 种（E = 0 时 C 0–F；露边时只留合法组合），一套都要有。没有凹角时可以叫 `Top_E8`（等同 `Top_E8_C0`），两种都认。
 - 崖壁瓦片：宽 1m、高 1m，原点左下角，沿本地 +X 延伸，正面朝本地 −Z。南面直接放，东西北面绕 Y 轴转 90° 的整数倍。
   最上一层用 `Crown`（带唇边），以下各层用 `Repeat`。`Front`（正面，镜头看得见）/ `Side`（侧面，可以起伏多一点），各 A / B 两个变体。
 - 不超出碰撞格：顶面不超出 1m 格；墙面往外鼓 ≤ 0.45m（参见《地形外观与崖面美术规范》第 1 节），越少越好。
@@ -20,6 +20,7 @@
 - 每块墙件约 32 个三角形就够（正面细节靠贴图）。顶面露边那圈要细分（样板约 800–960 个顶点），以后要按世界坐标噪声做轮廓挤出。
 - **墙件 UV 纵向 = 件内高度（0 底 … 1 顶），横向 = 沿墙 0 … 1。** Crown 的唇边在 v = 0.88 以上（唇边下沿 0.88）。着色器靠这两条做唇边接缝融合。
 - 相邻件接缝处的顶点位置、法线要一致（A / B 混用不裂）。
+- 墙件底边（本地 y = 0）中间的顶点不要放在两端以外的特殊位置：贴地的那一块在合并网格时会被往正面推 0.5–4cm 做噪声（`TerrainLab.FootNoise`），两端不动。
 - 交付前对网格跑一次平滑法线（PSX 式，让顶面 → 唇边 → 崖壁光照连续过渡）：
   `python3 Tools/TilesetFix/smooth_normals.py Assets/Wort/Art/Tilesets/<名字>/Meshes`（可重复运行）。
   它假设：Crown 唇边顶点行在 y = 1 / 0.88 / 0.62；顶面露边在格边上。网格不是这样时先说一声。
@@ -48,6 +49,7 @@
 | 顶面泥土 | `_Projection` = 1（世界 xz）、`_WorldTile` = 一张贴图覆盖几米、`_RoadOn` = 1（路面盖在上面） |
 
 Limestone 的材质（`CharcoalCliff`、`CharcoalCliffCrown`、`PaleLimestoneLip`、`LimestoneRimTop`、`OchreSand`）可以直接复制改贴图。
+OliveStrata / RustCrag 的崖顶用一整张画好唇边的 Crown 贴图（单一子网格），这种做法不需要接缝融合，Crown 材质照普通崖壁设置即可；A / B 可以各有材质。
 同一套网格可以给不同 Biome 共用，只换材质（例如混交林 / 针叶林）。
 
 ## 5. 目录与示例场景
@@ -62,9 +64,15 @@ Assets/Wort/Art/Tilesets/<名字>/
   README.md
 ```
 
-## 6. 交付前自查
+## 6. 接入
 
-1. 云端 / 本地都能跑的渲染脚本（游戏相机，不开 Unity）：
+每套建一个 `TilesetAsset`（`<名字>_Tileset.asset`，列出全部 Prefab）；`TerrainLab` 的 `Tilesets` 数组里的下标就是套件编号。
+空白测试地（生成器 `TestGround`）里用体素笔刷搭地形、刷套件，见 `Docs/DevLog.md`。
+
+## 7. 交付前自查
+
+1. 云端 / 本地都能跑的渲染脚本（游戏相机，不开 Unity）。也可以按选件结果拼：`dotnet run --project Tools/TerrainPreview -c Release -- --tiles --out out`，
+   再 `PLACEMENTS=out/tiles.json python3 Tools/TilesetPreview/render_scene.py WT Assets/Wort/Art/Tilesets/<名字> out.png 0 60`：
    `python3 Tools/TilesetPreview/render_scene.py WT Assets/Wort/Art/Tilesets/<名字>/<名字>_Showcase.unity out.png 0 100`
    看：顶面有没有格间接缝、唇边和崖壁的交界、重复感。换光照方向再看一次：`LIGHT="-0.8,0.45,0.2" python3 ...`。
 2. Unity 里打开示例场景：Console 无报错，截图给负责人。

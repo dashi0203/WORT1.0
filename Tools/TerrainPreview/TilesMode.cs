@@ -62,7 +62,7 @@ namespace Wort.Tools
                 names[p.Name]++;
                 // 只导出搭了东西的区域附近（平地太多，渲染慢）
                 if (p.X > 37 || p.Z > 19) continue;
-                sb.Append($"  {{\"name\": \"{p.Name}\", \"x\": {p.X}, \"y\": {p.Y}, \"z\": {p.Z}, \"rot\": {p.Rot}}},\n");
+                sb.Append($"  {{\"name\": \"{p.Name}\", \"x\": {p.X}, \"y\": {p.Y}, \"z\": {p.Z}, \"rot\": {p.Rot}, \"foot\": {(p.Foot ? 1 : 0)}}},\n");
             }
             if (sb[sb.Length - 2] == ',') sb.Remove(sb.Length - 2, 1);
             sb.Append("]\n");

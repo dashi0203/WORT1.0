@@ -4,6 +4,29 @@
 
 GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
 
+## 2026-11-12（续）空白测试地与 Minecraft 式体素笔刷；三套 Tileset 接入
+
+负责人：开始测体素地基，要一块空白平地手搭测试地形（3×3 chunk，斜坡和水先不管），工具要像 Minecraft 那样方便；另外两套套件一起接。
+- 新套件（Codex，提交 0774644）：`OliveStrata` 青灰波纹岩（沼泽）、`RustCrag` 红褐裂岩（森林），拼法同 Limestone；顶面没有凹角时叫 `Top_E8`（等同 `Top_E8_C0`）；
+  Crown 用一整张画好唇边的贴图，不需要接缝融合。已合并进本分支。
+- 两套新的同样处理：材质换 `Wort/TileSurface`（`_DetailNormal` 0.35，泥土世界投影 + 路面叠加）、平滑法线（`smooth_normals.py` 认 `Top_E8` 这种名字）；泥土贴图平铺检查无接缝。
+- 生成核心（纯 C#，云端测过）：
+  - `TilePlacer`：按高度选瓦片（顶面 E / C 遮罩；墙件每层一块，最上 Crown、以下 Repeat，朝南 Front、其余 Side，A / B 按位置哈希；南 0° / 西 90° / 北 180° / 东 270°；贴地那块标 `Foot`）。
+  - `TestGround`：空白平地（chunks × chunks，每格高度来自编辑资源）。
+  - `VoxelPick`：高度场射线 DDA，打到顶面或侧面（第几层、哪个面）；`PlaceTarget` / `RemoveTarget` = Minecraft 规则（顶面 ±1；侧面放 = 旁边那格填到这一层，侧面挖 = 挖到这一层，柱子不能悬空）。
+  - 预览 `--tiles`：在测试地上搭典型形状，打印 7 条射线自查（全部正确），导出 `tiles.json`；`render_scene.py` 用 `PLACEMENTS=` 按真实瓦片拼出来渲染。三套都拼对了。
+  - EditMode 测试 `VoxelEditTests`（遮罩、墙件层与旋转、射线、放 / 挖），云端用 NUnit 替身跑过全部通过。固定世界 checksum 不变（种子 3 `0xDA849612`）。
+- Unity（**云端未编译**）：
+  - `TerrainLab`：生成器加 `TestGround`；`Test Ground`（数据资源）、`Tilesets`（套件数组，下标 = 套件编号）。有套件时每个 chunk 用 `CombineMeshes` 按材质合并瓦片，碰撞照旧（体素碰撞盒）。
+    贴地墙件底边中间的顶点按世界坐标哈希往外推 0.5–4cm（`FootNoise`，两端不动，负责人：底部边缘做点小噪声、别凸出来太多）。
+  - 资源：`TilesetAsset`（Prefab 清单，按名字查网格 / 材质）、`TestGroundAsset`（每格高度 + 套件编号，`Assets/Wort/Data/TestGround.asset` 自动创建）；
+    三个套件资源已在云端生成：`Art/Tilesets/{Limestone,OliveStrata,RustCrag}/*_Tileset.asset`。
+  - 体素笔刷（Inspector“体素笔刷（Minecraft 式）”，生成器选 TestGround 时出现）：
+    方块模式左键放、Shift + 左键或右键挖，按住拖动连续（每格一笔只改一次）；拉平模式拖动拉到指定高度、Ctrl + 左键取样；刷套件模式拖动换套件；
+    笔刷 1–7 格；数字键 1–9 切套件；白框 = 指着的面，绿框 = 要放的块，红框 = 要挖的块；全部可撤销；只重建受影响的 chunk。
+  - 用法：TerrainLab 的 `Generator` 选 `TestGround` → 点“填入项目里的全部套件” → 打开体素笔刷 → 在 Scene 视图里搭。
+- 已知：RustCrag 多层墙每 1m 一道横向亮带（墙件贴图顶部偏亮，层层叠成条纹），要请 Codex 改贴图或我在着色器里压。
+
 ## 2026-11-12（续）石灰岩 Tileset（Codex 制作）审阅与修补
 
 负责人决定改走 3D 模块化瓦片，第一套（`Art/Tilesets/Limestone`，人类区，提交 96b9728）由 Codex 做：顶面 1m 瓦片按 E（四邻露边）/ C（斜邻凹角）位遮罩选件（47 种），

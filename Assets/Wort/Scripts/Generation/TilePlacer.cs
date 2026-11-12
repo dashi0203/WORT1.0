@@ -14,6 +14,8 @@ namespace Wort.Generation
         public int X, Y, Z;
         /// <summary>绕 y 轴转 Rot × 90°（Unity 的正方向：从上往下看顺时针）。</summary>
         public byte Rot;
+        /// <summary>墙件是一面墙最底下那一块（贴着地面）：合并网格时底边加一点噪声（负责人 2026-11-12）。</summary>
+        public bool Foot;
     }
 
     /// <summary>
@@ -21,7 +23,7 @@ namespace Wort.Generation
     /// - 每格一块顶面 Top_E{E}_C{C}：E = 低于本格的四邻（东 1、北 2、西 4、南 8），C = 四邻都不低、但斜邻低于本格时补的凹角（东北 1、西北 2、西南 4、东南 8）；
     /// - 每个低于本格的四邻方向，从邻格高度到本格高度每层一块墙件：最上一层 Crown，以下 Repeat；朝南（镜头看得见）用 Front，其余用 Side；A / B 按位置哈希。
     ///   墙件原点在左下角、沿本地 +X、正面朝本地 −Z：南面不转，西面转 90°，北面 180°，东面 270°。
-    /// 墙件属于高的那一格（用它的套件）。地图外当作同高（不画边界墙）。斜坡和水暂不处理（负责人 2026-11-12）。
+    /// 墙件属于高的那一格（用它的套件）。贴地的那一块标 Foot（底边加噪声用）。地图外当作同高（不画边界墙）。斜坡和水暂不处理（负责人 2026-11-12）。
     /// </summary>
     public static class TilePlacer
     {
@@ -87,7 +89,7 @@ namespace Wort.Generation
                     bool crown = y == h - 1;
                     bool b = (Hash.Of(x * 4 + s, y, (uint)(z * 131 + 7)) & 1) == 1;
                     string name = (south ? "Front_" : "Side_") + (crown ? "Crown_" : "Repeat_") + (b ? "B" : "A");
-                    outList.Add(new TilePlacement { Set = set, Name = name, X = ox, Y = y, Z = oz, Rot = rot });
+                    outList.Add(new TilePlacement { Set = set, Name = name, X = ox, Y = y, Z = oz, Rot = rot, Foot = y == hn });
                 }
             }
         }

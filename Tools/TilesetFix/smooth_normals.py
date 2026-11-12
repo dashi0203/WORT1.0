@@ -70,5 +70,5 @@ for f in sorted(os.listdir(d)):
     if not f.endswith('.asset'): continue
     p = os.path.join(d, f)
     if '_Crown_' in f: print(f, '平滑', crown(p), '个顶点')
-    mm = re.match(r'Top_E([0-9A-F])_C[0-9A-F]\.asset', f)
+    mm = re.match(r'Top_E([0-9A-F])(?:_C[0-9A-F])?\.asset', f)
     if mm and mm.group(1) != '0': print(f, '露边顶点', top(p, int(mm.group(1), 16)))
