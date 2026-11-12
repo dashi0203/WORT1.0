@@ -146,7 +146,9 @@ namespace Wort.Generation
                     for (int s = 0; s < 4; s++)
                     {
                         float ds = 0.5f - ((px - cxw) * Grid.DX4[s] + (pz - czw) * Grid.DZ4[s]);
-                        if (side[s]) d = Math.Min(d, ds);
+                        // 岩石边随这一侧“露出的高度”变宽：坡底和侧邻同高处没有岩石边，往上逐渐长出来，和平地自然衔接
+                        float expo = Y(px, pz) - low[s]; expo = expo < 0 ? 0 : (expo > 1 ? 1 : expo);
+                        if (side[s]) d = Math.Min(d, ds + (1 - expo) * 0.6f);
                         if (edge[s]) dr = Math.Min(dr, ds);
                     }
                     rf[j * (K + 1) + i] = RoadEdge(dr + (float)fRim.Sample(px * 1.7 + 5.1, pz * 1.7) * 0.12f);
@@ -233,7 +235,7 @@ namespace Wort.Generation
             bool south = nz < -0.5f, north = nz > 0.5f;
             float step = south ? 0.25f : 0.5f;
             int C = south ? 8 : (north ? 4 : 2);
-            float bulgeK = north ? 1.8f : 1f, flareK = north ? 2f : 1f;
+            float bulgeK = north ? 3f : 1f, flareK = north ? 3.5f : (south ? 0f : 1f);
             if (north) { loL = 1e9f; hiL = -1e9f; loH = 1e9f; hiH = -1e9f; }
             float top0 = h - Bevel, top1 = h + 1 - Bevel;
             var rows = new List<float> { e };
@@ -504,6 +506,8 @@ namespace Wort.Generation
             // 朝南的面（镜头看得见）每 0.25m 一行、列也加倍，其余每 0.5m 一行
             // 北面镜头看不见：不细分、不鼓；东西面只看得到轮廓：列减半
             bool south = nz < -0.5f, north = nz > 0.5f;
+            // 正面（朝南）的崖脚不外扩：外扩会让崖面在画面上显得更长（负责人 2026-11-12）
+            float flare = south ? 0f : FootFlare;
             float step = south ? 0.25f : (north ? 100f : 0.5f);
             if (south) cols *= 2; else if (north) cols = 1; else cols = Math.Max(1, cols / 2);
             for (float y = (float)Math.Floor(y0 / step + 1.001f) * step; y < y1 - step * 0.4f; y += step) rows.Add(y);
@@ -541,12 +545,12 @@ namespace Wort.Generation
                         float qb = 1 - vb.F1(along, Y) * 1.6f; qb = qb < 0 ? 0 : qb;
                         float qs = 1 - vs.F1(along, Y) * 1.7f; qs = qs < 0 ? 0 : qs;
                         float off = Bulge * (0.05f + 0.45f * qb + 0.6f * qs);
-                        if (ground) { float ft = 1 - (Y - y0) / 0.7f; if (ft > 0) off += FootFlare * ft * ft; } // 崖脚往外扩
+                        if (ground) { float ft = 1 - (Y - y0) / 0.7f; if (ft > 0) off += flare * ft * ft; } // 崖脚往外扩
                         X += nx * off; Z += nz * off;
                     }
                     else if (r == 0 && ground && !end)
                     {
-                        X += nx * FootFlare; Z += nz * FootFlare; // 崖脚往外扩
+                        X += nx * flare; Z += nz * flare; // 崖脚往外扩
                     }
                     px[k] = X; py[k] = Y; pz[k] = Z;
                 }

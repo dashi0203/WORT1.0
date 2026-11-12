@@ -874,17 +874,23 @@ namespace Wort.Generation
 
             // ---------- 10. 通路：在连接边对应的墙上开口，宽度随机（≥ 3m，可以很宽） ----------
             var oneWayCands = new List<(int a, int b)>();
+            var openings = new Dictionary<long, List<int>>(); // 每条连接边开口的格（调试 / 最后核对用）
             foreach (var (a, b) in R.Edges)
             {
                 int ra = Math.Min(a, b), rb = Math.Max(a, b);
-                if (!sepCells.TryGetValue(((long)ra << 32) | (uint)rb, out var cells)) continue;
+                if (!sepCells.TryGetValue(((long)ra << 32) | (uint)rb, out var cells)) { if (GenDebug.On) GenDebug.Log.AppendLine($"  [开口] 房间 {ra}–{rb} 没有分隔墙格，没开口"); continue; }
+                var before = new List<int>(); foreach (int i in cells) if (wall[i]) before.Add(i);
                 OpenWall(m, cells, roomOf, fl, ra, rb, s, ref rng, wall, W, N, -1);
+                var op = new List<int>(); foreach (int i in before) if (!wall[i]) op.Add(i);
+                openings[((long)ra << 32) | (uint)rb] = op;
                 if (IsOnCycle(nr, R.Edges, a, b)) oneWayCands.Add((a, b));
             }
             // 单向落差：环上一条地面差 1 层的边，开口处做成“上 1 层的坎、再跳下 2 层”
+            (int a, int b) oneWayEdge = (-1, -1);
             if (oneWayCands.Count > 0 && rng.Next() < s.OneWayChance)
             {
                 var (a, b) = oneWayCands[rng.Range(0, oneWayCands.Count)];
+                oneWayEdge = (Math.Min(a, b), Math.Max(a, b));
                 int ra = Math.Min(a, b), rb = Math.Max(a, b);
                 var cells = sepCells[((long)ra << 32) | (uint)rb];
                 int lo = int.MaxValue, hiF = int.MinValue;
@@ -1201,6 +1207,25 @@ namespace Wort.Generation
             }
             R.NoStand = noStand;
 
+            // ---------- 12c. 开口核对：连接图的每条边，不靠跳跃从一个房间中心走到另一个；走不通就挖开 ----------
+            //            （斜墙 / 厚墙上，开口只清掉了分隔线那一条，两侧剩下的墙格会把开口堵死）
+            {
+                var walk = new bool[N];
+                foreach (int i in win) walk[i] = region[i] && !noStand[i];
+                var center = RoomCenters(m, roomOf, distWall, rock, walk, win, nr);
+                foreach (var (a, b) in R.Edges)
+                {
+                    if (center[a] < 0 || center[b] < 0) continue;
+                    if ((Math.Min(a, b), Math.Max(a, b)) == oneWayEdge) continue; // 故意做的单向落差，不挖
+                    if (RoadNet.Find(m, cls, center[a], center[b], walk) != null) continue;
+                    var carved = CarveOpening(m, cls, roomOf, fl, noStand, R.Wall, region, center[a], center[b], a, b, W, N);
+                    foreach (int i in carved) walk[i] = true;
+                    bool fixedOk = RoadNet.Find(m, cls, center[a], center[b], walk) != null;
+                    R.Report.Add($"开口核对：房间 {a}–{b} 不靠跳跃走不通，挖开 {carved.Count} 格" + (fixedOk ? "后走通" : "后仍走不通"));
+                    if (!fixedOk) { R.Report.Add($"[失败] 房间 {a}–{b} 的开口走不通"); R.Ok = false; return R; }
+                }
+            }
+
             // ---------- 13. 校验 ----------
             var ok = Validate(m, cls, R, region, inner, corridor, out var lines);
             R.Report.AddRange(lines);
@@ -1221,15 +1246,7 @@ namespace Wort.Generation
             {
                 var walk = new bool[N];
                 foreach (int i in win) walk[i] = region[i] && !noStand[i];
-                var center = new int[nr];
-                var best = new float[nr];
-                for (int k = 0; k < nr; k++) { center[k] = -1; best[k] = -1; }
-                foreach (int i in win)
-                {
-                    int k = roomOf[i];
-                    if (k < 0 || m.HasWater(i) || rock[i] || !walk[i]) continue;
-                    if (distWall[i] > best[k] || (distWall[i] == best[k] && i < center[k])) { best[k] = distWall[i]; center[k] = i; }
-                }
+                var center = RoomCenters(m, roomOf, distWall, rock, walk, win, nr);
                 var reached = new bool[nr];
                 var fails = new List<string>();
                 int ok2 = 0, tried = 0;
@@ -1247,6 +1264,7 @@ namespace Wort.Generation
                 var okEdges = new List<(int a, int b)>();
                 foreach (var (a, b) in R.Edges)
                 {
+                    if ((Math.Min(a, b), Math.Max(a, b)) == oneWayEdge) { R.Report.Add($"小径：房间 {a}–{b} 是单向落差，不铺"); continue; }
                     tried++;
                     var path = center[a] >= 0 && center[b] >= 0 ? RoadNet.Find(m, cls, center[a], center[b], walk) : null;
                     if (path == null)
@@ -1292,6 +1310,13 @@ namespace Wort.Generation
                                 }
                                 GenDebug.Log.Append(sb);
                             }
+                            if (openings.TryGetValue(((long)Math.Min(a, b) << 32) | (uint)Math.Max(a, b), out var opc))
+                            {
+                                var ob = new System.Text.StringBuilder($"  [路] 开口 {opc.Count} 格：");
+                                foreach (int i in opc) ob.Append($"({i % W},{i / W}) h{m.Height[i]} wall{(R.Wall[i] ? 1 : 0)} ns{(noStand[i] ? 1 : 0)} room{roomOf[i]}; ");
+                                GenDebug.Log.AppendLine(ob.ToString());
+                            }
+                            else GenDebug.Log.AppendLine("  [路] 这条边没有开口记录");
                             GenDebug.Log.AppendLine($"  [路] 房间 {a}（地面 {R.Rooms[a].Floor}）→ 房间 {b}（地面 {R.Rooms[b].Floor}）铺不通；房间 {a} 边上走得到的邻格高差：" + string.Join(" ", hist.Select(kv => $"{kv.Key:+0;-0;0}×{kv.Value}")));
                         }
                         continue;
@@ -1316,6 +1341,88 @@ namespace Wort.Generation
                 + (pathLen >= 0 ? $"，出入口之间隔 {pathLen} 个房间" : "") + (R.OneWay.HasValue ? "，有单向落差" : "")
                 + $"，危险区 {R.Danger.Count}，奖励 {R.Rewards.Count}");
             return R;
+        }
+
+        /// <summary>每个房间离墙最远的可站格（同距离取序号小的），作为房间中心。</summary>
+        static int[] RoomCenters(RegionMap m, int[] roomOf, float[] distWall, bool[] rock, bool[] walk, int[] win, int nr)
+        {
+            var center = new int[nr]; var best = new float[nr];
+            for (int k = 0; k < nr; k++) { center[k] = -1; best[k] = -1; }
+            foreach (int i in win)
+            {
+                int k = roomOf[i];
+                if (k < 0 || m.HasWater(i) || rock[i] || !walk[i]) continue;
+                if (distWall[i] > best[k] || (distWall[i] == best[k] && i < center[k])) { best[k] = distWall[i]; center[k] = i; }
+            }
+            return center;
+        }
+
+        /// <summary>
+        /// 在两个房间之间挖开一条 3 格宽的通道：A* 找穿墙最少的路线（墙格代价 20），把路线上的墙 / 不能站的格连同两侧各 1 格清成地面，
+        /// 地面高度取附近房间 a / b 的地面（和开口相同的取法）。只动区域里的格。返回挖开的格。
+        /// </summary>
+        static List<int> CarveOpening(RegionMap m, byte[] cls, int[] roomOf, int[] fl, bool[] noStand, bool[] wallOut, bool[] region,
+            int from, int to, int ra, int rb, int W, int N)
+        {
+            var dist = new float[N]; var prev = new int[N]; var done = new bool[N];
+            for (int i = 0; i < N; i++) { dist[i] = float.MaxValue; prev[i] = -1; }
+            var open = new SortedSet<(float, int)>();
+            dist[from] = 0; open.Add((0, from));
+            int tx = to % W, tz = to / W;
+            while (open.Count > 0)
+            {
+                var (_, c) = open.Min; open.Remove(open.Min);
+                if (done[c]) continue;
+                done[c] = true;
+                if (c == to) break;
+                int cx = c % W, cz = c / W;
+                for (int d = 0; d < 4; d++)
+                {
+                    int nx = cx + Grid.DX4[d], nz = cz + Grid.DZ4[d];
+                    if (nx < 0 || nz < 0 || nx >= W || nz >= m.H) continue;
+                    int n = nz * W + nx;
+                    if (!region[n] || done[n]) continue;
+                    int r = roomOf[n];
+                    if (r >= 0 && r != ra && r != rb) continue; // 不穿过别的房间
+                    float g = dist[c] + (noStand[n] ? 20 : 1);
+                    if (g < dist[n]) { dist[n] = g; prev[n] = c; open.Add((g + Math.Abs(nx - tx) + Math.Abs(nz - tz), n)); }
+                }
+            }
+            var carved = new List<int>();
+            if (prev[to] < 0) return carved;
+            var mark = new HashSet<int>();
+            for (int c = to; c >= 0 && c != from; c = prev[c])
+            {
+                if (!noStand[c]) continue;
+                int cx = c % W, cz = c / W;
+                for (int dz = -1; dz <= 1; dz++)
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        int n = (cz + dz) * W + cx + dx;
+                        if (n >= 0 && n < N && region[n] && noStand[n]) mark.Add(n);
+                    }
+            }
+            foreach (int i in mark)
+            {
+                int x = i % W, z = i / W, best = int.MaxValue, bf = int.MinValue;
+                for (int dz = -4; dz <= 4; dz++)
+                    for (int dx = -4; dx <= 4; dx++)
+                    {
+                        int n = (z + dz) * W + x + dx;
+                        if (n < 0 || n >= N) continue;
+                        int r = roomOf[n];
+                        if (r != ra && r != rb) continue;
+                        int dd = dx * dx + dz * dz;
+                        if (dd < best) { best = dd; bf = fl[n]; }
+                    }
+                if (bf == int.MinValue) continue;
+                m.Height[i] = bf;
+                m.Slope[i] = -1;
+                noStand[i] = false;
+                if (wallOut != null) wallOut[i] = false;
+                carved.Add(i);
+            }
+            return carved;
         }
 
         static int x0s(int i, int W) => i % W;
