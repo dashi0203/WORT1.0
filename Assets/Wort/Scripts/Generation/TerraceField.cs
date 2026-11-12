@@ -18,7 +18,7 @@ namespace Wort.Generation
         /// <summary>小于这个面积的台地可以上不去（不强制放坡道）。</summary>
         public int MinRampedPlateau = 60;
         /// <summary>坡道宽（格）。</summary>
-        public int RampWidth = 2;
+        public int RampWidth = 1; // 负责人 2026-11-12：坡道宽 1–4 格由道路决定，没有路时 1 格
         /// <summary>坡道里两格斜坡之间的平台长度（格）。负责人 2026-11-12：坡道要更缓，仍不出现连续两格斜坡。</summary>
         public int RampFlat = 2;
         /// <summary>
