@@ -434,6 +434,52 @@ namespace Wort.Tools
             }
             return 0.65f * N(x / 0.9 + 0.37 * N(x / 0.5, z / 0.5, 77), z / 0.9, 71) + 0.35f * N(x / 0.35, z / 0.35, 73);
         }
+        /// <summary>
+        /// 崖面正面逐像素着色（CliffPattern）：按墙面坐标算程序化高度图，取梯度得到法线，重新算光照，石缝 / 板缝压暗，每块石头色调不同。
+        /// 返回 false 表示这里不是带花纹的样式（山地等），照旧着色。
+        /// </summary>
+        static bool WallPixel(Image img, int px, int py, double k0, double nx, double ny, double nz, double wx, double wy, double wz, int t1, int t2)
+        {
+            bool zAxis = Math.Abs(nz) >= Math.Abs(nx);
+            float ax = zAxis ? 0 : (nx > 0 ? 1 : -1), az = zAxis ? (nz > 0 ? 1 : -1) : 0;
+            float tx = -az, tz = ax;
+            float plane = (float)Math.Round(wx * ax + wz * az);
+            float along = (float)(wx * tx + wz * tz), v = (float)wy;
+            var st = Look.WallStyle(ax, az, plane, along, v, out float edge);
+            if (st == CliffStyle.Mountain) return false;
+            var m = Look.Map;
+            double bx = ax != 0 ? plane : wx, bz = az != 0 ? plane : wz;
+            int Hc(double x, double z) { int ix = Math.Clamp((int)Math.Floor(x), 0, m.W - 1), iz = Math.Clamp((int)Math.Floor(z), 0, m.H - 1); return m.Height[iz * m.W + ix]; }
+            float top = Hc(bx - ax * 0.5, bz - az * 0.5), bas = Hc(bx + ax * 0.5, bz + az * 0.5);
+            float rel = top > bas ? (v - bas) / (top - bas) : 0.5f;
+            uint seed = CliffPattern.PlaneSeed(ax, az, plane);
+            const float E = 0.008f;
+            float h0 = CliffPattern.Height(st, along, v, rel, seed, out float ao, out float tone);
+            float hu = CliffPattern.Height(st, along + E, v, rel, seed, out _, out _);
+            float hv = CliffPattern.Height(st, along, v + E, rel, seed, out _, out _);
+            double du = (hu - h0) / E, dv = (hv - h0) / E;
+            // 法线 = 三角形法线 − 沿墙方向 × du − 竖直方向 × dv
+            double qx = nx - tx * du, qy = ny - dv, qz = nz - tz * du;
+            double l = Math.Sqrt(qx * qx + qy * qy + qz * qz); qx /= l; qy /= l; qz /= l;
+            double k = 0.45 + 0.75 * Math.Max(0, qx * LX + qy * LY + qz * LZ);
+            if (edge < 0.12f) ao *= 0.45f + 0.55f * edge / 0.12f;
+            Look.BiomeWeights(wx, wz, lookW);
+            float rv = Stretch((hRock[t1] + hRock[t2]) * 0.5f, 0.15f, 0.7f) * 0.35f + tone * 0.65f;
+            double R = 0, G = 0, B = 0;
+            for (int bi = 0; bi < lookW.Length; bi++)
+            {
+                float wgt = lookW[bi]; if (wgt <= 0) continue;
+                var lk = TerrainLooks.All[bi];
+                R += wgt * Lerp(lk.RockA, lk.RockB, rv, 16); G += wgt * Lerp(lk.RockA, lk.RockB, rv, 8); B += wgt * Lerp(lk.RockA, lk.RockB, rv, 0);
+            }
+            // 越往下越暗一点（参考图崖脚偏暗）
+            double down = 0.78 + 0.22 * Math.Clamp(rel, 0, 1);
+            double kk = k * ao * down;
+            uint C8(double c) => (uint)Math.Clamp(c * kk, 0, 255);
+            img.Set(px, py, C8(R) << 16 | C8(G) << 8 | C8(B));
+            return true;
+        }
+
         static float Stretch(float v, float lo, float hi) { float t = (v - lo) / (hi - lo); return t < 0 ? 0 : (t > 1 ? 1 : t); }
         static double Lerp(uint a, uint b, float t, int sh) => ((a >> sh) & 0xFF) * (1 - t) + ((b >> sh) & 0xFF) * t;
 
@@ -481,6 +527,7 @@ namespace Wort.Tools
                     float rw = (float)(w0 * ra + w1 * rb + w2 * rc);
                     float q = rw > 0 ? TerrainTextures.MixRoad(rw, (hDirt[t1] + hDirt[t2]) * 0.5f, (hRoad[t1] + hRoad[t2]) * 0.5f) : 0;
                     double G(int sh) => Avg(texDirt, sh) * (1 - q) + Avg(texRoad, sh) * q;
+                    if (Look != null && Math.Abs(ny) < 0.75 && bl > 0.5f && WallPixel(img, x, y, k, nx, ny, nz, wx, wy, wz, t1, t2)) continue;
                     if (Look != null)
                     {
                         // 按 Biome 配色：贴图的明暗（高度通道）在每种 Biome 的暗色 → 亮色之间取色，颜色按 Biome 权重渐变

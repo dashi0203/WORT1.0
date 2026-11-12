@@ -783,65 +783,14 @@ namespace Wort.Generation
             switch (style)
             {
                 case CliffStyle.Human:
-                {
-                    // 方石错缝砌：一层层（每层 0.5–0.8m 高），每层切成 0.6–1.2m 宽的方块，上下层接缝错开；
-                    // 每块一个略倾斜的平面、凸出深浅不一（错落），块边倒一点小角、收出石缝
-                    int row = (int)Math.Floor(y / 0.65f) + 2;
-                    float yb0 = 0, yb1 = 0; int ri = 0;
-                    for (int k = row - 2; k <= row + 1; k++)
-                    {
-                        float lo = k * 0.65f + (Unit(Hash.Of(k, 0, ps + 101)) - 0.5f) * 0.36f, hi = (k + 1) * 0.65f + (Unit(Hash.Of(k + 1, 0, ps + 101)) - 0.5f) * 0.36f;
-                        if (y >= lo && y < hi) { yb0 = lo; yb1 = hi; ri = k; break; }
-                    }
-                    float shift = Unit(Hash.Of(ri, 1, ps + 103)) * 0.9f; // 每层整体错开，接缝不对齐
-                    float ua = along + shift;
-                    int col = (int)Math.Floor(ua / 0.9f);
-                    float ub0 = 0, ub1 = 0; int ci = 0;
-                    for (int j = col - 1; j <= col + 1; j++)
-                    {
-                        float lo = j * 0.9f + (Unit(Hash.Of(j, ri, ps + 104)) - 0.5f) * 0.5f, hi = (j + 1) * 0.9f + (Unit(Hash.Of(j + 1, ri, ps + 104)) - 0.5f) * 0.5f;
-                        if (ua >= lo && ua < hi) { ub0 = lo; ub1 = hi; ci = j; break; }
-                    }
-                    uint hc = Hash.Of(ci, ri, ps + 102);
-                    float cu = (ub0 + ub1) * 0.5f, cv = (yb0 + yb1) * 0.5f;
-                    float gu = (Unit(hc >> 3) - 0.5f) * 0.16f, gv = (Unit(hc >> 11) - 0.5f) * 0.22f;
-                    off = 0.04f + 0.18f * Unit(hc) * Unit(hc >> 21) + 0.04f * Unit(hc) + gu * (ua - cu) + gv * (y - cv);
-                    off = off < 0.03f ? 0.03f : (off > 0.24f ? 0.24f : off);
-                    float e = Math.Min(Math.Min(ua - ub0, ub1 - ua), Math.Min(y - yb0, yb1 - y)); // 到方块边的距离（m）
-                    float edgeK = Smooth(0, 0.07f, e);
-                    off *= 0.3f + 0.7f * edgeK;
-                    ao = (0.45f + 0.55f * Smooth(0, 0.09f, e)) * (0.74f + 0.14f * Unit(hc >> 17) + 0.6f * (off - 0.04f)); // 凸出多的石块亮一些
-                    break;
-                }
                 case CliffStyle.Forest:
-                {
-                    // 圆石：Voronoi 0.5m，每块中间鼓成枕头，块边是暗缝；再叠一层大块起伏
-                    Vor2(along / 0.5f, y / 0.5f, ps + 201, out int iu, out int iv, out _, out _, out float e);
-                    uint hc = Hash.Of(iu, iv, ps + 202);
-                    float pillow = 1 - (1 - Sat(e / 0.32f)) * (1 - Sat(e / 0.32f));
-                    float qb = 1 - Vor(along, y, ps, 2.2f) * 1.6f; qb = qb < 0 ? 0 : qb;
-                    off = 0.03f + (0.11f + 0.05f * Unit(hc)) * pillow + 0.06f * qb;
-                    ao = (0.42f + 0.58f * Smooth(0, 0.16f, e)) * (0.88f + 0.12f * Unit(hc >> 9));
-                    break;
-                }
                 case CliffStyle.Swamp:
                 {
-                    // 横向层理：层线沿墙波浪起伏（共同的大波浪 ±0.26m、波长约 1.3m，加每条层线自己的 ±0.09m，层的厚薄随之变化）；
-                    // 每层上沿外凸、下沿内收，越往上越平缓：层缝变浅、外凸变小（负责人 2026-11-12）
-                    const float T = 0.5f;
-                    float common = 0.26f * (Noise1(along / 1.3f, ps + 306) * 2 - 1) + 0.08f * (Noise1(along / 0.5f, ps + 307) * 2 - 1); // 所有层线一起起伏（不会交叉）
-                    float Line(int k) => k * T + common + 0.09f * (Noise1(along / 1.1f + k * 3.17f, ps + 301) * 2 - 1);
-                    int k0 = (int)Math.Floor(y / T);
-                    int band = k0; float lo = Line(k0), hi = Line(k0 + 1);
-                    if (y < lo) { band = k0 - 1; hi = lo; lo = Line(k0 - 1); }
-                    else if (y >= hi) { band = k0 + 1; lo = hi; hi = Line(k0 + 2); }
-                    float f = (y - lo) / Math.Max(0.05f, hi - lo);
-                    float calm = 1 - 0.65f * Sat(rel); // 越往上越平缓
-                    float amp = (0.08f + 0.12f * Unit(Hash.Of(band, 0, ps + 303))) * (0.6f + 0.4f * Noise1(along / 1.9f + band * 7.31f, ps + 304));
-                    float q = (f - 0.62f) / 0.62f;
-                    float prof = 1 - q * q; prof = prof < 0 ? 0 : prof;
-                    off = 0.04f + amp * (prof * calm + (1 - calm) * 0.6f);
-                    ao = (1 - (1 - (0.4f + 0.6f * Smooth(0.0f, 0.3f, f))) * (0.4f + 0.6f * calm)) * (0.9f + 0.1f * Unit(Hash.Of(band, 1, ps + 305)));
+                    // 正面细节交给着色器（CliffPattern 逐像素算法线和暗部），网格只按同一张高度图稍微挤出，再叠一层很缓的大起伏
+                    float qb = 1 - Vor(along, y, ps, 2.2f) * 1.6f; qb = qb < 0 ? 0 : qb;
+                    float hp = CliffPattern.Height(style, along, y, rel, CliffPattern.PlaneSeed(nx, nz, plane), out _, out _);
+                    off = 0.03f + 0.07f * qb + hp;
+                    ao = 1;
                     break;
                 }
                 default:
