@@ -137,6 +137,18 @@ namespace Wort.Tools
                 img.Disc((x + 0.5 - x0) * S, (z0 + size - z - 0.5) * S, 9, 0xFFFFFF);
                 img.Disc((x + 0.5 - x0) * S, (z0 + size - z - 0.5) * S, 6.5, 0xC040C0);
             }
+            // 藤蔓绳：顶上固定点（棕色圆点）到崖下一格（绿色粗线）
+            foreach (var c in r.Climbs)
+            {
+                double ax = (c.X + 0.5 - x0) * S, ay = (z0 + size - c.Z - 0.5) * S;
+                double bx = ax + Grid.DX4[c.Dir] * S, by = ay - Grid.DZ4[c.Dir] * S;
+                for (int t = 0; t <= 20; t++)
+                {
+                    double px = ax + (bx - ax) * t / 20.0, py = ay + (by - ay) * t / 20.0;
+                    img.Disc(px, py, 3.2, 0x2E7D32);
+                }
+                img.Disc(ax, ay, 6, 0xFFFFFF); img.Disc(ax, ay, 4.2, 0x6D4C2E);
+            }
             // 出入口：开 = 绿，封 = 红叉
             foreach (var e in r.Entrances)
             {

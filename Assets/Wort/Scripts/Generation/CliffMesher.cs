@@ -97,6 +97,12 @@ namespace Wort.Generation
                 }
         }
 
+        static bool IsSlope(RegionMap m, int x, int z)
+        {
+            if (x < 0) x = 0; if (z < 0) z = 0; if (x >= m.W) x = m.W - 1; if (z >= m.H) z = m.H - 1;
+            return m.Slope[z * m.W + x] >= 0;
+        }
+
         static int H(RegionMap m, int x, int z)
         {
             if (x < 0) x = 0; if (z < 0) z = 0; if (x >= m.W) x = m.W - 1; if (z >= m.H) z = m.H - 1;
@@ -397,8 +403,23 @@ namespace Wort.Generation
             float x0 = x + (exposed[3] ? Bevel : 0), x1 = x + 1 - (exposed[1] ? Bevel : 0);
             float z0 = z + (exposed[2] ? Bevel : 0), z1 = z + 1 - (exposed[0] ? Bevel : 0);
             bool anySide = sideSlope[0] || sideSlope[1] || sideSlope[2] || sideSlope[3];
+            // 本格的角是标准凹角（两个相邻格和本格同高、对角格更低）：顶面在这个角切掉 Bevel 见方，由两块斜面把两边的倒角斜接起来
+            var concave = new bool[4]; // 0 = (−,−) 1 = (+,−) 2 = (−,+) 3 = (+,+)
+            bool anyConcave = false;
+            for (int c = 0; c < 4; c++)
+            {
+                int dx = (c & 1) == 0 ? -1 : 1, dz = (c & 2) == 0 ? -1 : 1;
+                concave[c] = L(dx, dz) < h && L(dx, 0) == h && L(0, dz) == h && H(map, x + dx, z) == h && H(map, x, z + dz) == h
+                    && !IsSlope(map, x + dx, z) && !IsSlope(map, x, z + dz);
+                anyConcave |= concave[c];
+            }
             void TopV(int i, int j, int KK, out float px, out float pz)
             {
+                if (anyConcave && (i == 0 || i == KK) && (j == 0 || j == KK))
+                {
+                    int c = (i == 0 ? 0 : 1) + (j == 0 ? 0 : 2);
+                    if (concave[c]) { px = x + i / KK + (i == 0 ? Bevel : -Bevel); pz = z + j / KK + (j == 0 ? Bevel : -Bevel); return; }
+                }
                 if (!anySide) { px = x0 + (x1 - x0) * i / KK; pz = z0 + (z1 - z0) * j / KK; return; }
                 // 先按格上的位置估一次，再用估出的位置重算（和倒角取宽度的位置一致，边缘对得上）
                 float bx = x + (float)i / KK, bz = z + (float)j / KK;
@@ -467,6 +488,22 @@ namespace Wort.Generation
                         bd.TriBR(Dirt, 0, 1, 0, p00x, h, p00z, b00, r00, p01x, h, p01z, b01, r01, p11x, h, p11z, b11, r11);
                         bd.TriBR(Dirt, 0, 1, 0, p00x, h, p00z, b00, r00, p11x, h, p11z, b11, r11, p10x, h, p10z, b10, r10);
                     }
+                for (int c = 0; c < 4 && anyConcave; c++)
+                {
+                    if (!concave[c]) continue;
+                    int dx = (c & 1) == 0 ? -1 : 1, dz = (c & 2) == 0 ? -1 : 1;
+                    float kx = x + (dx > 0 ? 1 : 0), kz = z + (dz > 0 ? 1 : 0);           // 凹角点
+                    float mx = kx - dx * Bevel, mz = kz - dz * Bevel;                       // 顶面切角后的内角点
+                    float ax = kx, az = kz - dz * Bevel;                                    // x 向邻格那条倒角的顶端（在本格 x 边上）
+                    float bx2 = kx - dx * Bevel, bz2 = kz;                                  // z 向邻格那条倒角的顶端（在本格 z 边上）
+                    float step = 1f / K;
+                    // 顶面切角后和格边之间的两个小三角（和邻格顶面接上）
+                    bd.Tri(Rock, 0, 1, 0, bx2, h, bz2, kx - dx * step, h, kz, mx, h, mz);
+                    bd.Tri(Rock, 0, 1, 0, ax, h, az, kx, h, kz - dz * step, mx, h, mz);
+                    // 两块斜面：从凹角点下方（倒角高度）斜到顶面切角，接缝沿对角线
+                    bd.Tri(Rock, dx, 1, dz, ax, h, az, mx, h, mz, kx, h - Bevel, kz);
+                    bd.Tri(Rock, dx, 1, dz, bx2, h, bz2, mx, h, mz, kx, h - Bevel, kz);
+                }
             }
 
             // ---- 每个露出的侧面 ----
@@ -618,15 +655,30 @@ namespace Wort.Generation
                             float kx = PX(sg * 0.5f, 0), kz = PZ(sg * 0.5f, 0);
                             int hp2 = Low(map, x, z, sg * tx, sg * tz), hpn = Low(map, x, z, sg * tx + nx, sg * tz + nz);
                             bool continues = hp2 == h && hpn < h;
-                            if (!continues)
-                                bd.Tri(Rock, nx - tx * sg * 0.3f, 1, nz - tz * sg * 0.3f,
-                                    PX(ut, Bevel), h, PZ(ut, Bevel), kx, h, kz, PX(ub, 0), y1, PZ(ub, 0));
-                            // 凹角且对角格同高：两道倒角之间再补一片（内倒角的顶部），南北向的墙负责
                             int hq = Low(map, x, z, nx + sg * tx, nz + sg * tz);
-                            if (ns && endKind[e] == 2 && hq == h)
+                            // 标准凹角（三格同高围着一格低的）：两条倒角在这里斜接，斜面由角上那格（hp2）画（ConcaveCorner）；
+                            // 这里只把本墙倒角的端头接到角点下方（倒角高度），不补到顶面高度的端头三角（那会留下一个小直角）
+                            bool concaveEnd = endKind[e] == 2 && hq == h && hp2 == h && !IsSlope(map, x + sg * tx, z + sg * tz) && !IsSlope(map, x + nx + sg * tx, z + nz + sg * tz);
+                            if (concaveEnd)
                             {
-                                float qx = kx + nx * Fillet, qz = kz + nz * Fillet;
-                                bd.Tri(Rock, nx - tx * sg, 1, nz - tz * sg, kx, h, kz, PX(ub, 0), y1, PZ(ub, 0), qx, y1, qz);
+                                bd.Tri(Rock, nx, 1, nz, PX(ub, 0), y1, PZ(ub, 0), kx, y1, kz, PX(sg * 0.5f, Bevel), h, PZ(sg * 0.5f, Bevel));
+                                if (ns)
+                                {
+                                    float qx = kx + nx * Fillet, qz = kz + nz * Fillet;
+                                    bd.Tri(Rock, 0, 1, 0, PX(ub, 0), y1, PZ(ub, 0), qx, y1, qz, kx, y1, kz); // 内倒角顶上的小平片
+                                }
+                            }
+                            else
+                            {
+                                if (!continues)
+                                    bd.Tri(Rock, nx - tx * sg * 0.3f, 1, nz - tz * sg * 0.3f,
+                                        PX(ut, Bevel), h, PZ(ut, Bevel), kx, h, kz, PX(ub, 0), y1, PZ(ub, 0));
+                                // 凹角且对角格同高：两道倒角之间再补一片（内倒角的顶部），南北向的墙负责
+                                if (ns && endKind[e] == 2 && hq == h)
+                                {
+                                    float qx = kx + nx * Fillet, qz = kz + nz * Fillet;
+                                    bd.Tri(Rock, nx - tx * sg, 1, nz - tz * sg, kx, h, kz, PX(ub, 0), y1, PZ(ub, 0), qx, y1, qz);
+                                }
                             }
                         }
                     }

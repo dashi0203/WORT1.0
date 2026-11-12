@@ -59,6 +59,12 @@ namespace Wort.Generation
         public bool Open;
     }
 
+    /// <summary>藤蔓绳：挂在 (X, Z) 这一格（高的一侧）朝 Dir 方向的崖边上，从 Bottom 层垂到 Top 层；顶面有固定点。</summary>
+    public struct RegionClimb
+    {
+        public int X, Z, Dir, Bottom, Top;
+    }
+
     public sealed class RegionRoom
     {
         public int X0, Z0, X1, Z1; // 矩形，[X0, X1) × [Z0, Z1)
@@ -81,6 +87,10 @@ namespace Wort.Generation
         public List<(int x, int z, double r)> Danger = new List<(int x, int z, double r)>();
         public List<(int x, int z)> Rewards = new List<(int x, int z)>();
         public (int x, int z)? OneWay;
+        /// <summary>最后一间房到入口房间的捷径：(最后一间, 入口房间, 最后一间比入口房间高几层)。没有为 null。</summary>
+        public (int last, int root, int dh)? Shortcut;
+        /// <summary>藤蔓绳（上下都能爬，GDD 第 5 节）。</summary>
+        public List<RegionClimb> Climbs = new List<RegionClimb>();
         public int Attempts;
         /// <summary>这次刷新的刷新种子（和世界种子组成刷新 ID）；AttemptSeed 是最终采用的那次重试的种子。</summary>
         public uint RefreshSeed, AttemptSeed;
@@ -794,35 +804,60 @@ namespace Wort.Generation
             }
             // 房间平地化（负责人 2026-11-12）：每个房间整块一个整数层，不要等高线和小起伏——
             // 平整的房间留给机关 / 怪物 / 小生态，房间里的起伏以后由内容规则加。相邻（有连接）的房间最多差 1 层，开口处做成一级台阶。
-            // 房间高低：入口房间取高度场的平均值（跟着出入口），其余沿连接图从入口房间往里走，每条连接按概率 ±1 层，总高差 ≤ RoomMaxRange。
+            // 房间高低（负责人 2026-11-12）：入口房间和它的出入口同高；其余沿连接图从入口房间往里走，每条连接按概率 ±1 层，总高差 ≤ RoomMaxRange。
+            // 出入口规则：每个开放出入口所在的房间和出入口外面的地面最多差 1 层（接缝带一级台阶接上）；有连接的房间最多差 1 层。
+            // 凑不上就重新抽（最多 40 次）；还凑不上 = 这组出入口高差消化不了，本次判失败，换一组出入口重来。
             {
                 int root = entRoom[openIdx[0]];
+                var entH = new Dictionary<int, int>(); // 房间 → 它的出入口外面的地面高度
+                foreach (int k in openIdx)
+                {
+                    var e = R.Entrances[k];
+                    int eh = m.Height[e.Z * W + e.X];
+                    if (!entH.ContainsKey(entRoom[k])) entH[entRoom[k]] = eh;
+                }
                 var nbr = new List<int>[nr];
                 for (int k = 0; k < nr; k++) nbr[k] = new List<int>();
                 foreach (var (a, b) in R.Edges) { nbr[a].Add(b); nbr[b].Add(a); }
-                var seen = new bool[nr];
-                var queue = new Queue<int>();
-                queue.Enqueue(root); seen[root] = true;
-                int lo = floor[root], hiF = floor[root];
-                while (queue.Count > 0)
+                var trial = new int[nr];
+                bool found = false;
+                for (int attemptH = 0; attemptH < 40 && !found; attemptH++)
                 {
-                    int a = queue.Dequeue();
-                    foreach (int b in nbr[a])
+                    for (int k = 0; k < nr; k++) trial[k] = floor[k];
+                    trial[root] = entH[root];
+                    var seen = new bool[nr];
+                    var queue = new Queue<int>();
+                    queue.Enqueue(root); seen[root] = true;
+                    int lo = trial[root], hiF = trial[root];
+                    while (queue.Count > 0)
                     {
-                        if (seen[b]) continue;
-                        seen[b] = true;
-                        int f = floor[a];
-                        if (rng.Next() < s.RoomStepChance)
+                        int a = queue.Dequeue();
+                        foreach (int b in nbr[a])
                         {
-                            int step = rng.Next() < 0.5 ? 1 : -1;
-                            int nf = f + step;
-                            if (Math.Max(hiF, nf) - Math.Min(lo, nf) > s.RoomMaxRange) nf = f - step; // 超出总高差就往另一边
-                            if (Math.Max(hiF, nf) - Math.Min(lo, nf) <= s.RoomMaxRange) f = nf;
+                            if (seen[b]) continue;
+                            seen[b] = true;
+                            int f = trial[a];
+                            if (rng.Next() < s.RoomStepChance)
+                            {
+                                int step = rng.Next() < 0.5 ? 1 : -1;
+                                int nf = f + step;
+                                if (Math.Max(hiF, nf) - Math.Min(lo, nf) > s.RoomMaxRange) nf = f - step; // 超出总高差就往另一边
+                                if (Math.Max(hiF, nf) - Math.Min(lo, nf) <= s.RoomMaxRange) f = nf;
+                            }
+                            trial[b] = f;
+                            lo = Math.Min(lo, f); hiF = Math.Max(hiF, f);
+                            queue.Enqueue(b);
                         }
-                        floor[b] = f;
-                        lo = Math.Min(lo, f); hiF = Math.Max(hiF, f);
-                        queue.Enqueue(b);
                     }
+                    bool fits = true;
+                    foreach (var kv in entH) if (Math.Abs(trial[kv.Key] - kv.Value) > 1) { fits = false; break; }
+                    if (fits) foreach (var (a, b) in R.Edges) if (Math.Abs(trial[a] - trial[b]) > 1) { fits = false; break; } // 环上的连接也要 ≤ 1 层
+                    if (fits) { found = true; for (int k = 0; k < nr; k++) floor[k] = trial[k]; }
+                }
+                if (!found)
+                {
+                    R.Report.Add("[失败] 出入口之间的高差在房间里消化不了（每个出入口房间要和出入口差 ≤ 1 层），换一组出入口重来");
+                    return R;
                 }
             }
             for (int pass = 0; pass < 8; pass++)
@@ -969,6 +1004,29 @@ namespace Wort.Generation
                 openings[((long)ra << 32) | (uint)rb] = op;
                 if (IsOnCycle(nr, R.Edges, a, b)) oneWayCands.Add((a, b));
             }
+            List<int> shortcutOpening = null;
+            // 捷径（负责人 2026-11-12）：离入口最远的房间（按连接图）如果正好和入口房间挨着、地面正好差 2 层，就在它们之间打通：
+            // 最后一间高 2 层 → 直接打通，从这里跳下回到入口房间（单向）；低 2 层 → 打通并在崖上挂一条藤蔓绳（上下都能爬）。
+            {
+                int rootRoom = entRoom[openIdx[0]];
+                var dep = GraphDist(nr, R.Edges, rootRoom);
+                int last = -1;
+                for (int k = 0; k < nr; k++) if (dep[k] > 0 && (last < 0 || dep[k] > dep[last])) last = k;
+                bool linked = false;
+                foreach (var (a, b) in R.Edges) if ((a == rootRoom && b == last) || (b == rootRoom && a == last)) linked = true;
+                int dfl = last >= 0 ? floor[last] - floor[rootRoom] : 0;
+                if (last >= 0 && !linked && (dfl == 2 || dfl == -2)
+                    && sepCells.TryGetValue(((long)Math.Min(rootRoom, last) << 32) | (uint)Math.Max(rootRoom, last), out var sc))
+                {
+                    var before = new List<int>(); foreach (int i in sc) if (wall[i]) before.Add(i);
+                    OpenWall(m, sc, roomOf, fl, Math.Min(rootRoom, last), Math.Max(rootRoom, last), s, ref rng, wall, W, N, -1);
+                    var op = new List<int>(); foreach (int i in before) if (!wall[i]) op.Add(i);
+                    R.Shortcut = (last, rootRoom, dfl);
+                    shortcutOpening = op;
+
+                }
+            }
+
             // 单向落差：环上一条地面差 1 层的边，开口处做成“上 1 层的坎、再跳下 2 层”
             (int a, int b) oneWayEdge = (-1, -1);
             if (oneWayCands.Count > 0 && rng.Next() < s.OneWayChance)
@@ -1177,6 +1235,42 @@ namespace Wort.Generation
                     m.Biome[i] = (byte)BiomeId.Conifer; m.Weights[(int)BiomeId.Conifer][i] = 1;
                 }
 
+            // ---------- 12a. 每个房间只留一块平地：和最大那块不连着的碎块（被墙脚碎石 / 墙角隔开）一律抬高 1 层并进碎石 ----------
+            //            （负责人 2026-11-12：一个房间里不能有两块互不连通的平地）。放在跳跃安全之前，墙高会把它们算进去
+            {
+                var comp = new int[N];
+                foreach (int i in win) comp[i] = -1;
+                int fixedCells = 0;
+                for (int k = 0; k < nr; k++)
+                {
+                    var parts = new List<List<int>>();
+                    foreach (int i0 in win)
+                    {
+                        if (roomOf[i0] != k || comp[i0] >= 0 || h[i0] != floor[k] || m.HasWater(i0)) continue;
+                        var part = new List<int> { i0 };
+                        comp[i0] = k;
+                        for (int qi = 0; qi < part.Count; qi++)
+                        {
+                            int a = part[qi], ax = a % W, az = a / W;
+                            for (int d = 0; d < 4; d++)
+                            {
+                                int b = (az + Grid.DZ4[d]) * W + ax + Grid.DX4[d];
+                                if (b < 0 || b >= N || comp[b] >= 0 || roomOf[b] != k || h[b] != floor[k] || m.HasWater(b)) continue;
+                                comp[b] = k; part.Add(b);
+                            }
+                        }
+                        parts.Add(part);
+                    }
+                    if (parts.Count < 2) continue;
+                    parts.Sort((p1, p2) => p2.Count.CompareTo(p1.Count));
+                    for (int pi = 1; pi < parts.Count; pi++)
+                    {
+                        foreach (int i in parts[pi]) { h[i] = floor[k] + 1; m.Flags[i] |= CellFlags.Scree; roomOf[i] = -1; fixedCells++; }
+                    }
+                }
+                if (fixedCells > 0) R.Report.Add($"房间里和主体不连着的平地碎块 {fixedCells} 格，已并进墙脚碎石");
+            }
+
             T("12b");
             // ---------- 12b. 跳跃安全（GDD 第 5 节）：墙 / 山体 / 贴高地的台阶，顶面比周围 JumpReach+1 格内所有能站的地方高 ≥ JumpUp+1 ----------
             var noStand = new bool[N];
@@ -1342,6 +1436,124 @@ namespace Wort.Generation
             }
 
             T("13");
+            // ---------- 12d. 捷径核对：两边要真的接上（厚墙上开口可能还被剩下的墙格挡住），没接上就挖开；低 2 层的一侧挂藤蔓绳 ----------
+            if (R.Shortcut.HasValue && shortcutOpening != null)
+            {
+                var (last, rootRoom, dfl) = R.Shortcut.Value;
+                var op = shortcutOpening;
+                bool Touches()
+                {
+                    foreach (int i in win)
+                    {
+                        if (m.Height[i] != floor[rootRoom] || noStand[i] || !(roomOf[i] == rootRoom || op.Contains(i))) continue;
+                        int ix = i % W, iz = i / W;
+                        for (int d = 0; d < 4; d++)
+                        {
+                            int j = (iz + Grid.DZ4[d]) * W + ix + Grid.DX4[d];
+                            if (j < 0 || j >= N || noStand[j]) continue;
+                            if (m.Height[j] == floor[last] && (roomOf[j] == last || op.Contains(j))) return true;
+                        }
+                    }
+                    return false;
+                }
+                if (!Touches())
+                {
+                    var walk2 = new bool[N];
+                    foreach (int i in win) walk2[i] = region[i] && !noStand[i];
+                    var ctr = RoomCenters(m, roomOf, distWall, rock, walk2, win, nr);
+                    if (ctr[rootRoom] >= 0 && ctr[last] >= 0)
+                    {
+                        var carved = CarveOpening(m, cls, roomOf, fl, noStand, R.Wall, region, ctr[last], ctr[rootRoom], last, rootRoom, W, N);
+                        op = new List<int>(op); op.AddRange(carved);
+                    }
+                }
+                bool joined = Touches();
+                if (joined && dfl == -2)
+                {
+                    // 藤蔓绳：在开口里找一对相邻格——高的一侧是入口房间的地面、低的一侧是最后一间的地面，取中间那一对
+                        var pairs = new List<(int hi, int dir)>();
+                        // 候选：开口格和紧挨着开口的两边房间格（开口里可能全取了同一边的高度）
+                        var cand = new HashSet<int>(op);
+                        foreach (int i in op)
+                            for (int d = 0; d < 4; d++)
+                            {
+                                int jx = i % W + Grid.DX4[d], jz = i / W + Grid.DZ4[d];
+                                if (jx < 0 || jz < 0 || jx >= W || jz >= m.H) continue;
+                                int j = jz * W + jx;
+                                if (roomOf[j] == rootRoom || roomOf[j] == last) cand.Add(j);
+                            }
+                        foreach (int i in cand)
+                        {
+                            if (m.Height[i] != floor[rootRoom] || (roomOf[i] != rootRoom && !op.Contains(i))) continue;
+                            int ix = i % W, iz = i / W;
+                            for (int d = 0; d < 4; d++)
+                            {
+                                int jx = ix + Grid.DX4[d], jz = iz + Grid.DZ4[d];
+                                if (jx < 0 || jz < 0 || jx >= W || jz >= m.H) continue;
+                                int j = jz * W + jx;
+                                if (cand.Contains(j) && m.Height[j] == floor[last] && (roomOf[j] == last || op.Contains(j))) pairs.Add((i, d));
+                            }
+                        }
+                        if (pairs.Count == 0 && GenDebug.On)
+                        {
+                            var sb = new System.Text.StringBuilder($"  [藤蔓绳] 找不到挂绳的位置：入口房间 {rootRoom} 基准 {floor[rootRoom]}，最后一间 {last} 基准 {floor[last]}；开口格：");
+                            foreach (int i in op) sb.Append($"({i % W},{i / W}) h{m.Height[i]} r{roomOf[i]}; ");
+                            GenDebug.Log.AppendLine(sb.ToString());
+                        }
+                        if (pairs.Count > 0)
+                        {
+                            pairs.Sort((p1, p2) => p1.hi != p2.hi ? p1.hi.CompareTo(p2.hi) : p1.dir.CompareTo(p2.dir)); // 顺序确定（HashSet 的遍历顺序不保证）
+                            var (hi, dir) = pairs[pairs.Count / 2];
+                            R.Climbs.Add(new RegionClimb { X = hi % W, Z = hi / W, Dir = dir, Bottom = floor[last], Top = floor[rootRoom] });
+                        }
+                }
+                if (!joined) R.Shortcut = null;
+                R.Report.Add(joined
+                    ? $"捷径：最后一间房 {last} 和入口房间 {rootRoom} 挨着、差 {(dfl > 0 ? "+" : "")}{dfl} 层，已打通" + (dfl > 0 ? "（从这里跳下回入口）" : $"（藤蔓绳 {R.Climbs.Count} 条）")
+                    : $"捷径：最后一间房 {last} 和入口房间 {rootRoom} 没能打通，放弃");
+            }
+
+            // ---------- 12e. 房间里的孤立小块：不靠跳跃从开放出入口走不到的房间平地（被墙 / 高差隔开的碎块），并进墙里 ----------
+            //            （负责人 2026-11-12：一个房间里不能有两块互不连通的平地）
+            {
+                var walk3 = new bool[N];
+                foreach (int i in win) walk3[i] = region[i] && !noStand[i];
+                var reach = new bool[N];
+                foreach (int k in openIdx)
+                {
+                    var e = R.Entrances[k];
+                    int ei = e.Z * W + e.X;
+                    var wk = (bool[])walk3.Clone(); wk[ei] = true;
+                    var rr = RoadNet.Reach(m, cls, ei, wk);
+                    foreach (int i in win) if (rr[i]) reach[i] = true;
+                }
+                // 捷径的藤蔓绳两头也算连通（绳子能上下爬）
+                foreach (var c in R.Climbs)
+                {
+                    int hi = c.Z * W + c.X, lo = (c.Z + Grid.DZ4[c.Dir]) * W + c.X + Grid.DX4[c.Dir];
+                    foreach (int start in new[] { hi, lo })
+                        if (reach[hi] || reach[lo]) { var rr = RoadNet.Reach(m, cls, start, walk3); foreach (int i in win) if (rr[i]) reach[i] = true; }
+                }
+                int filled = 0;
+                foreach (int i in win)
+                {
+                    if (roomOf[i] < 0 || reach[i] || noStand[i]) continue;
+                    // 并进墙：高度取周围墙 / 山体的最高值（至少比房间地面高 2 层），以后不能站
+                    int x = i % W, z = i / W, top = h[i] + 2;
+                    for (int dz = -1; dz <= 1; dz++)
+                        for (int dx = -1; dx <= 1; dx++)
+                        {
+                            int n = (z + dz) * W + x + dx;
+                            if (n >= 0 && n < N && noStand[n]) top = Math.Max(top, h[n]);
+                        }
+                    h[i] = top; m.Slope[i] = -1; m.Water[i] = RegionMap.NoWater;
+                    m.Flags[i] &= ~(CellFlags.Road | CellFlags.Pond);
+                    noStand[i] = true; R.Wall[i] = true; roomOf[i] = -1;
+                    filled++;
+                }
+                if (filled > 0) R.Report.Add($"房间里不靠跳跃走不到的孤立小块 {filled} 格，已并进墙里");
+            }
+
             // ---------- 13. 校验 ----------
             var ok = Validate(m, cls, R, region, inner, corridor, out var lines);
             R.Report.AddRange(lines);
@@ -1495,6 +1707,33 @@ namespace Wort.Generation
                         }
                     if (inner) zone[i] = 2;
                 }
+            // 台地可生成区每个房间只留最大的一块（房间窄腰处会把内收区掐成几段），其余退回普通平整区域。
+            // 这块区域以后是关卡机关生成的基石，不能有碎块（负责人 2026-11-12）
+            var seen = new bool[N];
+            var best = new Dictionary<int, List<int>>();
+            var allParts = new List<List<int>>();
+            for (int i0 = 0; i0 < N; i0++)
+            {
+                if (zone[i0] != 2 || seen[i0]) continue;
+                var part = new List<int> { i0 }; seen[i0] = true;
+                for (int qi = 0; qi < part.Count; qi++)
+                {
+                    int a = part[qi], ax = a % W, az = a / W;
+                    for (int d = 0; d < 4; d++)
+                    {
+                        int bx = ax + Grid.DX4[d], bz = az + Grid.DZ4[d];
+                        if (bx < 0 || bz < 0 || bx >= W || bz >= H) continue;
+                        int b = bz * W + bx;
+                        if (seen[b] || zone[b] != 2 || r.RoomOf[b] != r.RoomOf[a]) continue;
+                        seen[b] = true; part.Add(b);
+                    }
+                }
+                allParts.Add(part);
+                int rk = r.RoomOf[i0];
+                if (!best.TryGetValue(rk, out var cur) || part.Count > cur.Count) best[rk] = part;
+            }
+            foreach (var part in allParts)
+                if (best[r.RoomOf[part[0]]] != part) foreach (int i in part) zone[i] = 1;
             return zone;
         }
 

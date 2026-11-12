@@ -53,6 +53,7 @@ namespace Wort.Terrain
         private RegionVoxels lastVoxels;
         private RandomRegionResult lastRandom;
         private Material roomHintMaterial;
+        private Material vineMaterial, stakeMaterial;
         private Material blendMaterial;   // Wort/TerrainBlend（方案 B 的泥土 / 岩石融合）
         private Texture2D dirtTexture, rockTexture, roadTexture;
 
@@ -83,6 +84,8 @@ namespace Wort.Terrain
             materials = null;
             DestroySafe(blendMaterial);
             DestroySafe(roomHintMaterial);
+            DestroySafe(vineMaterial);
+            DestroySafe(stakeMaterial);
             DestroySafe(dirtTexture);
             DestroySafe(rockTexture);
             DestroySafe(roadTexture);
@@ -116,6 +119,7 @@ namespace Wort.Terrain
                     all.Add((cx, cz));
             int triangles = BuildChunks(root.transform, map, voxels, all, useed, out long tCompute, out long tApply);
             BuildRoomHints(root.transform);
+            BuildClimbs(root.transform);
             sw.Stop();
             LastMap = map;
             LastMilliseconds = sw.ElapsedMilliseconds;
@@ -315,6 +319,7 @@ namespace Wort.Terrain
                 }
             BuildChunks(root, map, voxels, list, useed, out long tCompute, out long tApply);
             BuildRoomHints(root);
+            BuildClimbs(root);
             long tMesh = swAll.ElapsedMilliseconds - tRegion - tVoxels;
             LastMap = map;
             LastMilliseconds = swAll.ElapsedMilliseconds;
@@ -405,6 +410,52 @@ namespace Wort.Terrain
             mr.sharedMaterial = roomHintMaterial;
             mr.shadowCastingMode = ShadowCastingMode.Off;
             mr.receiveShadows = false;
+        }
+
+        // ---- 藤蔓绳（占位模型：只显示，不加碰撞；攀爬操作以后做） ----
+        private void BuildClimbs(Transform root)
+        {
+            var old = root.Find("Vine Ropes");
+            if (old != null) DestroySafe(old.gameObject);
+            if (lastRandom == null || lastRandom.Climbs == null || lastRandom.Climbs.Count == 0)
+                return;
+            if (vineMaterial == null || stakeMaterial == null)
+            {
+                var shader = Shader.Find("Universal Render Pipeline/Lit");
+                if (shader == null) shader = Shader.Find("Universal Render Pipeline/Simple Lit");
+                vineMaterial = new Material(shader) { name = "Vine Rope", hideFlags = HideFlags.DontSave };
+                vineMaterial.SetColor("_BaseColor", new Color(0.24f, 0.45f, 0.18f));
+                stakeMaterial = new Material(shader) { name = "Vine Stake", hideFlags = HideFlags.DontSave };
+                stakeMaterial.SetColor("_BaseColor", new Color(0.42f, 0.3f, 0.18f));
+            }
+            var group = new GameObject("Vine Ropes") { hideFlags = HideFlags.DontSave };
+            group.transform.SetParent(root, false);
+            foreach (var c in lastRandom.Climbs)
+            {
+                float dx = Wort.Generation.Grid.DX4[c.Dir], dz = Wort.Generation.Grid.DZ4[c.Dir];
+                // 绳子贴着高格朝 Dir 那面的崖边垂下（往外 0.06m，避开崖面外鼓），从低处地面到崖顶
+                float ex = c.X + 0.5f + dx * 0.56f, ez = c.Z + 0.5f + dz * 0.56f;
+                float len = c.Top - c.Bottom;
+                var rope = Primitive(PrimitiveType.Cylinder, group.transform, vineMaterial, "Vine Rope");
+                rope.transform.localPosition = new Vector3(ex, c.Bottom + len * 0.5f, ez);
+                rope.transform.localScale = new Vector3(0.08f, len * 0.5f, 0.08f); // 圆柱默认高 2m
+                // 顶上的固定点：崖顶边上一个小木桩
+                var stake = Primitive(PrimitiveType.Cube, group.transform, stakeMaterial, "Vine Stake");
+                stake.transform.localPosition = new Vector3(c.X + 0.5f + dx * 0.32f, c.Top + 0.12f, c.Z + 0.5f + dz * 0.32f);
+                stake.transform.localScale = new Vector3(0.14f, 0.24f, 0.14f);
+            }
+        }
+
+        private GameObject Primitive(PrimitiveType type, Transform parent, Material mat, string name)
+        {
+            var go = GameObject.CreatePrimitive(type);
+            go.name = name;
+            go.hideFlags = HideFlags.DontSave;
+            var col = go.GetComponent<Collider>();
+            if (col != null) DestroySafe(col);
+            go.GetComponent<MeshRenderer>().sharedMaterial = mat;
+            go.transform.SetParent(parent, false);
+            return go;
         }
 
         // ---- 道路覆盖层与道路笔刷 ----

@@ -74,7 +74,7 @@ layout 管线目前只在云端预览和测试里用，TerrainLab 场景还是�
 勾上时地面用 `Wort/TerrainBlend` 着色器（泥土 / 岩石两张 128×128 贴图融合）；碰撞是 1m 格按同高矩形合并的 BoxCollider 加斜坡小网格（`Collider` 子物体）。
 勾上 `Random Chunk`（默认勾上）时，右上角 chunk（3,3）是随机 chunk；Inspector 里点“重新生成随机 chunk”换一次（序号 +1），只重建它和周围一圈，
 Console 打印 `[TerrainLab] 刷新 k  ID 3:xxxxxxxx：通过 / 失败 …`、之前失败的重试及原因，以及各步耗时。种子 3、序号 0 的刷新 ID 应为 `3:0FD0E8BD`，
-随机区域 checksum 应为 `0x80C239B9`（与云端 `--random --seed 3` 的刷新 1 相同）。反馈时请附开关前后的截图。
+随机区域 checksum 应为 `0x71E408BD`（与云端 `--random --seed 3` 的刷新 1 相同）。反馈时请附开关前后的截图。
 **刷新 ID**：Inspector 里显示当前的刷新 ID，可点“复制”；把 ID 填进“重放 ID”再点“按 ID 重放”，就能复现那一次刷新（ID 里的世界种子和当前不同时会先换种子、整张重新生成）。
 云端用 `--rid 3:0FD0E8BD` 复现同一次。反馈随机 chunk 的问题时请附上 ID。
 **坡道与路面**（2026-11-12）：坡道画成和崖面同一套外观（坡面边缘倒角、岩石边、侧面鼓包墙），坡面和坡顶 / 坡底各 1 格显示路面；
@@ -98,3 +98,31 @@ git restore .
 ```
 
 - 反馈问题时，请附上 Console 报错的完整文字（右键 → Copy）和画面截图。
+
+## 7. 让 Codex 拉新（固定模板）
+
+每次云端推送后，Claude 会在回复末尾附上下面这段，直接复制给 Codex 即可。分支变了时 Claude 会同步改这里。
+
+```text
+只做下面这几步，不要操作 Unity 界面，不要用 computer use，不要新建、修改、提交或删除任何文件：
+
+1. 在项目目录运行 git status，把输出原样发给我。
+   - 如果被改动的文件只有这 4 个，直接继续：
+     Assets/Wort/Rendering/PC_RPAsset.asset
+     Packages/packages-lock.json
+     ProjectSettings/EditorBuildSettings.asset
+     ProjectSettings/EditorSettings.asset
+   - 如果还有别的被改动的文件（尤其是 .cs 或 .shader），先停下来告诉我，不要自己还原。
+   - 未跟踪的文件一律不要动。
+2. git fetch origin
+3. git switch claude/compassionate-davinci-5t1ttq
+4. git pull
+5. git lfs pull
+6. 依次运行这三条，把输出都发给我：
+   git log -1 --oneline
+   git rev-parse --short HEAD
+   git rev-parse --short origin/claude/compassionate-davinci-5t1ttq
+   后两条输出一样，就说明已经是最新；不一样就停下来告诉我。
+
+做完就结束，不要打开或操作 Unity，也不要做其他检查。
+```
