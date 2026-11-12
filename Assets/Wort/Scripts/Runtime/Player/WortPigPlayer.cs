@@ -10,6 +10,8 @@ public sealed class WortPigPlayer : MonoBehaviour
     [SerializeField, Min(0f)] private float moveSpeed = 4f;
     [SerializeField, Min(0f)] private float turnSpeed = 900f;
     [SerializeField, Min(0f)] private float jumpHeight = 1f;
+    [SerializeField, Range(0.1f, 5f), Tooltip("移动时动画的播放倍速（只在走动时生效，站着时动画按原速）。上限 5 倍。")]
+    private float walkAnimationSpeed = 1f;
 
     private const float JumpBufferSeconds = 0.1f;
     private static readonly int Speed = Animator.StringToHash("Speed");
@@ -84,7 +86,9 @@ public sealed class WortPigPlayer : MonoBehaviour
         if (animator)
         {
             Vector3 velocity = character.velocity;
-            animator.SetFloat(Speed, new Vector2(velocity.x, velocity.z).magnitude);
+            float planarSpeed = new Vector2(velocity.x, velocity.z).magnitude;
+            animator.SetFloat(Speed, planarSpeed);
+            animator.speed = planarSpeed > 0.1f ? walkAnimationSpeed : 1f; // 走动时按倍速播放动画
         }
     }
 }
