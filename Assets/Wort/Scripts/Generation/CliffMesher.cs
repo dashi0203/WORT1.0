@@ -134,21 +134,49 @@ namespace Wort.Generation
                 // 路面的边：侧面不是同一条坡道（低处的崖边或高处的崖脚）
                 edge[s] = sideways && !sameRamp;
             }
-            // ---- 坡面：露出的侧边收进 Bevel ----
-            float x0 = x + (side[3] ? Bevel : 0), x1 = x + 1 - (side[1] ? Bevel : 0);
-            float z0 = z + (side[2] ? Bevel : 0), z1 = z + 1 - (side[0] ? Bevel : 0);
+            // ---- 坡面：露出的侧边收进倒角宽度 ----
+            // 倒角宽度沿坡长变化：两端相邻格（坡底那格 / 坡顶那格）在同一侧也露出时保持 Bevel，和它们的倒角接上；
+            // 不露出时在最后 0.3m 内收窄到 0，坡面边缘平滑并进台面 / 平地（负责人 2026-11-12：不要用小三角硬补）
+            var tLow = new float[4]; var tHigh = new float[4];
+            for (int s = 0; s < 4; s++)
+            {
+                if (!side[s]) continue;
+                int nx = Grid.DX4[s], nz = Grid.DZ4[s];
+                tLow[s] = Low(map, x, z, nx - ux, nz - uz) < h ? 1 : 0;       // 坡底那格这一侧也露出
+                tHigh[s] = Low(map, x, z, nx + ux, nz + uz) < h + 1 ? 1 : 0;  // 坡顶那格这一侧也露出
+            }
+            float Taper(int s, float a)
+            {
+                float lo = tLow[s] > 0 ? 1 : Math.Min(1f, a / 0.3f), hi = tHigh[s] > 0 ? 1 : Math.Min(1f, (1 - a) / 0.3f);
+                return Math.Max(0f, Math.Min(lo, hi));
+            }
+            float Inset(int s, float a) => side[s] ? Bevel * Taper(s, a) : 0f;
+            // 坡面网格：沿坡 a（0 = 坡底）、横向 b；两侧各收进各自的倒角宽度
+            int pa = (up + 1) & 3, pb = (up + 3) & 3; // 横向两侧
+            int pxs = Grid.DX4[pa], pzs = Grid.DZ4[pa];
+            float lowX = cxw - ux * 0.5f, lowZ = czw - uz * 0.5f;
+            void P(float a, float bb, out float px, out float pz)
+            {
+                float i0 = Inset(pb, a), i1 = Inset(pa, a);
+                float c = -0.5f + i0 + (1 - i0 - i1) * bb; // 沿 pa 方向的横向坐标
+                px = lowX + ux * a + pxs * c; pz = lowZ + uz * a + pzs * c;
+            }
             var bl = new float[(K + 1) * (K + 1)];
             var rf = new float[(K + 1) * (K + 1)];
+            var vxs = new float[(K + 1) * (K + 1)]; var vzs = new float[(K + 1) * (K + 1)];
             for (int j = 0; j <= K; j++)
                 for (int i = 0; i <= K; i++)
                 {
-                    float px = x0 + (x1 - x0) * i / K, pz = z0 + (z1 - z0) * j / K, d = 9, dr = 9;
+                    float a = (float)j / K;
+                    P(a, (float)i / K, out float px, out float pz);
+                    vxs[j * (K + 1) + i] = px; vzs[j * (K + 1) + i] = pz;
+                    float d = 9, dr = 9;
                     for (int s = 0; s < 4; s++)
                     {
                         float ds = 0.5f - ((px - cxw) * Grid.DX4[s] + (pz - czw) * Grid.DZ4[s]);
-                        // 岩石边随这一侧“露出的高度”变宽：坡底和侧邻同高处没有岩石边，往上逐渐长出来，和平地自然衔接
+                        // 岩石边随这一侧“露出的高度”变宽，并跟着倒角在不接倒角的一端淡出
                         float expo = Y(px, pz) - low[s]; expo = expo < 0 ? 0 : (expo > 1 ? 1 : expo);
-                        if (side[s]) d = Math.Min(d, ds + (1 - expo) * 0.6f);
+                        if (side[s]) d = Math.Min(d, ds + (1 - expo * Taper(s, a)) * 0.6f);
                         if (edge[s]) dr = Math.Min(dr, ds);
                     }
                     rf[j * (K + 1) + i] = RoadEdge(dr + (float)fRim.Sample(px * 1.7 + 5.1, pz * 1.7) * 0.12f);
@@ -159,11 +187,10 @@ namespace Wort.Generation
             for (int j = 0; j < K; j++)
                 for (int i = 0; i < K; i++)
                 {
-                    float ax = x0 + (x1 - x0) * i / K, bx = x0 + (x1 - x0) * (i + 1) / K, az = z0 + (z1 - z0) * j / K, bz = z0 + (z1 - z0) * (j + 1) / K;
-                    float b00 = bl[j * (K + 1) + i], b10 = bl[j * (K + 1) + i + 1], b01 = bl[(j + 1) * (K + 1) + i], b11 = bl[(j + 1) * (K + 1) + i + 1];
-                    float r00 = rf[j * (K + 1) + i], r10 = rf[j * (K + 1) + i + 1], r01 = rf[(j + 1) * (K + 1) + i], r11 = rf[(j + 1) * (K + 1) + i + 1];
-                    bd.TriBR(Dirt, -ux, 1, -uz, ax, Y(ax, az), az, b00, r00, ax, Y(ax, bz), bz, b01, r01, bx, Y(bx, bz), bz, b11, r11);
-                    bd.TriBR(Dirt, -ux, 1, -uz, ax, Y(ax, az), az, b00, r00, bx, Y(bx, bz), bz, b11, r11, bx, Y(bx, az), az, b10, r10);
+                    int k00 = j * (K + 1) + i, k10 = k00 + 1, k01 = k00 + K + 1, k11 = k01 + 1;
+                    float X(int k) => vxs[k]; float Zc(int k) => vzs[k]; float YY(int k) => Y(vxs[k], vzs[k]);
+                    bd.TriBR(Dirt, -ux, 1, -uz, X(k00), YY(k00), Zc(k00), bl[k00], rf[k00], X(k01), YY(k01), Zc(k01), bl[k01], rf[k01], X(k11), YY(k11), Zc(k11), bl[k11], rf[k11]);
+                    bd.TriBR(Dirt, -ux, 1, -uz, X(k00), YY(k00), Zc(k00), bl[k00], rf[k00], X(k11), YY(k11), Zc(k11), bl[k11], rf[k11], X(k10), YY(k10), Zc(k10), bl[k10], rf[k10]);
                 }
             // ---- 四个侧面 ----
             for (int s = 0; s < 4; s++)
@@ -208,17 +235,24 @@ namespace Wort.Generation
                     hi[k] = hp == top ? top - Bevel - 0.01f : Math.Min(top, hp) - Bevel - 0.49f;
                 }
                 SlopeSideWall(bd, nx, nz, lx, lz, hx, hz, e, h, lo[0], hi[0], lo[1], hi[1]);
-                // 斜着的顶边倒角：墙顶（格边，坡高 − Bevel）→ 坡面边（收进 Bevel）。
-                // 侧邻和坡底同高时，倒角外沿不能低于邻格地面（否则低端露出一个看穿的小三角），这一段外沿贴着地面走
-                float ix = -nx * Bevel, iz = -nz * Bevel;
-                float w0 = e > h - Bevel ? Math.Min(1f, e - (h - Bevel)) : 0f;
-                float mx = lx + (hx - lx) * w0, mz = lz + (hz - lz) * w0;
-                if (w0 > 0)
-                    bd.Quad(Rock, nx, 1, nz, lx, e, lz, mx, e, mz, mx + ix, h + w0, mz + iz, lx + ix, h, lz + iz);
-                bd.Quad(Rock, nx, 1, nz, mx, h + w0 - Bevel, mz, hx, h + 1 - Bevel, hz, hx + ix, h + 1, hz + iz, mx + ix, h + w0, mz + iz);
-                // 两端补小三角（相邻格那一侧没有同样的倒角时不留缺口；有的话被盖住）
-                if (w0 == 0) bd.Tri(Rock, -(hx - lx), 0, -(hz - lz), lx, h - Bevel, lz, lx, h, lz, lx + ix, h, lz + iz);
-                bd.Tri(Rock, hx - lx, 0, hz - lz, hx, h + 1 - Bevel, hz, hx, h + 1, hz, hx + ix, h + 1, hz + iz);
+                // 斜着的顶边倒角，分 K 段：墙面上沿（坡高 − 倒角宽）→ 坡面边（收进倒角宽）；
+                // 倒角收窄处，墙顶（坡高 − Bevel）到倒角下沿之间补一条墙面（不低于邻格地面）
+                var cuts = new List<float>();
+                for (int k = 0; k <= K; k++) cuts.Add((float)k / K);
+                float kink = e - (h - Bevel); // 墙顶线和邻格地面的交点（补墙条带下沿在这里折一下）
+                if (kink > 0 && kink < 1) { cuts.Add(kink); cuts.Sort(); }
+                for (int k = 0; k + 1 < cuts.Count; k++)
+                {
+                    float a0 = cuts[k], a1 = cuts[k + 1];
+                    if (a1 - a0 < 1e-5f) continue;
+                    float i0 = Inset(s, a0), i1 = Inset(s, a1);
+                    float px0 = lx + (hx - lx) * a0, pz0 = lz + (hz - lz) * a0, px1 = lx + (hx - lx) * a1, pz1 = lz + (hz - lz) * a1;
+                    float y0 = h + a0, y1 = h + a1;
+                    bd.Quad(Rock, nx, 1, nz, px0, y0 - i0, pz0, px1, y1 - i1, pz1, px1 - nx * i1, y1, pz1 - nz * i1, px0 - nx * i0, y0, pz0 - nz * i0);
+                    float b0 = Math.Max(e, y0 - Bevel), b1 = Math.Max(e, y1 - Bevel);
+                    if (y0 - i0 > b0 + 1e-4f || y1 - i1 > b1 + 1e-4f)
+                        bd.Quad(Rock, nx, 0, nz, px0, b0, pz0, px0, Math.Max(b0, y0 - i0), pz0, px1, Math.Max(b1, y1 - i1), pz1, px1, b1, pz1);
+                }
             }
         }
 

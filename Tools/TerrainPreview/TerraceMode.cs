@@ -111,6 +111,13 @@ namespace Wort.Tools
                 int hz = map.Height[map.Index(zx, zz)];
                 r.RenderView(zx - vw / 2, zz + hz - vw * 3 / 8, vw, vw * 3 / 4, ppm, null).Save(Path.Combine(outDir, $"zoom_{name}.png"));
             }
+            var view = Environment.GetEnvironmentVariable("WORT_VIEW"); // x,z,宽(m),px/m：任意位置特写，调试用
+            if (view != null)
+            {
+                var vp = view.Split(','); double vx = double.Parse(vp[0]), vz = double.Parse(vp[1]), vw2 = double.Parse(vp[2]), vppm = double.Parse(vp[3]);
+                int vh = map.Height[map.Index((int)vx, (int)vz)];
+                r.RenderView(vx - vw2 / 2, vz + vh - vw2 * 3 / 8, vw2, vw2 * 3 / 4, vppm, null).Save(Path.Combine(outDir, "zoom_view.png"));
+            }
             // 坡道特写（24 px/m）：前 4 个坡道，坡道在画面中间
             for (int k = 0; k < Math.Min(4, map.Ramps.Count); k++)
             {
