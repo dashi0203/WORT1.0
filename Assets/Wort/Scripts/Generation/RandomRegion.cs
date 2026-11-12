@@ -33,8 +33,8 @@ namespace Wort.Generation
         public int GraphCandidates = 10;
         /// <summary>危险区 / 奖励密度（每 1000 m²）【暂定】。</summary>
         public double DangerMin = 0.5, DangerMax = 1.0, RewardMin = 0.25, RewardMax = 0.75;
-        /// <summary>每个房间出现浅水的概率【暂定】。</summary>
-        public double WaterChance = 0.4;
+        /// <summary>每个房间出现浅水的概率。负责人 2026-11-12：房间要平整，水域和其他房间内容以后由内容规则加，地形生成不再做（代码留着给“整间沼泽房”等内容规则用）。</summary>
+        public double WaterChance = 0;
         /// <summary>校验失败时最多换几次种子。</summary>
         public int MaxAttempts = 24;
         /// <summary>房间形状：true = 自然地形（Voronoi 多边形房间）；false = 地牢（矩形房间）（负责人 2026-11-11）。</summary>
