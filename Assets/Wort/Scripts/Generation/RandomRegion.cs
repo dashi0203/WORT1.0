@@ -1235,6 +1235,42 @@ namespace Wort.Generation
                     m.Biome[i] = (byte)BiomeId.Conifer; m.Weights[(int)BiomeId.Conifer][i] = 1;
                 }
 
+            // ---------- 12a. 每个房间只留一块平地：和最大那块不连着的碎块（被墙脚碎石 / 墙角隔开）一律抬高 1 层并进碎石 ----------
+            //            （负责人 2026-11-12：一个房间里不能有两块互不连通的平地）。放在跳跃安全之前，墙高会把它们算进去
+            {
+                var comp = new int[N];
+                foreach (int i in win) comp[i] = -1;
+                int fixedCells = 0;
+                for (int k = 0; k < nr; k++)
+                {
+                    var parts = new List<List<int>>();
+                    foreach (int i0 in win)
+                    {
+                        if (roomOf[i0] != k || comp[i0] >= 0 || h[i0] != floor[k] || m.HasWater(i0)) continue;
+                        var part = new List<int> { i0 };
+                        comp[i0] = k;
+                        for (int qi = 0; qi < part.Count; qi++)
+                        {
+                            int a = part[qi], ax = a % W, az = a / W;
+                            for (int d = 0; d < 4; d++)
+                            {
+                                int b = (az + Grid.DZ4[d]) * W + ax + Grid.DX4[d];
+                                if (b < 0 || b >= N || comp[b] >= 0 || roomOf[b] != k || h[b] != floor[k] || m.HasWater(b)) continue;
+                                comp[b] = k; part.Add(b);
+                            }
+                        }
+                        parts.Add(part);
+                    }
+                    if (parts.Count < 2) continue;
+                    parts.Sort((p1, p2) => p2.Count.CompareTo(p1.Count));
+                    for (int pi = 1; pi < parts.Count; pi++)
+                    {
+                        foreach (int i in parts[pi]) { h[i] = floor[k] + 1; m.Flags[i] |= CellFlags.Scree; roomOf[i] = -1; fixedCells++; }
+                    }
+                }
+                if (fixedCells > 0) R.Report.Add($"房间里和主体不连着的平地碎块 {fixedCells} 格，已并进墙脚碎石");
+            }
+
             T("12b");
             // ---------- 12b. 跳跃安全（GDD 第 5 节）：墙 / 山体 / 贴高地的台阶，顶面比周围 JumpReach+1 格内所有能站的地方高 ≥ JumpUp+1 ----------
             var noStand = new bool[N];
@@ -1477,6 +1513,47 @@ namespace Wort.Generation
                     : $"捷径：最后一间房 {last} 和入口房间 {rootRoom} 没能打通，放弃");
             }
 
+            // ---------- 12e. 房间里的孤立小块：不靠跳跃从开放出入口走不到的房间平地（被墙 / 高差隔开的碎块），并进墙里 ----------
+            //            （负责人 2026-11-12：一个房间里不能有两块互不连通的平地）
+            {
+                var walk3 = new bool[N];
+                foreach (int i in win) walk3[i] = region[i] && !noStand[i];
+                var reach = new bool[N];
+                foreach (int k in openIdx)
+                {
+                    var e = R.Entrances[k];
+                    int ei = e.Z * W + e.X;
+                    var wk = (bool[])walk3.Clone(); wk[ei] = true;
+                    var rr = RoadNet.Reach(m, cls, ei, wk);
+                    foreach (int i in win) if (rr[i]) reach[i] = true;
+                }
+                // 捷径的藤蔓绳两头也算连通（绳子能上下爬）
+                foreach (var c in R.Climbs)
+                {
+                    int hi = c.Z * W + c.X, lo = (c.Z + Grid.DZ4[c.Dir]) * W + c.X + Grid.DX4[c.Dir];
+                    foreach (int start in new[] { hi, lo })
+                        if (reach[hi] || reach[lo]) { var rr = RoadNet.Reach(m, cls, start, walk3); foreach (int i in win) if (rr[i]) reach[i] = true; }
+                }
+                int filled = 0;
+                foreach (int i in win)
+                {
+                    if (roomOf[i] < 0 || reach[i] || noStand[i]) continue;
+                    // 并进墙：高度取周围墙 / 山体的最高值（至少比房间地面高 2 层），以后不能站
+                    int x = i % W, z = i / W, top = h[i] + 2;
+                    for (int dz = -1; dz <= 1; dz++)
+                        for (int dx = -1; dx <= 1; dx++)
+                        {
+                            int n = (z + dz) * W + x + dx;
+                            if (n >= 0 && n < N && noStand[n]) top = Math.Max(top, h[n]);
+                        }
+                    h[i] = top; m.Slope[i] = -1; m.Water[i] = RegionMap.NoWater;
+                    m.Flags[i] &= ~(CellFlags.Road | CellFlags.Pond);
+                    noStand[i] = true; R.Wall[i] = true; roomOf[i] = -1;
+                    filled++;
+                }
+                if (filled > 0) R.Report.Add($"房间里不靠跳跃走不到的孤立小块 {filled} 格，已并进墙里");
+            }
+
             // ---------- 13. 校验 ----------
             var ok = Validate(m, cls, R, region, inner, corridor, out var lines);
             R.Report.AddRange(lines);
@@ -1630,6 +1707,33 @@ namespace Wort.Generation
                         }
                     if (inner) zone[i] = 2;
                 }
+            // 台地可生成区每个房间只留最大的一块（房间窄腰处会把内收区掐成几段），其余退回普通平整区域。
+            // 这块区域以后是关卡机关生成的基石，不能有碎块（负责人 2026-11-12）
+            var seen = new bool[N];
+            var best = new Dictionary<int, List<int>>();
+            var allParts = new List<List<int>>();
+            for (int i0 = 0; i0 < N; i0++)
+            {
+                if (zone[i0] != 2 || seen[i0]) continue;
+                var part = new List<int> { i0 }; seen[i0] = true;
+                for (int qi = 0; qi < part.Count; qi++)
+                {
+                    int a = part[qi], ax = a % W, az = a / W;
+                    for (int d = 0; d < 4; d++)
+                    {
+                        int bx = ax + Grid.DX4[d], bz = az + Grid.DZ4[d];
+                        if (bx < 0 || bz < 0 || bx >= W || bz >= H) continue;
+                        int b = bz * W + bx;
+                        if (seen[b] || zone[b] != 2 || r.RoomOf[b] != r.RoomOf[a]) continue;
+                        seen[b] = true; part.Add(b);
+                    }
+                }
+                allParts.Add(part);
+                int rk = r.RoomOf[i0];
+                if (!best.TryGetValue(rk, out var cur) || part.Count > cur.Count) best[rk] = part;
+            }
+            foreach (var part in allParts)
+                if (best[r.RoomOf[part[0]]] != part) foreach (int i in part) zone[i] = 1;
             return zone;
         }
 
