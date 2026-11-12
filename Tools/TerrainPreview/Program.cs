@@ -330,7 +330,7 @@ namespace Wort.Tools
                         double lambert = Math.Max(0, nx * LX + ny * LY + nz * LZ);
                         double k = 0.5 + 0.6 * lambert;
                         // 预览专用：顶面按高度略微提亮，便于分辨台地层级
-                        if (ny > 0.99) k *= 0.82 + 0.36 * Math.Clamp((p[a * 3 + 1] - minY) / (double)Math.Max(1, maxY - minY), 0, 1);
+                        if (ny > 0.99 && Look == null) k *= 0.82 + 0.36 * Math.Clamp((p[a * 3 + 1] - minY) / (double)Math.Max(1, maxY - minY), 0, 1);
                         if (mesh.Blend.Count == mesh.VertexCount && mat != (int)VoxelMaterial.Water)
                         {
                             bool hasRoad = mesh.Road.Count == mesh.VertexCount;

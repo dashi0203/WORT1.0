@@ -70,9 +70,11 @@ namespace Wort.Tools
             var meshes = new List<(MeshData mesh, int ox, int oz)>();
             long tris = 0;
             var sw = System.Diagnostics.Stopwatch.StartNew();
+            bool sdf = Environment.GetEnvironmentVariable("WORT_SDF") != null; // 第二代原型：距离场 + Surface Nets（CliffSdf）
             for (int cx = 0; cx < rs.ChunksX; cx++)
             {
-                var mesh = CliffMesher.Build(voxels, cx, 0, seed, ShearRenderer.Look);
+                var mesh = sdf ? CliffSdf.Build(map, ShearRenderer.Look, seed, cx * rs.ChunkSize, 0, (cx + 1) * rs.ChunkSize, rs.ChunkSize, cx * rs.ChunkSize, 0)
+                    : CliffMesher.Build(voxels, cx, 0, seed, ShearRenderer.Look);
                 tris += mesh.TriangleCount;
                 meshes.Add((mesh, cx * rs.ChunkSize, 0));
             }
@@ -82,13 +84,14 @@ namespace Wort.Tools
             for (int cx = 0; cx < rs.ChunksX; cx++) trisOld += CliffMesher.Build(new RegionVoxels(map), cx, 0, seed).TriangleCount;
             Console.WriteLine($"  对照（现在的做法）三角形 {trisOld}");
 
+            double shx = double.TryParse(Environment.GetEnvironmentVariable("WORT_SHEARX"), out double sv) ? sv : 0; // 斜视角时裁剪框跟着平移
             var r = new ShearRenderer(map, meshes);
             r.RenderView(0, 0, W, H + 4, 8.0, null).Save(Path.Combine(outDir, "overview.png"));
             for (int c = 0; c < Order.Length; c++)
             {
                 var (mx, mz) = crossC[c];
                 // 十字台特写：14m × 11m，带 2 层高度的错切
-                r.RenderView(mx - 7.5, mz + 2 - 6.5, 15, 13, 48.0, null).Save(Path.Combine(outDir, $"cross_{c + 1}_{Names[c]}.png"));
+                r.RenderView(mx - 7.5 - 1.0 * shx, mz + 2 - 6.5, 15, 13, 48.0, null).Save(Path.Combine(outDir, $"cross_{c + 1}_{Names[c]}.png"));
             }
             for (int k = 0; k < 4; k++)
                 r.RenderView(4 + k * 30, 6, 30, 16, 32.0, null).Save(Path.Combine(outDir, $"strip_{k + 1}.png"));
