@@ -25,6 +25,9 @@ GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
     方块模式左键放、Shift + 左键或右键挖，按住拖动连续（每格一笔只改一次）；拉平模式拖动拉到指定高度、Ctrl + 左键取样；刷套件模式拖动换套件；
     笔刷 1–7 格；数字键 1–9 切套件；白框 = 指着的面，绿框 = 要放的块，红框 = 要挖的块；全部可撤销；只重建受影响的 chunk。
   - 用法：TerrainLab 的 `Generator` 选 `TestGround` → 点“填入项目里的全部套件” → 打开体素笔刷 → 在 Scene 视图里搭。
+- 本地拉新失败（Codex 回报）：本地是单分支克隆，`git fetch origin` 只拉 compassionate-davinci，`git switch claude/ecstatic-maxwell-8c9ue4` 报无效引用；
+  另外本地有未跟踪的 `Assets/Wort/Art/Tilesets/`（Codex 做瓦片的工作文件），和本分支跟踪的文件冲突。
+  → `LocalSetup.md` 第 7 节模板改为显式拉分支、第一次切换时建跟踪分支、`merge --ff-only`；这一次先把本地未跟踪的 Tilesets 挪到项目外备份再切换。
 - 已知：RustCrag 多层墙每 1m 一道横向亮带（墙件贴图顶部偏亮，层层叠成条纹），要请 Codex 改贴图或我在着色器里压。
 
 ## 2026-11-12（续）石灰岩 Tileset（Codex 制作）审阅与修补
