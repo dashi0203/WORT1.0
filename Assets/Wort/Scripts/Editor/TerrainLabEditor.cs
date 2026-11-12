@@ -35,8 +35,14 @@ namespace Wort.Editor
 
         public override void OnInspectorGUI()
         {
-            DrawDefaultInspector();
             var lab = (TerrainLab)target;
+            EditorGUI.BeginChangeCheck();
+            DrawDefaultInspector();
+            if (EditorGUI.EndChangeCheck() && lab.HasGenerated)
+            {
+                lab.RefreshRoomHints(); // 例如勾 / 取消“显示房间提示”
+                SceneView.RepaintAll();
+            }
 
             EditorGUILayout.Space();
             using (new EditorGUILayout.HorizontalScope())

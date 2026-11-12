@@ -43,11 +43,16 @@ namespace Wort.Terrain
         [SerializeField, Tooltip("地形外观方案 B（CliffMesher）：立方体 + 外倒角 / 内倒角、泥土顶面、边缘一圈石头。只改画面，碰撞仍用原来的 1m 体素网格。")]
         private bool cliffDressing = true;
 
+        [SerializeField, Tooltip("随机区域的房间提示：每个房间一层薄薄的半透明色块（平整区域淡色；往里收 1 格、以后台地可生成的区域加斜条纹；边缘描边）。只显示，不影响碰撞和 checksum。")]
+        private bool showRoomHints = true;
+
         [SerializeField, Tooltip("手刷道路的覆盖层（Inspector 里的“道路笔刷”会自动创建）。种子 / 生成器和当前不一致时不叠加。")]
         private RoadOverlayAsset roadOverlay;
 
         private Material[] materials;
         private RegionVoxels lastVoxels;
+        private RandomRegionResult lastRandom;
+        private Material roomHintMaterial;
         private Material blendMaterial;   // Wort/TerrainBlend（方案 B 的泥土 / 岩石融合）
         private Texture2D dirtTexture, rockTexture, roadTexture;
 
@@ -77,6 +82,7 @@ namespace Wort.Terrain
                 DestroySafe(m);
             materials = null;
             DestroySafe(blendMaterial);
+            DestroySafe(roomHintMaterial);
             DestroySafe(dirtTexture);
             DestroySafe(rockTexture);
             DestroySafe(roadTexture);
@@ -89,8 +95,9 @@ namespace Wort.Terrain
             var sw = Stopwatch.StartNew();
             uint useed = unchecked((uint)seed);
             RegionMap map;
+            lastRandom = null;
             if (generator == GeneratorKind.Terrace5x5 && randomChunk)
-                map = RefreshRandom(useed, out _);
+                map = RefreshRandom(useed, out lastRandom);
             else
                 map = generator == GeneratorKind.Terrace5x5
                     ? TerraceField.Generate(new TerraceFieldSettings { Seed = useed }, out _)
@@ -107,6 +114,7 @@ namespace Wort.Terrain
             for (int cz = 0; cz < settings.ChunksZ; cz++)
                 for (int cx = 0; cx < settings.ChunksX; cx++)
                     triangles += BuildChunk(root.transform, map, voxels, cx, cz, useed);
+            BuildRoomHints(root.transform);
             sw.Stop();
             LastMap = map;
             LastMilliseconds = sw.ElapsedMilliseconds;
@@ -225,7 +233,7 @@ namespace Wort.Terrain
             var root = transform.Find(RootName);
             uint useed = unchecked((uint)seed);
             var swAll = Stopwatch.StartNew();
-            var map = RefreshRandom(useed, out _);
+            var map = RefreshRandom(useed, out lastRandom);
             ApplyRoadOverlay(map);
             long tRegion = swAll.ElapsedMilliseconds;
             var voxels = new RegionVoxels(map);
@@ -249,10 +257,95 @@ namespace Wort.Terrain
                     BuildChunk(root, map, voxels, cx, cz, useed);
                     rebuilt++;
                 }
+            BuildRoomHints(root);
             long tMesh = swAll.ElapsedMilliseconds - tRegion - tVoxels;
             LastMap = map;
             LastMilliseconds = swAll.ElapsedMilliseconds;
             Debug.Log($"[TerrainLab] {LastRefreshReport}；体素 {tVoxels} ms；外观网格 + 碰撞 {tMesh} ms（重建 {rebuilt} 个 chunk）；合计 {swAll.ElapsedMilliseconds} ms", this);
+        }
+
+        // ---- 房间提示（随机区域） ----
+        public bool ShowRoomHints
+        {
+            get => showRoomHints;
+            set { showRoomHints = value; RefreshRoomHints(); }
+        }
+
+        /// <summary>按当前开关重建房间提示层（Inspector 改了开关时调用）。</summary>
+        public void RefreshRoomHints()
+        {
+            var root = transform.Find(RootName);
+            if (root != null) BuildRoomHints(root);
+        }
+
+        private static readonly Color32[] RoomHues =
+        {
+            new Color32(0x4F, 0xC3, 0xF7, 0), new Color32(0xFF, 0xB7, 0x4D, 0), new Color32(0x81, 0xC7, 0x84, 0), new Color32(0xF0, 0x62, 0x92, 0),
+            new Color32(0xBA, 0x68, 0xC8, 0), new Color32(0xFF, 0xF1, 0x76, 0), new Color32(0x4D, 0xB6, 0xAC, 0), new Color32(0xFF, 0x8A, 0x65, 0),
+        };
+
+        /// <summary>重建房间提示层（显示关闭或没有随机区域时只删掉旧的）。</summary>
+        private void BuildRoomHints(Transform root)
+        {
+            var old = root.Find("Room Hints");
+            if (old != null)
+            {
+                var f = old.GetComponent<MeshFilter>();
+                if (f != null) DestroySafe(f.sharedMesh);
+                DestroySafe(old.gameObject);
+            }
+            if (!showRoomHints || lastRandom == null || lastRandom.RoomOf == null)
+                return;
+            if (roomHintMaterial == null)
+            {
+                var shader = Shader.Find("Wort/RoomOverlay");
+                if (shader == null) { Debug.LogWarning("[TerrainLab] 找不到 Wort/RoomOverlay 着色器，房间提示不显示。", this); return; }
+                roomHintMaterial = new Material(shader) { name = "Room Hints", hideFlags = HideFlags.DontSave };
+            }
+            var map = lastRandom.Map;
+            var zones = RandomRegion.RoomZones(lastRandom);
+            var verts = new List<Vector3>(); var cols = new List<Color32>(); var tris = new List<int>();
+            void Quad(float x0, float z0, float x1, float z1, float y, Color32 c)
+            {
+                int v = verts.Count;
+                verts.Add(new Vector3(x0, y, z0)); verts.Add(new Vector3(x0, y, z1)); verts.Add(new Vector3(x1, y, z1)); verts.Add(new Vector3(x1, y, z0));
+                for (int k = 0; k < 4; k++) cols.Add(c);
+                tris.Add(v); tris.Add(v + 1); tris.Add(v + 2); tris.Add(v); tris.Add(v + 2); tris.Add(v + 3);
+            }
+            const float Lift = 0.03f, Edge = 0.07f;
+            int W = map.W;
+            for (int i = 0; i < zones.Length; i++)
+            {
+                if (zones[i] == 0) continue;
+                int x = i % W, z = i / W, room = lastRandom.RoomOf[i];
+                var hue = RoomHues[((room % RoomHues.Length) + RoomHues.Length) % RoomHues.Length];
+                float y = map.Height[i] + Lift;
+                Quad(x, z, x + 1, z + 1, y, new Color32(hue.r, hue.g, hue.b, zones[i] == 2 ? (byte)128 : (byte)64));
+                // 描边：和不是同一房间平地的邻格之间的边
+                var edge = new Color32(hue.r, hue.g, hue.b, 255);
+                for (int d = 0; d < 4; d++)
+                {
+                    int nx = x + Wort.Generation.Grid.DX4[d], nz = z + Wort.Generation.Grid.DZ4[d];
+                    bool same = map.InBounds(nx, nz) && zones[nz * W + nx] > 0 && lastRandom.RoomOf[nz * W + nx] == room;
+                    if (same) continue;
+                    if (d == 0) Quad(x, z + 1 - Edge, x + 1, z + 1, y + 0.005f, edge);
+                    else if (d == 1) Quad(x + 1 - Edge, z, x + 1, z + 1, y + 0.005f, edge);
+                    else if (d == 2) Quad(x, z, x + 1, z + Edge, y + 0.005f, edge);
+                    else Quad(x, z, x + Edge, z + 1, y + 0.005f, edge);
+                }
+            }
+            var mesh = new Mesh { indexFormat = IndexFormat.UInt32, hideFlags = HideFlags.DontSave, name = "Room Hints" };
+            mesh.SetVertices(verts);
+            mesh.SetColors(cols);
+            mesh.SetTriangles(tris, 0);
+            mesh.RecalculateBounds();
+            var go = new GameObject("Room Hints") { hideFlags = HideFlags.DontSave };
+            go.transform.SetParent(root, false);
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = roomHintMaterial;
+            mr.shadowCastingMode = ShadowCastingMode.Off;
+            mr.receiveShadows = false;
         }
 
         // ---- 道路覆盖层与道路笔刷 ----

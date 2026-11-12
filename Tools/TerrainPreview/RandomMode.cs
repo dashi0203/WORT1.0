@@ -45,9 +45,17 @@ namespace Wort.Tools
             return fails == 0 ? 0 : 2;
         }
 
+        /// <summary>房间提示色（和 Unity 里的房间提示同一套）。</summary>
+        public static uint RoomHue(int k)
+        {
+            uint[] pal = { 0x4FC3F7, 0xFFB74D, 0x81C784, 0xF06292, 0xBA68C8, 0xFFF176, 0x4DB6AC, 0xFF8A65 };
+            return pal[((k % pal.Length) + pal.Length) % pal.Length];
+        }
+
         static Image Draw(RandomRegionResult r, RegionMap baked, byte[] cls)
         {
             var m = r.Map;
+            var zones = RandomRegion.RoomZones(r);
             const int S = 7, x0 = 192 - 16, z0 = 192 - 16, size = 64 + 32;
             var img = new Image(size * S, size * S);
             int W = m.W;
@@ -72,6 +80,13 @@ namespace Wort.Tools
                         if (reg && r.Seam[i]) col = Image.Mix(col, 0x6E5A48, 0.45);
                         if (reg && r.Corridor[i]) col = 0xC9A878;
                         if (m.Has(i, CellFlags.Road)) col = Image.Mix(col, 0xE8C878, 0.7);
+                        // 房间提示：平整区域淡淡一层房间色，内收 1 格（台地可生成）加斜条纹
+                        if (reg && zones != null && zones[i] > 0)
+                        {
+                            uint rc = RoomHue(r.RoomOf[i]);
+                            col = Image.Mix(col, rc, 0.22);
+                            if (zones[i] == 2 && ((x + z) & 3) == 0) col = Image.Mix(col, rc, 0.5);
+                        }
                     }
                     if (m.HasWater(i)) col = m.Has(i, CellFlags.River) ? 0x2F6FB8u : 0x4A8FC8u;
                     if (!reg && cls[i] != TerraceField.Border) col = Image.Scale(col, 0.75); // 固定世界压暗一点

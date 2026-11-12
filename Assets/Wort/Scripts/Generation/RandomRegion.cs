@@ -766,12 +766,24 @@ namespace Wort.Generation
                 foreach (int i in win) if (roomOf[i] >= 0) { fs[roomOf[i]] += fl[i]; fc[roomOf[i]]++; }
                 for (int k = 0; k < nr; k++) floor[k] = fc[k] > 0 ? (int)Math.Floor(fs[k] / (double)fc[k] + 0.5) : baseH;
             }
+            // 房间平地化（负责人 2026-11-12）：每个房间整块一个整数层（高度场在房间里的平均值），不要等高线和小起伏——
+            // 平整的房间留给机关 / 怪物 / 小生态，房间里的起伏以后由内容规则加。相邻（有连接）的房间最多差 1 层，开口处做成一级台阶。
+            for (int pass = 0; pass < 8; pass++)
+            {
+                bool changed = false;
+                foreach (var (a, b) in R.Edges)
+                {
+                    if (floor[a] > floor[b] + 1) { floor[a] = floor[b] + 1; changed = true; }
+                    if (floor[b] > floor[a] + 1) { floor[b] = floor[a] + 1; changed = true; }
+                }
+                if (!changed) break;
+            }
+            foreach (int i in win) if (roomOf[i] >= 0) fl[i] = floor[roomOf[i]]; // 之后的墙高、开口、水塘、石块都以房间基准层为准
             var depth = GraphDist(nr, R.Edges, entRoom[openIdx[0]]);
             for (int k = 0; k < nr; k++) { R.Rooms[k].Floor = floor[k]; R.Rooms[k].Depth = depth[k]; }
 
-            // ---------- 9. 写高度：房间地面 + 小起伏；墙 = 两侧较高地面 + 2–3 层 ----------
+            // ---------- 9. 写高度：房间地面（平地）；墙 = 两侧较高地面 + 2–3 层 ----------
             int[] h = m.Height;
-            var fBump = new Fbm(Hash.Of(seed, 41), 6, 2);
             var fRise = new Fbm(Hash.Of(seed, 42), 15, 2);
             var distWall = Grid.DistanceInside(Invert(wall, inner), W, H);
             var distWall2 = Grid.DistanceInside(wall, W, H); // 墙格到墙外的距离（墙有多厚）
@@ -781,11 +793,7 @@ namespace Wort.Generation
                 m.Slope[i] = -1;
                 m.Water[i] = RegionMap.NoWater;
                 m.Flags[i] &= ~(CellFlags.Ramp | CellFlags.Pond | CellFlags.CliffEdge | CellFlags.Unreachable | CellFlags.Road);
-                if (roomOf[i] >= 0)
-                {
-                    int x = i % W, z = i / W;
-                    h[i] = fl[i] + (distWall[i] >= 3 && fBump.Sample(x, z) > 0.5 ? 1 : 0);
-                }
+                if (roomOf[i] >= 0) h[i] = fl[i]; // 房间是平地（基准层）
             }
             if (GenDebug.On)
             {
@@ -811,7 +819,7 @@ namespace Wort.Generation
                     for (int dx = -3; dx <= 3; dx++)
                     {
                         int n = (z + dz) * W + x + dx;
-                        if (n >= 0 && n < N && roomOf[n] >= 0) hi = Math.Max(hi, fl[n] + (distWall[n] >= 3 ? 1 : 0));
+                        if (n >= 0 && n < N && roomOf[n] >= 0) hi = Math.Max(hi, fl[n]);
                     }
                 if (hi == int.MinValue) hi = fl[i];
                 // 比墙脚高 2–3 层，墙顶高低不平（宽的地方中间再高 1 层）
@@ -1384,6 +1392,42 @@ namespace Wort.Generation
                 + (pathLen >= 0 ? $"，出入口之间隔 {pathLen} 个房间" : "") + (R.OneWay.HasValue ? "，有单向落差" : "")
                 + $"，危险区 {R.Danger.Count}，奖励 {R.Rewards.Count}");
             return R;
+        }
+
+        /// <summary>
+        /// 房间提示用的分区（负责人 2026-11-12）：0 = 不是房间平地；1 = 房间的平整区域（基准层上能站的平地，不含水、石块、墙）；
+        /// 2 = 平整区域再往里收 1 格（四周 8 格都是同一房间的平地）——以后凸起台地只能长在这里。
+        /// </summary>
+        public static byte[] RoomZones(RandomRegionResult r)
+        {
+            var m = r.Map;
+            int W = m.W, H = m.H, N = W * H;
+            var zone = new byte[N];
+            if (r.RoomOf == null) return zone;
+            bool Flat(int i)
+            {
+                int k = r.RoomOf[i];
+                if (k < 0 || k >= r.Rooms.Count) return false;
+                if (m.HasWater(i) || m.Slope[i] >= 0 || m.Height[i] != r.Rooms[k].Floor) return false;
+                if ((r.Rock != null && r.Rock[i]) || (r.NoStand != null && r.NoStand[i])) return false;
+                return true;
+            }
+            for (int i = 0; i < N; i++) if (Flat(i)) zone[i] = 1;
+            for (int z = 1; z < H - 1; z++)
+                for (int x = 1; x < W - 1; x++)
+                {
+                    int i = z * W + x;
+                    if (zone[i] == 0) continue;
+                    bool inner = true;
+                    for (int dz = -1; dz <= 1 && inner; dz++)
+                        for (int dx = -1; dx <= 1; dx++)
+                        {
+                            int n = i + dz * W + dx;
+                            if (zone[n] == 0 || r.RoomOf[n] != r.RoomOf[i]) { inner = false; break; }
+                        }
+                    if (inner) zone[i] = 2;
+                }
+            return zone;
         }
 
         /// <summary>每个房间离墙最远的可站格（同距离取序号小的），作为房间中心。</summary>
