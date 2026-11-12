@@ -102,7 +102,7 @@ git restore .
 ## 7. 让 Codex 拉新（固定模板）
 
 每次云端推送后，Claude 会在回复末尾附上下面这段，直接复制给 Codex 即可。分支变了时 Claude 会同步改这里。
-本地仓库是单分支克隆（`git fetch origin` 只拉原来那条分支），所以第 2 步显式拉指定分支，第 4 步用 `merge --ff-only` 代替 `pull`。
+本地仓库是单分支克隆（`git fetch origin` 只拉原来那条分支），所以第 2 步显式拉指定分支，第 4 步用 `merge --ff-only` 代替 `pull`；第一次建本地分支不加 `--track`（拉取规则不认这条远端分支，加了会报 “not a branch”）。
 
 ```text
 只做下面这几步，不要操作 Unity 界面，不要用 computer use，不要新建、修改、提交或删除任何文件：
@@ -117,8 +117,8 @@ git restore .
    - 未跟踪的文件一律不要动。
 2. git fetch origin +refs/heads/claude/ecstatic-maxwell-8c9ue4:refs/remotes/origin/claude/ecstatic-maxwell-8c9ue4
 3. git switch claude/ecstatic-maxwell-8c9ue4
-   - 如果报 “invalid reference” 或分支不存在，改用：
-     git switch -c claude/ecstatic-maxwell-8c9ue4 --track origin/claude/ecstatic-maxwell-8c9ue4
+   - 如果报 “invalid reference” 或分支不存在，改用（不要加 --track，单分支克隆下会报 “not a branch”）：
+     git switch -c claude/ecstatic-maxwell-8c9ue4 origin/claude/ecstatic-maxwell-8c9ue4
    - 如果报 “untracked working tree files would be overwritten”，停下来把列出的文件发给我，不要自己删。
 4. git merge --ff-only origin/claude/ecstatic-maxwell-8c9ue4
 5. git lfs pull
