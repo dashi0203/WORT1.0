@@ -37,6 +37,9 @@ namespace Wort.Generation
         public double WaterChance = 0;
         /// <summary>每个房间最多几个石块（1–2 层小石台）、是否标草丛区。负责人 2026-11-12：都交给以后的内容规则，地形生成不做。</summary>
         public int MaxRocks = 0;
+        /// <summary>房间高低：沿连接图每走一条连接，有这个概率比上一间高或低 1 层（上下各半）；整个区域的总高差不超过 RoomMaxRange 层。负责人 2026-11-12【暂定】</summary>
+        public double RoomStepChance = 0.5;
+        public int RoomMaxRange = 3;
         public bool GrassMarks = false;
         /// <summary>校验失败时最多换几次种子。</summary>
         public int MaxAttempts = 24;
@@ -789,8 +792,39 @@ namespace Wort.Generation
                 foreach (int i in win) if (roomOf[i] >= 0) { fs[roomOf[i]] += fl[i]; fc[roomOf[i]]++; }
                 for (int k = 0; k < nr; k++) floor[k] = fc[k] > 0 ? (int)Math.Floor(fs[k] / (double)fc[k] + 0.5) : baseH;
             }
-            // 房间平地化（负责人 2026-11-12）：每个房间整块一个整数层（高度场在房间里的平均值），不要等高线和小起伏——
+            // 房间平地化（负责人 2026-11-12）：每个房间整块一个整数层，不要等高线和小起伏——
             // 平整的房间留给机关 / 怪物 / 小生态，房间里的起伏以后由内容规则加。相邻（有连接）的房间最多差 1 层，开口处做成一级台阶。
+            // 房间高低：入口房间取高度场的平均值（跟着出入口），其余沿连接图从入口房间往里走，每条连接按概率 ±1 层，总高差 ≤ RoomMaxRange。
+            {
+                int root = entRoom[openIdx[0]];
+                var nbr = new List<int>[nr];
+                for (int k = 0; k < nr; k++) nbr[k] = new List<int>();
+                foreach (var (a, b) in R.Edges) { nbr[a].Add(b); nbr[b].Add(a); }
+                var seen = new bool[nr];
+                var queue = new Queue<int>();
+                queue.Enqueue(root); seen[root] = true;
+                int lo = floor[root], hiF = floor[root];
+                while (queue.Count > 0)
+                {
+                    int a = queue.Dequeue();
+                    foreach (int b in nbr[a])
+                    {
+                        if (seen[b]) continue;
+                        seen[b] = true;
+                        int f = floor[a];
+                        if (rng.Next() < s.RoomStepChance)
+                        {
+                            int step = rng.Next() < 0.5 ? 1 : -1;
+                            int nf = f + step;
+                            if (Math.Max(hiF, nf) - Math.Min(lo, nf) > s.RoomMaxRange) nf = f - step; // 超出总高差就往另一边
+                            if (Math.Max(hiF, nf) - Math.Min(lo, nf) <= s.RoomMaxRange) f = nf;
+                        }
+                        floor[b] = f;
+                        lo = Math.Min(lo, f); hiF = Math.Max(hiF, f);
+                        queue.Enqueue(b);
+                    }
+                }
+            }
             for (int pass = 0; pass < 8; pass++)
             {
                 bool changed = false;
