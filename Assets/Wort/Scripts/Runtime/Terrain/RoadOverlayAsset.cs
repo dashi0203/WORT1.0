@@ -6,7 +6,7 @@ namespace Wort.Terrain
 {
     /// <summary>
     /// 手刷道路的覆盖层（存成资源，默认 Assets/Wort/Data/RoadOverlay_seed{种子}.asset）。
-    /// 每条记录 = 一格 + 类型（0 擦掉，1 小径，2 道路），同一格只留最后一次。生成地形后由 TerrainLab 叠加（RoadOverlay.Apply）。
+    /// 每条记录 = 一格 + 类型（0 擦掉，1 小路，2 次干道，3 主干道），同一格只留最后一次。生成地形后由 TerrainLab 叠加（RoadOverlay.Apply）。
     /// 只对记录的种子和生成器有效；以后正式的 chunk 编辑工具沿用这一层。
     /// </summary>
     [CreateAssetMenu(menuName = "Wort/Road Overlay", fileName = "RoadOverlay")]

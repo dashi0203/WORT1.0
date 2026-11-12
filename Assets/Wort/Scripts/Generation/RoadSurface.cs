@@ -39,8 +39,21 @@ namespace Wort.Generation
             return mask;
         }
 
-        /// <summary>世界坐标 (x, z) 处的路面权重：按格中心双线性插值。</summary>
+        /// <summary>
+        /// 世界坐标 (x, z) 处的路面权重：按格中心双线性插值，再整体往里收一点（减 0.15 再放大），
+        /// 1 格的路看起来约 0.85m，比 1 格略窄、接近坡道上的路宽（负责人 2026-11-12）。
+        /// </summary>
         public static float Weight(float[] mask, int W, int H, float x, float z)
+        {
+            float w = RawWeight(mask, W, H, x, z);
+            w = (w - Shrink) / (1 - Shrink);
+            return w < 0 ? 0 : w;
+        }
+
+        /// <summary>路面整体往里收的量（权重减去这个值再放大）。</summary>
+        public const float Shrink = 0.15f;
+
+        static float RawWeight(float[] mask, int W, int H, float x, float z)
         {
             float fx = x - 0.5f, fz = z - 0.5f;
             int ix = (int)Math.Floor(fx), iz = (int)Math.Floor(fz);

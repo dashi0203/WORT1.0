@@ -5,7 +5,7 @@ namespace Wort.Generation
 {
     /// <summary>
     /// 道路覆盖层（手刷的道路）：一串“格 → 类型”的修改，生成地形之后叠加上去。
-    /// 类型 0 = 擦掉这一格的路，1 = 小径，2 = 道路。同一格以最后一次修改为准。
+    /// 类型 0 = 擦掉这一格的路，1 = 小路，2 = 次干道，3 = 主干道。同一格以最后一次修改为准。
     /// 以后正式的 chunk 编辑工具沿用这一层。纯 C#，Unity 和预览共用。
     /// </summary>
     public static class RoadOverlay
@@ -42,7 +42,7 @@ namespace Wort.Generation
             return changed;
         }
 
-        /// <summary>笔刷覆盖的格：格中心到笔刷中心 (px, pz) 的距离 ≤ 宽度 / 2（宽 2 约 4 格、宽 3 约 9 格）。</summary>
+        /// <summary>笔刷覆盖的格：格中心到笔刷中心 (px, pz) 的距离 ≤ 宽度 / 2（宽 1 = 所在的 1 格，宽 2 约 5 格，宽 3 约 9 格）。</summary>
         public static List<(int x, int z)> Footprint(float px, float pz, int width)
         {
             var cells = new List<(int x, int z)>();

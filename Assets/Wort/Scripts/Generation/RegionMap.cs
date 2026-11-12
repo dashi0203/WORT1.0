@@ -89,8 +89,8 @@ namespace Wort.Generation
         /// <summary>悬空层种类：1 = 桥（顶面是路），2 = 隧道顶（顶面是原地表）。</summary>
         public byte[] SpanKind;
 
-        /// <summary>路面类型（0 无，1 小径，2 道路），和 <see cref="CellFlags.Road"/> 一起用：标记表示“这一格有路”（渲染只看它），
-        /// 类型留给以后的贴图 / 宽度。不进 checksum。没有路时为 null。</summary>
+        /// <summary>路面类型（0 无，1 小路，2 次干道，3 主干道），和 <see cref="CellFlags.Road"/> 一起用：标记表示“这一格有路”（渲染只看它），
+        /// 类型留给以后的贴图 / 坡道宽度。不进 checksum。没有路时为 null。大多数路是 1 格宽的小路（负责人 2026-11-12）。</summary>
         public byte[] RoadKind;
 
         public void EnsureRoadKind()
@@ -98,7 +98,9 @@ namespace Wort.Generation
             if (RoadKind == null) RoadKind = new byte[Height.Length];
         }
 
-        public const byte RoadNone = 0, RoadPath = 1, RoadMain = 2;
+        public const byte RoadNone = 0, RoadPath = 1, RoadMain = 2, RoadArterial = 3;
+        /// <summary>各类路默认占几格宽：小路 1、次干道 2、主干道 3。</summary>
+        public static int RoadWidthOf(byte kind) => kind <= 1 ? 1 : (kind == 2 ? 2 : 3);
 
         public readonly List<RampInfo> Ramps = new List<RampInfo>();
         public readonly List<DropPoint> Drops = new List<DropPoint>();

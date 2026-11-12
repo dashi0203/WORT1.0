@@ -303,7 +303,7 @@ namespace Wort.Terrain
 
         /// <summary>
         /// 道路笔刷：在 p（区域坐标）处按宽度刷一笔，写进覆盖层并立即改地图；返回改动的格（未重建网格，见 RebuildRoadChunks）。
-        /// kind：0 擦除，1 小径，2 道路。
+        /// kind：0 擦除，1 小路，2 次干道，3 主干道。
         /// </summary>
         public List<int> PaintRoad(Vector2 p, int width, byte kind)
         {

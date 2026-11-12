@@ -126,7 +126,7 @@ namespace Wort.Generation
         static bool Less((float f, int i) a, (float f, int i) b) => a.f < b.f || (a.f == b.f && a.i < b.i);
 
         /// <summary>
-        /// 把路径标成道路。width = 2 时，每格再加上行进方向右手边的一格（同样高、不是斜坡侧边、不是水、在 allowed 里）。
+        /// 把路径标成道路（kind：1 小路，2 次干道，3 主干道）。width = 2 时，每格再加上行进方向右手边的一格（同样高、不是斜坡侧边、不是水、在 allowed 里）。
         /// </summary>
         public static void Paint(RegionMap m, List<int> path, int width, bool[] allowed, byte kind = RegionMap.RoadPath)
         {

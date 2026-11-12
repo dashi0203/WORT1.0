@@ -80,7 +80,7 @@ namespace Wort.Generation
         public uint RefreshSeed, AttemptSeed;
         /// <summary>之前失败的重试及原因。</summary>
         public List<string> AttemptLog = new List<string>();
-        /// <summary>小径铺不通的段（连通测试）。空 = 全部铺通。</summary>
+        /// <summary>小径（1 格）铺不通的段（连通测试）。空 = 全部铺通。</summary>
         public List<string> RoadFails = new List<string>();
         public bool Ok;
         public List<string> Report = new List<string>();
@@ -192,7 +192,7 @@ namespace Wort.Generation
         }
 
         /// <summary>
-        /// 连通测试用的固定世界道路：从出生点到每个候选出入口各铺一条路（只走固定世界，不进随机区域，不靠跳跃）。
+        /// 连通测试用的固定世界道路（次干道，2 格）：从出生点到每个候选出入口各铺一条路（只走固定世界，不进随机区域，不靠跳跃）。
         /// 直接改 baked（之后的刷新都带着这些路）。返回报告行。
         /// </summary>
         public static List<string> ConnectFixed(RegionMap baked, byte[] cls, IList<(int cx, int cz)> chunks, IList<RegionEntrance> candidates)
@@ -1301,7 +1301,7 @@ namespace Wort.Generation
                     var wk = (bool[])walk.Clone(); wk[ei] = true;
                     var path = c >= 0 ? RoadNet.Find(m, cls, ei, c, wk) : null;
                     if (path == null) { fails.Add($"出入口 ({e.X},{e.Z}) → 房间 {entRoom[k]}"); continue; }
-                    RoadNet.Paint(m, path, 2, wk);
+                    RoadNet.Paint(m, path, 1, wk);
                     reached[entRoom[k]] = true; ok2++;
                 }
                 var okEdges = new List<(int a, int b)>();
@@ -1364,7 +1364,7 @@ namespace Wort.Generation
                         }
                         continue;
                     }
-                    RoadNet.Paint(m, path, 2, walk);
+                    RoadNet.Paint(m, path, 1, walk);
                     okEdges.Add((a, b)); ok2++;
                 }
                 // 按路能走到的房间：从出入口所在房间沿铺通的连接扩散

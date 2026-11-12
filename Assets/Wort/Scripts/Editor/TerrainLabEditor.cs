@@ -13,10 +13,11 @@ namespace Wort.Editor
 
         // 道路笔刷（静态：换选中物体后保留设置）
         private static bool brushOn;
-        private static int brushKind = 1;   // 0 擦除，1 小径，2 道路
-        private static int brushWidth = 2;  // 2 或 3 格
-        private static readonly string[] KindNames = { "擦除", "小径", "道路" };
-        private static readonly string[] WidthNames = { "2 格", "3 格" };
+        private static int brushKind = 1;   // 0 擦除，1 小路（1 格），2 次干道（2 格），3 主干道（3 格）
+        private static int eraseWidth = 1;  // 擦除的宽度（1–3 格）
+        private static readonly string[] KindNames = { "擦除", "小路 1 格", "次干道 2 格", "主干道 3 格" };
+        private static readonly string[] WidthNames = { "1 格", "2 格", "3 格" };
+        private static int BrushWidth => brushKind == 0 ? eraseWidth : RegionMap.RoadWidthOf((byte)brushKind);
         private readonly HashSet<int> strokeCells = new HashSet<int>();
         private bool hasHover;
         private Vector2 hover;
@@ -121,7 +122,9 @@ namespace Wort.Editor
                 }
             }
             brushKind = GUILayout.Toolbar(brushKind, KindNames);
-            brushWidth = GUILayout.Toolbar(brushWidth - 2, WidthNames) + 2;
+            if (brushKind == 0)
+                eraseWidth = GUILayout.Toolbar(eraseWidth - 1, WidthNames) + 1;
+            EditorGUILayout.HelpBox("大多数路用小路（1 格，看起来约 0.85m）；次干道 2 格、主干道 3 格。", MessageType.None);
             var ov = lab.RoadOverlay;
             if (ov == null)
                 EditorGUILayout.HelpBox("还没有道路覆盖层；打开笔刷时会在 Assets/Wort/Data/ 下按种子自动创建。", MessageType.None);
@@ -191,7 +194,7 @@ namespace Wort.Editor
                     Undo.RecordObject(lab.RoadOverlay, "Paint Road");
                     GUIUtility.hotControl = id;
                 }
-                foreach (int i in lab.PaintRoad(hover, brushWidth, (byte)brushKind))
+                foreach (int i in lab.PaintRoad(hover, BrushWidth, (byte)brushKind))
                     strokeCells.Add(i);
                 EditorUtility.SetDirty(lab.RoadOverlay);
                 // 拖动中每攒够一些格就重建一次，松开时把剩下的重建
@@ -212,7 +215,7 @@ namespace Wort.Editor
             else if (e.type == EventType.Repaint && hasHover)
             {
                 Handles.color = brushKind == 0 ? new Color(1f, 0.35f, 0.3f, 0.9f) : (brushKind == 1 ? new Color(1f, 0.85f, 0.4f, 0.9f) : new Color(1f, 0.6f, 0.2f, 0.9f));
-                Handles.DrawWireDisc(lab.GroundToWorld(hover), lab.transform.up, brushWidth * 0.5f);
+                Handles.DrawWireDisc(lab.GroundToWorld(hover), lab.transform.up, BrushWidth * 0.5f);
             }
         }
 
