@@ -65,10 +65,10 @@ namespace Wort.Generation
                     int hn = EdgeH(map, x, z + 1, 2), he = EdgeH(map, x + 1, z, 3), hs = EdgeH(map, x, z - 1, 0), hw = EdgeH(map, x - 1, z, 1);
                     int mask = (hn < h ? 1 : 0) | (he < h ? 2 : 0) | (hs < h ? 4 : 0) | (hw < h ? 8 : 0);
                     // 内拐角：四邻都不低、只有斜对角更低（东北 16、西北 32、东南 64、西南 128）。着色器按到角点的距离把顶岩边绕过去
-                    if (hn >= h && he >= h && HeightAt(map, x + 1, z + 1) < h) mask |= 16;
-                    if (hn >= h && hw >= h && HeightAt(map, x - 1, z + 1) < h) mask |= 32;
-                    if (hs >= h && he >= h && HeightAt(map, x + 1, z - 1) < h) mask |= 64;
-                    if (hs >= h && hw >= h && HeightAt(map, x - 1, z - 1) < h) mask |= 128;
+                    if (hn >= h && he >= h && DiagH(map, x + 1, z + 1) < h) mask |= 16;
+                    if (hn >= h && hw >= h && DiagH(map, x - 1, z + 1) < h) mask |= 32;
+                    if (hs >= h && he >= h && DiagH(map, x + 1, z - 1) < h) mask |= 64;
+                    if (hs >= h && hw >= h && DiagH(map, x - 1, z - 1) < h) mask |= 128;
                     // 哪边邻居更高（北 256、东 512、南 1024、西 2048）：崖脚前面的地面往外倾（内凹圆角的地面一侧）
                     mask |= (hn > h ? 256 : 0) | (he > h ? 512 : 0) | (hs > h ? 1024 : 0) | (hw > h ? 2048 : 0);
 
@@ -140,22 +140,30 @@ namespace Wort.Generation
                         double edge = side > 0 ? lx + 1 : lx;
                         var wall = m.Group(set, ProcCliffMesh.Part.Wall);
                         double fz = FrontZ(map, x, z, h);   // 这一列正面所在的世界 z：侧面的崖壁贴图从正面转角接着铺
+                        // 旁边是南北向的坡道：墙脚顺着坡面走（不是平的），鼓包在坡面处收为 0，墙和坡面严丝合缝（负责人 2026-11-13：坡道两侧面没接上）
+                        int nsUp = SlopeAt(map, x + side, z);
+                        bool alongRamp = nsUp == 0 || nsUp == 2;
+                        double SurfAt(double wz) => !alongRamp ? hb : HeightAt(map, x + side, z) + (nsUp == 0 ? wz - z : z + 1 - wz);
+                        double LoAt(double wz) => front ? SurfAt(wz) : Math.Max(SurfAt(wz), h - 1);
                         for (int r = 0; r < rows; r++)
                         {
-                            double y0 = lo + (h - lo) * (double)r / rows, y1 = lo + (h - lo) * (double)(r + 1) / rows;
+                            double fr0 = (double)r / rows, fr1 = (double)(r + 1) / rows;
+                            double y0 = lo + (h - lo) * fr0, y1 = lo + (h - lo) * fr1;
                             for (int c = 0; c < Sub; c++)
                             {
                                 double z0 = lz + (double)c / Sub, z1 = lz + (double)(c + 1) / Sub;
                                 double wz0 = oz + z0, wz1 = oz + z1;
-                                double a0 = edge + side * SideOut(map, x, z, side, y0, wz0, h, hb);
-                                double a1 = edge + side * SideOut(map, x, z, side, y1, wz0, h, hb);
-                                double b0 = edge + side * SideOut(map, x, z, side, y0, wz1, h, hb);
-                                double b1 = edge + side * SideOut(map, x, z, side, y1, wz1, h, hb);
+                                double la = LoAt(wz0), lb = LoAt(wz1);
+                                double ya0 = la + (h - la) * fr0, ya1 = la + (h - la) * fr1, yb0 = lb + (h - lb) * fr0, yb1 = lb + (h - lb) * fr1;
+                                double a0 = edge + side * SideOut(map, x, z, side, ya0, wz0, h, SurfAt(wz0));
+                                double a1 = edge + side * SideOut(map, x, z, side, ya1, wz0, h, SurfAt(wz0));
+                                double b0 = edge + side * SideOut(map, x, z, side, yb0, wz1, h, SurfAt(wz1));
+                                double b1 = edge + side * SideOut(map, x, z, side, yb1, wz1, h, SurfAt(wz1));
                                 // 朝外看：东面右手边是 +z，西面右手边是 −z（Unity 顺时针为正面）
                                 if (side > 0)
-                                    QuadAuto(m, wall, a0, y0, z0, a1, y1, z0, b1, y1, z1, b0, y0, z1, side, 4, side, h, hb, ox + edge, fz, ExposedMask(map, x + side, z));
+                                    QuadAuto(m, wall, a0, ya0, z0, a1, ya1, z0, b1, yb1, z1, b0, yb0, z1, side, 4, side, h, hb, ox + edge, fz, ExposedMask(map, x + side, z));
                                 else
-                                    QuadAuto(m, wall, b0, y0, z1, b1, y1, z1, a1, y1, z0, a0, y0, z0, side, 4, side, h, hb, ox + edge, fz, ExposedMask(map, x + side, z));
+                                    QuadAuto(m, wall, b0, yb0, z1, b1, yb1, z1, a1, ya1, z0, a0, ya0, z0, side, 4, side, h, hb, ox + edge, fz, ExposedMask(map, x + side, z));
                             }
                             if (r == rows - 1)
                             {
@@ -286,6 +294,9 @@ namespace Wort.Generation
             return (EdgeH(map, x, z + 1, 2) < h ? 1 : 0) | (EdgeH(map, x + 1, z, 3) < h ? 2 : 0) |
                    (EdgeH(map, x, z - 1, 0) < h ? 4 : 0) | (EdgeH(map, x - 1, z, 1) < h ? 8 : 0);
         }
+
+        /// <summary>斜对角格的高度：坡道按最高那条边（高度 + 1）算，坡顶接台地的地方不会被当成内拐角。</summary>
+        static int DiagH(RegionMap map, int x, int z) => HeightAt(map, x, z) + (SlopeAt(map, x, z) >= 0 ? 1 : 0);
 
         static int SlopeAt(RegionMap map, int x, int z)
         {
@@ -446,7 +457,7 @@ namespace Wort.Generation
             return SideOut(map, x, z, side, y, z, h, hb);
         }
 
-        static double SideOut(RegionMap map, int x, int z, int side, double y, double wz, int h, int hb)
+        static double SideOut(RegionMap map, int x, int z, int side, double y, double wz, int h, double hb)
         {
             if (y <= hb || hb >= h) return 0;
             int sideEdge = side > 0 ? 3 : 1;
