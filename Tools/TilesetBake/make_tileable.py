@@ -25,7 +25,7 @@ R = int(sys.argv[3]) if len(sys.argv) > 3 else 96
 K = float(sys.argv[4]) if len(sys.argv) > 4 else 0.85
 a = np.asarray(Image.open(src).convert('RGB'), float) / 255
 lum = a @ [0.2126, 0.7152, 0.0722]; m = lum.mean()
-for axis in (0, 1):   # 0: 逐行（纵向渐变）  1: 逐列（横向渐变）
+for axis in ((0, 1) if K > 0 else ()):   # 0: 逐行（纵向渐变）  1: 逐列（横向渐变）；K = 0 只做四方连续
     prof = lum.mean(axis=1 - axis)
     prof = blur1d(prof, R, 0)
     gain = (m / np.maximum(prof, 1e-3)) ** K

@@ -7,7 +7,7 @@
 默认 256 个顶点 = 512 个三角面，与 Blender 那档面数一致。
 正交俯视下面法线 = 烘焙结果，不需要 Blender。
 
-用法：python periodic_facet_normal.py <含 *_BaseColor.png 的目录> <输出目录> [顶点数=256]
+用法：python periodic_facet_normal.py <含 *_BaseColor.png 的目录> <输出目录> [顶点数=256] [向下延伸比例=0.67，俯视贴图用 0] [置换幅度=0.5]
 依赖：numpy、pillow、scipy
 """
 import sys
@@ -20,14 +20,14 @@ S = 512
 W9 = [.051, .0918, .12245, .1531, .1633, .1531, .12245, .0918, .051]
 q = lambda a: np.rint(np.clip(a, 0, 1) * 255) / 255
 
-def height67(path):
+def height67(path, extend=.67):
     a = np.array(Image.open(path).convert('RGB')) / 255.0
     h = q(a @ np.array([.2126, .7152, .0722]))
     h = q((1.26 / .74) * (h - .5) + .5)
     for ax in (0, 1):
         h = q(sum(w * np.roll(h, int(np.floor(k * (-32) / 5 + .5)), axis=ax) for k, w in zip(range(-4, 5), W9)))
     e = np.maximum.reduce([np.roll(h, d, axis=0) for d in range(65)])
-    return h + .67 * (e - h)
+    return h + extend * (e - h)
 
 def triangulate(z, nverts):
     """z: 像素单位高度 (S×S)。返回 (每像素所在三角形的平面梯度 gx, gy)。"""
@@ -66,9 +66,11 @@ def triangulate(z, nverts):
 def main():
     src, out = Path(sys.argv[1]), Path(sys.argv[2]); out.mkdir(parents=True, exist_ok=True)
     nverts = int(sys.argv[3]) if len(sys.argv) > 3 else 256
+    extend = float(sys.argv[4]) if len(sys.argv) > 4 else .67   # 向下延伸比例；俯视的顶岩用 0
+    amp = float(sys.argv[5]) if len(sys.argv) > 5 else .5       # 置换幅度（全黑到全白，单位 = 贴图边长）
     for f in sorted(src.glob('*_BaseColor.png')):
         stem = f.name.replace('_BaseColor.png', '')
-        z = .5 * (height67(f) - .5) * S          # 像素单位
+        z = amp * (height67(f, extend) - .5) * S          # 像素单位
         gx, gy, nv = triangulate(z, nverts)
         n = np.stack([-gx, gy, np.ones_like(gx)], -1)               # 切线空间 +X 右、+Y 上
         n /= np.linalg.norm(n, axis=2, keepdims=True)
