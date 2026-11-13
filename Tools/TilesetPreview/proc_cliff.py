@@ -30,7 +30,8 @@ WALL_GAIN, WALL_SAT = 1.12, 1.12   # 崖壁提亮 / 加饱和（Unity 材质参�
 EARTH_P = 2.0      # 泥土平铺周期（m）
 TOPB = 0.35        # 崖壁顶部融合顶岩的高度（m）
 INSET0, INSET1 = 0.15, 0.35   # 泥土离露边内收（m）
-SUB = 4                    # 每格顶面细分
+SUB = 4                    # 竖向每米行数
+SIDE_SUB = int(__import__('os').environ.get('SIDE_SUB', '2'))   # 侧面每格沿边细分（Unity 里 ProcCliffMesher.Sub = 2）
 FOOT, TOP = 0.35, 0.22
 LIFT = 0.08
 L = np.array([0.329, 0.819, -0.470]); L /= np.linalg.norm(L)
@@ -120,11 +121,11 @@ for ix in range(NX):
             if hb >= h: continue
             lo = hb if front else max(hb, h - 1)
             ys = np.linspace(lo, h, int(round((h - lo) * SUB)) + 1)
-            zs = [iz + j / SUB for j in range(SUB + 1)]
+            zs = [iz + j / SIDE_SUB for j in range(SIDE_SUB + 1)]
             edge = ix + (1.0 if side > 0 else 0.0)
             G = [[[edge + side * bulge(side, y_, z_, h), y_, z_] for z_ in zs] for y_ in ys]
             for r in range(len(ys) - 1):
-                for c in range(SUB):
+                for c in range(SIDE_SUB):
                     a_, b_, c2, d_ = G[r][c], G[r][c + 1], G[r + 1][c + 1], G[r + 1][c]
                     n = np.cross(np.subtract(b_, a_), np.subtract(d_, a_)); n = n / (np.linalg.norm(n) + 1e-12)
                     if n[0] * side < 0: n = -n
