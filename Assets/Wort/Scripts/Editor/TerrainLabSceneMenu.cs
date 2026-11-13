@@ -62,7 +62,7 @@ namespace Wort.Editor
             cam.farClipPlane = 1000f;
             cam.clearFlags = CameraClearFlags.SolidColor;
             cam.backgroundColor = new Color(0.10f, 0.14f, 0.19f);
-            camGo.transform.SetPositionAndRotation(new Vector3(256f, 80f, 180f), Quaternion.Euler(90f, 0f, 0f));
+            camGo.transform.SetPositionAndRotation(new Vector3(256f, 30f, 180f), Quaternion.Euler(90f, 0f, 0f)); // 高度 30：正交相机高度不影响画面，降低后阴影贴图集中在地面附近（负责人 2026-11-13：影子太糊）
             camGo.AddComponent<AudioListener>();
             cam.GetUniversalAdditionalCameraData().renderPostProcessing = true;
             camGo.AddComponent<WortShearCamera>();

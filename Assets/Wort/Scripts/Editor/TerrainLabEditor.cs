@@ -266,31 +266,17 @@ namespace Wort.Editor
             if (voxelMode == 1)
                 flattenHeight = EditorGUILayout.IntSlider("拉平到高度（层）", flattenHeight, 0, 40);
 
-            var sets = lab.Tilesets;
+            var sets = lab.ProcCliffSets;
             if (sets != null && sets.Length > 0)
             {
                 var names = new string[sets.Length];
                 for (int k = 0; k < sets.Length; k++)
-                    names[k] = $"{k + 1}. " + (sets[k] == null ? "（空）" : (string.IsNullOrEmpty(sets[k].displayName) ? sets[k].name : sets[k].displayName));
+                    names[k] = $"{k + 1}. " + (sets[k] == null ? "（空）" : sets[k].name.Replace("_ProcCliffSet", ""));
                 voxelSet = Mathf.Clamp(voxelSet, 0, sets.Length - 1);
                 voxelSet = EditorGUILayout.Popup("当前套件（数字键切换）", voxelSet, names);
             }
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (GUILayout.Button("填入项目里的全部套件"))
-                {
-                    var found = new List<TilesetAsset>();
-                    foreach (var guid in AssetDatabase.FindAssets("t:TilesetAsset"))
-                    {
-                        var t = AssetDatabase.LoadAssetAtPath<TilesetAsset>(AssetDatabase.GUIDToAssetPath(guid));
-                        if (t != null) found.Add(t);
-                    }
-                    found.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
-                    Undo.RecordObject(lab, "Assign Tilesets");
-                    lab.Tilesets = found.ToArray();
-                    EditorUtility.SetDirty(lab);
-                    Generate(lab);
-                }
                 if (GUILayout.Button("重置为平地（可撤销）") && lab.TestGroundData != null &&
                     EditorUtility.DisplayDialog("Wort", "把测试地恢复成平地？（高度和套件都清掉，可以撤销）", "重置", "取消"))
                 {
@@ -300,14 +286,47 @@ namespace Wort.Editor
                     Generate(lab);
                 }
             }
-            if (!lab.UseTiles)
-                EditorGUILayout.HelpBox("还没有指定瓦片套件，地形用原来的崖面外观画。点“填入项目里的全部套件”。", MessageType.Warning);
+            // 程序化崖壁（模块化瓦片路线已删除，负责人 2026-11-13）
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                bool proc = EditorGUILayout.ToggleLeft("程序化崖壁（关掉 = 旧崖面外观）", lab.ProcCliff);
+                if (proc != lab.ProcCliff)
+                {
+                    Undo.RecordObject(lab, "Toggle Proc Cliff");
+                    lab.ProcCliff = proc;
+                    if (proc && (lab.ProcCliffSets == null || lab.ProcCliffSets.Length == 0)) FillProcCliffSets(lab);
+                    EditorUtility.SetDirty(lab);
+                    Generate(lab);
+                }
+                if (GUILayout.Button("填入程序化崖壁材质"))
+                {
+                    Undo.RecordObject(lab, "Assign Proc Cliff Sets");
+                    FillProcCliffSets(lab);
+                    EditorUtility.SetDirty(lab);
+                    Generate(lab);
+                }
+            }
+            if (!lab.UseProcCliff)
+                EditorGUILayout.HelpBox("没有打开程序化崖壁（或没有材质套），地形用旧的崖面外观画。勾上“程序化崖壁”或点“填入程序化崖壁材质”。", MessageType.Warning);
             EditorGUILayout.HelpBox(
                 "方块：左键 = 放一块（点顶面往上叠，点侧面在旁边那格填到这一层）；Shift + 左键或右键 = 挖一块（点侧面会连上面的一起挖掉，柱子不能悬空）。按住拖动连续放 / 挖。\n" +
                 "拉平：左键拖动把笔刷范围拉到指定高度；Ctrl + 左键取样（把指着的那格高度设为目标）。\n" +
-                "刷套件：左键拖动把范围内的格换成当前套件（墙件跟着高的那一格）。\n" +
+                "刷套件：左键拖动把范围内的格换成当前套件（Biome 材质套，交界自动融合）。\n" +
                 "数字键 1–9 切换套件；Alt + 拖动照常转视角。所有修改都可以 Ctrl+Z 撤销。",
                 MessageType.None);
+        }
+
+        /// <summary>按名字排序填入项目里全部 ProcCliffSet（和瓦片套件同样按名字排序，编号对得上）。</summary>
+        private static void FillProcCliffSets(TerrainLab lab)
+        {
+            var found = new List<ProcCliffSet>();
+            foreach (var guid in AssetDatabase.FindAssets("t:ProcCliffSet"))
+            {
+                var t = AssetDatabase.LoadAssetAtPath<ProcCliffSet>(AssetDatabase.GUIDToAssetPath(guid));
+                if (t != null) found.Add(t);
+            }
+            found.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+            lab.ProcCliffSets = found.ToArray();
         }
 
         /// <summary>找或建测试地资源（Assets/Wort/Data/TestGround.asset）并指定给 TerrainLab。</summary>
@@ -390,10 +409,10 @@ namespace Wort.Editor
                 return;
             }
             // 数字键切换套件
-            if (e.type == EventType.KeyDown && e.keyCode >= KeyCode.Alpha1 && e.keyCode <= KeyCode.Alpha9 && lab.Tilesets != null)
+            if (e.type == EventType.KeyDown && e.keyCode >= KeyCode.Alpha1 && e.keyCode <= KeyCode.Alpha9 && lab.ProcCliffSets != null)
             {
                 int k = e.keyCode - KeyCode.Alpha1;
-                if (k < lab.Tilesets.Length) { voxelSet = k; Repaint(); e.Use(); }
+                if (k < lab.ProcCliffSets.Length) { voxelSet = k; Repaint(); e.Use(); }
                 return;
             }
             if (e.type == EventType.MouseMove || e.type == EventType.MouseDrag || e.type == EventType.MouseDown)

@@ -53,8 +53,23 @@ namespace Wort.Terrain
         [SerializeField, Tooltip("空白测试地的数据（每格高度、套件编号）。体素笔刷打开时自动创建 Assets/Wort/Data/TestGround.asset。")]
         private TestGroundAsset testGround;
 
-        [SerializeField, Tooltip("TestGround 用的模块化瓦片套件（编号 = 数组下标，0 是默认）。为空时用原来的崖面外观。Inspector 里可以一键填入项目里的全部套件。")]
-        private TilesetAsset[] tilesets;
+        [SerializeField, Tooltip("TestGround / Terrace5x5 用程序化崖壁（ProcCliffMesher + Wort/ProcCliff）。关掉就用旧的崖面外观（CliffMesher）。模块化瓦片路线已删除（负责人 2026-11-13）。")]
+        private bool procCliff;
+
+        [SerializeField, Tooltip("程序化崖壁的材质套（编号 = 数组下标，和瓦片套件编号一致）。Inspector 里可以一键填入。")]
+        private ProcCliffSet[] procCliffSets;
+
+        [SerializeField, Tooltip("程序化崖壁的 Biome 融合：权重按格模糊的半径（格）。测试地小，默认 4；正式世界按 GDD 是 32–64m 的过渡带。0 = 不融合（硬交界）。")]
+        private int biomeBlendRadius = 4;
+
+        [SerializeField, Tooltip("正式生成器（5×5 等）的 Biome 融合半径（格）：地图自带的 Biome 是逐格硬分区，这里模糊成渐变带（GDD：过渡带 32–64m）。")]
+        private int biomeBlendRadiusWorld = 10;
+
+        // 程序化崖壁运行时资源：各套贴图打包成的数组、合并材质、Biome 权重图（都不存盘）
+        private Texture2DArray procColArr, procNrmArr;
+        private Material procMat;
+        private Texture2D biomeMap;
+        private ProcCliffSet[] procBuiltFor;
 
         private Material[] materials;
         private RegionVoxels lastVoxels;
@@ -158,25 +173,25 @@ namespace Wort.Terrain
             public MeshData Visual;
             public List<ColliderBoxes.Box> Boxes;
             public MeshData Slopes;
-            public List<TilePlacement> Tiles; // 用模块化瓦片时：这个 chunk 的瓦片清单（Visual 为空）
+            public ProcCliffMesh Proc;        // 用程序化崖壁时：这个 chunk 的网格（Visual 为空）
         }
 
-        /// <summary>TestGround 且指定了瓦片套件时，用模块化瓦片画地形。</summary>
-        public bool UseTiles => generator == GeneratorKind.TestGround && tilesets != null && tilesets.Length > 0 && tilesets[0] != null;
+        /// <summary>TestGround 且打开了程序化崖壁、指定了材质套时，用程序化崖壁画地形。</summary>
+        public bool UseProcCliff => (generator == GeneratorKind.TestGround || generator == GeneratorKind.Terrace5x5) &&
+                                    procCliff && procCliffSets != null && procCliffSets.Length > 0 && procCliffSets[0] != null;
 
         /// <summary>只做计算，不碰任何 Unity 对象（所以能并行）。</summary>
         private ChunkBuild ComputeChunk(RegionMap map, RegionVoxels voxels, int cx, int cz, uint useed)
         {
             var b = new ChunkBuild { Cx = cx, Cz = cz };
-            if (UseTiles)
+            if (UseProcCliff)
             {
-                b.Tiles = new List<TilePlacement>();
-                TilePlacer.Chunk(map, testGround != null ? testGround.Sets : null, cx, cz, b.Tiles);
-                b.Visual = new MeshData();
+                b.Proc = ProcCliffMesher.Build(map, generator == GeneratorKind.TestGround && testGround != null ? testGround.Sets : null, cx, cz);
+                b.Visual = generator == GeneratorKind.TestGround ? new MeshData() : ChunkMesher.Build(voxels, cx, cz);   // 只用它的水面
             }
             else
                 b.Visual = cliffDressing ? CliffMesher.Build(voxels, cx, cz, useed) : ChunkMesher.Build(voxels, cx, cz);
-            if (addColliders && (cliffDressing || b.Tiles != null))
+            if (addColliders && (cliffDressing || b.Proc != null))
             {
                 b.Boxes = ColliderBoxes.Build(map, cx, cz);
                 b.Slopes = CliffMesher.SlopesOnly(voxels, cx, cz);
@@ -193,109 +208,241 @@ namespace Wort.Terrain
             chunk.transform.localPosition = new Vector3(b.Cx * settings.ChunkSize, 0f, b.Cz * settings.ChunkSize);
             chunk.isStatic = true;
             int triangles;
-            if (b.Tiles != null)
-                triangles = AddTiles(chunk, b);
+            if (b.Proc != null)
+            {
+                triangles = AddProcCliff(chunk, b.Proc);
+                AddPart(chunk, "Water", b.Visual, true, false);
+            }
             else
             {
                 AddPart(chunk, "Ground", b.Visual, false, addColliders && !cliffDressing);
                 AddPart(chunk, "Water", b.Visual, true, false);
                 triangles = b.Visual.TriangleCount;
             }
-            if (addColliders && (cliffDressing || b.Tiles != null))
+            if (addColliders && (cliffDressing || b.Proc != null))
                 AddBoxColliders(chunk, map, b); // 碰撞仍按 1m 格：同高矩形合并成碰撞盒 + 斜坡小网格
             return triangles;
         }
 
         /// <summary>
-        /// 贴地墙件的底边加一点噪声（负责人 2026-11-12：底部边缘做点小噪声，别凸出来太多）：
-        /// 复制一份网格，底边（本地 y ≈ 0）中间的顶点按世界坐标哈希往正面（本地 −Z）推 0.5–4cm；两端不动，和相邻墙件、拐角对得上。
+        /// 程序化崖壁：整个 chunk 一个网格（子网格 = 套件 × 部分），只投影的面放在子物体 Shadow 上（ShadowsOnly，屏幕上不画）。返回三角形数（不含只投影的面）。
         /// </summary>
-        private static Mesh FootNoise(Mesh src, TilePlacement p)
+        private int AddProcCliff(GameObject chunk, ProcCliffMesh pm)
         {
-            var copy = Object.Instantiate(src);
-            copy.hideFlags = HideFlags.DontSave;
-            var v = copy.vertices;
-            var rot = Quaternion.Euler(0f, p.Rot * 90f, 0f);
-            for (int i = 0; i < v.Length; i++)
+            int n = pm.VertexCount;
+            if (n == 0) return 0;
+            var pos = new Vector3[n]; var nor = new Vector3[n]; var tan = new Vector4[n];
+            var d1 = new List<Vector4>(n); var d2 = new List<Vector4>(n);
+            for (int i = 0; i < n; i++)
             {
-                if (v[i].y > 0.01f || v[i].x < 0.02f || v[i].x > 0.98f) continue;
-                var w = rot * v[i] + new Vector3(p.X, p.Y, p.Z);
-                uint h = Hash.Of(Mathf.RoundToInt(w.x * 16f), Mathf.RoundToInt(w.z * 16f), (uint)(p.Y * 977 + 5));
-                v[i].z -= 0.005f + 0.035f * ((h & 0xFFFF) / 65535f);
+                pos[i] = new Vector3(pm.Positions[i * 3], pm.Positions[i * 3 + 1], pm.Positions[i * 3 + 2]);
+                nor[i] = new Vector3(pm.Normals[i * 3], pm.Normals[i * 3 + 1], pm.Normals[i * 3 + 2]);
+                tan[i] = new Vector4(pm.Tangents[i * 4], pm.Tangents[i * 4 + 1], pm.Tangents[i * 4 + 2], pm.Tangents[i * 4 + 3]);
+                d1.Add(new Vector4(pm.Data1[i * 4], pm.Data1[i * 4 + 1], pm.Data1[i * 4 + 2], pm.Data1[i * 4 + 3]));
+                d2.Add(new Vector4(pm.Data2[i * 4], pm.Data2[i * 4 + 1], pm.Data2[i * 4 + 2], pm.Data2[i * 4 + 3]));
             }
-            copy.vertices = v;
-            copy.RecalculateBounds();
-            return copy;
-        }
-
-        private TilesetAsset TilesetFor(byte set)
-        {
-            if (tilesets == null || tilesets.Length == 0) return null;
-            var t = set < tilesets.Length ? tilesets[set] : null;
-            return t != null ? t : tilesets[0];
+            Mesh NewMesh(string name)
+            {
+                var m = new Mesh { indexFormat = IndexFormat.UInt32, hideFlags = HideFlags.DontSave, name = name };
+                m.vertices = pos; m.normals = nor; m.tangents = tan;
+                m.SetUVs(1, d1); m.SetUVs(2, d2);
+                return m;
+            }
+            var visGroups = new List<List<int>>(); var visMats = new List<Material>();
+            var shadowIdx = new List<int>(); Material shadowMat = null;
+            foreach (var kv in pm.Indices)
+            {
+                int set = kv.Key / ProcCliffMesh.PartCount;
+                var part = (ProcCliffMesh.Part)(kv.Key % ProcCliffMesh.PartCount);
+                // 所有套件共用一个合并材质（贴图在数组里，按 Biome 权重图逐像素选套件）；同一部分的组合并成一个子网格
+                if (part == ProcCliffMesh.Part.Shadow) { shadowIdx.AddRange(kv.Value); shadowMat = procMat; continue; }
+                var mat = procMat;
+                int at = visMats.IndexOf(mat);
+                if (at < 0) { visGroups.Add(new List<int>(kv.Value)); visMats.Add(mat); }
+                else visGroups[at].AddRange(kv.Value);
+            }
+            long tris = 0;
+            var mesh = NewMesh($"{chunk.name} ProcCliff");
+            mesh.subMeshCount = visGroups.Count;
+            for (int k = 0; k < visGroups.Count; k++) { mesh.SetTriangles(visGroups[k], k, false); tris += visGroups[k].Count / 3; }
+            mesh.RecalculateBounds();
+            var go = new GameObject("ProcCliff") { hideFlags = HideFlags.DontSave };
+            go.transform.SetParent(chunk.transform, false);
+            go.isStatic = true;
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var renderer = go.AddComponent<MeshRenderer>();
+            renderer.sharedMaterials = visMats.ToArray();
+            renderer.shadowCastingMode = ShadowCastingMode.On;
+            if (shadowIdx.Count > 0)
+            {
+                // 看不见的北 / 东 / 西竖面：只进阴影贴图，保证台地挡光完整（负责人 2026-11-13）
+                var sm = NewMesh($"{chunk.name} ProcCliff Shadow");
+                sm.SetTriangles(shadowIdx, 0, true);
+                var sgo = new GameObject("Shadow") { hideFlags = HideFlags.DontSave };
+                sgo.transform.SetParent(go.transform, false);
+                sgo.isStatic = true;
+                sgo.AddComponent<MeshFilter>().sharedMesh = sm;
+                var sr = sgo.AddComponent<MeshRenderer>();
+                sr.sharedMaterial = shadowMat;
+                sr.shadowCastingMode = ShadowCastingMode.ShadowsOnly;
+            }
+            return (int)tris;
         }
 
         /// <summary>
-        /// 模块化瓦片：按材质分组，每组用 CombineMeshes 合成一个子网格，整个 chunk 一个网格（运行时没有逐块开销）。
-        /// 瓦片网格要可读（Read/Write，Tileset 的网格资源默认就是）。返回三角形数。
+        /// 程序化崖壁的运行时资源：
+        /// 1) 把各套贴图在显卡里复制进两个 Texture2DArray（颜色 / 法线）。每套 SetStride 层：0 崖壁、1 泥土、2 顶岩（没有顶岩放泥土）、
+        ///    3–18 崖壁变体按格切开（2x2 v1/v2 各 4 格、2x1 v1/v2 各 2 格、1x2 v1/v2 各 2 格；没有变体用崖壁填）。同类贴图尺寸、格式必须一致（导入设置已统一）。
+        /// 2) 合并材质：第 0 套 main 的参数 + 数组 + 每套参数（有无顶岩、周期、有无变体）。
+        /// 3) Biome 权重图：每格一个像素，RGBA = 套件 0–3 的权重。测试地 = 每格套件编号 one-hot 再按 biomeBlendRadius 模糊；
+        ///    5×5 等正式生成器 = 地图自带的 Biome 渐变权重（GDD：32–64m 过渡带）按各套认领的 Biome 加起来。设为全局贴图。
         /// </summary>
-        private int AddTiles(GameObject chunk, ChunkBuild b)
+        public const int SetStride = 19;
+        private void PrepareProcCliff(RegionMap map)
         {
-            var groups = new Dictionary<Material, List<CombineInstance>>();
-            var order = new List<Material>();
-            var origin = chunk.transform.localPosition;
-            int missing = 0; string firstMissing = null;
-            var temps = new List<Mesh>(); // 底边加了噪声的墙件副本，合并完删掉
-            foreach (var p in b.Tiles)
+            int n = Mathf.Min(procCliffSets.Length, 4);
+            if (procColArr == null || procMat == null || procBuiltFor != procCliffSets)
             {
-                var set = TilesetFor(p.Set);
-                if (set == null || !set.TryGet(p.Name, out var mesh, out var mats))
+                DestroySafe(procColArr); DestroySafe(procNrmArr); DestroySafe(procMat);
+                var main0 = procCliffSets[0].main;
+                var cols = new List<(Texture tex, int cx, int cy)>(); var nrms = new List<(Texture tex, int cx, int cy)>();
+                var setP = new Vector4[4];
+                for (int i = 0; i < n; i++)
                 {
-                    missing++; if (firstMissing == null) firstMissing = p.Name;
-                    continue;
-                }
-                var m = Matrix4x4.TRS(new Vector3(p.X, p.Y, p.Z) - origin, Quaternion.Euler(0f, p.Rot * 90f, 0f), Vector3.one);
-                if (p.Foot)
-                {
-                    mesh = FootNoise(mesh, p);
-                    temps.Add(mesh);
-                }
-                for (int s = 0; s < mesh.subMeshCount && s < mats.Length; s++)
-                {
-                    if (mats[s] == null) continue;
-                    if (!groups.TryGetValue(mats[s], out var list))
+                    var ps = procCliffSets[i] != null ? procCliffSets[i] : procCliffSets[0];
+                    var m = ps.main != null ? ps.main : main0;
+                    bool rock = m.GetFloat("_UseTopRock") > 0.5f && m.GetTexture("_TopRockMap") != null;
+                    Texture cliffC = m.GetTexture("_CliffMap"), cliffN = m.GetTexture("_CliffNormal");
+                    cols.Add((cliffC, -1, 0)); cols.Add((m.GetTexture("_EarthMap"), -1, 0)); cols.Add((rock ? m.GetTexture("_TopRockMap") : m.GetTexture("_EarthMap"), -1, 0));
+                    nrms.Add((cliffN, -1, 0)); nrms.Add((m.GetTexture("_EarthNormal"), -1, 0)); nrms.Add((rock ? m.GetTexture("_TopRockNormal") : m.GetTexture("_EarthNormal"), -1, 0));
+                    bool vars = ps.variantColors != null && ps.variantColors.Length >= 6 && ps.variantNormals != null && ps.variantNormals.Length >= 6;
+                    // 变体按格切：2x2（4 格，下排 x0 x1、上排 x0 x1）、2x1（2 格，左右）、1x2（2 格，下上）
+                    int[] vi = { 0, 1, 2, 3, 4, 5 };
+                    foreach (int v in vi)
                     {
-                        groups[mats[s]] = list = new List<CombineInstance>();
-                        order.Add(mats[s]);
+                        int w = v < 2 ? 2 : v < 4 ? 2 : 1, h = v < 2 ? 2 : v < 4 ? 1 : 2;
+                        for (int cy = 0; cy < h; cy++)
+                            for (int cx = 0; cx < w; cx++)
+                            {
+                                cols.Add(vars ? (ps.variantColors[v], cx, cy) : (cliffC, -1, 0));
+                                nrms.Add(vars ? (ps.variantNormals[v], cx, cy) : (cliffN, -1, 0));
+                            }
                     }
-                    list.Add(new CombineInstance { mesh = mesh, subMeshIndex = s, transform = m });
+                    setP[i] = new Vector4(rock ? 1 : 0, m.GetFloat("_TopRockPeriod"), m.GetFloat("_EarthPeriod"), vars ? 1 : 0);
+                }
+                procColArr = BuildArray(cols, false, "ProcCliff Color");
+                procNrmArr = BuildArray(nrms, true, "ProcCliff Normal");
+                procMat = new Material(main0) { name = "ProcCliff (runtime)", hideFlags = HideFlags.DontSave };
+                procMat.SetTexture("_ColArr", procColArr); procMat.SetTexture("_NrmArr", procNrmArr);
+                for (int i = 0; i < 4; i++) procMat.SetVector("_SetP" + i, setP[Mathf.Min(i, n - 1)]);
+                procMat.SetFloat("_SetCount", n);
+                procMat.SetFloat("_ArrSize", procColArr != null ? procColArr.width : 512);
+                procBuiltFor = procCliffSets;
+            }
+
+            // Biome 权重图（每次重建：体素笔刷会改套件）
+            int W = map.W, Hh = map.H;
+            var wts = new float[W * Hh * 4];
+            if (generator == GeneratorKind.TestGround)
+            {
+                var sets = testGround != null ? testGround.Sets : null;
+                bool ok = sets != null && sets.Length == W * Hh;
+                for (int i = 0; i < W * Hh; i++) wts[i * 4 + Mathf.Clamp(ok ? sets[i] : 0, 0, n - 1)] = 1;
+                if (biomeBlendRadius > 0)
+                    for (int pass = 0; pass < 2; pass++) { BoxBlur(wts, W, Hh, biomeBlendRadius, true); BoxBlur(wts, W, Hh, biomeBlendRadius, false); }
+            }
+            else
+            {
+                // 每个 Biome 归哪一套（没有套认领的归第 0 套）
+                int nb = map.Weights.Length;
+                var owner = new int[nb];
+                for (int i = 0; i < n; i++)
+                    if (procCliffSets[i] != null && procCliffSets[i].biomeIds != null)
+                        foreach (int b in procCliffSets[i].biomeIds)
+                            if (b >= 0 && b < nb && owner[b] == 0) owner[b] = i;
+                for (int b = 0; b < nb; b++)
+                {
+                    var wb = map.Weights[b];
+                    if (wb == null) continue;
+                    for (int i = 0; i < W * Hh; i++) wts[i * 4 + owner[b]] += wb[i];
+                }
+                for (int i = 0; i < W * Hh; i++)
+                {
+                    float t = wts[i * 4] + wts[i * 4 + 1] + wts[i * 4 + 2] + wts[i * 4 + 3];
+                    if (t > 1e-5f) for (int c = 0; c < 4; c++) wts[i * 4 + c] /= t; else wts[i * 4] = 1;
+                }
+                if (biomeBlendRadiusWorld > 0)
+                    for (int pass = 0; pass < 2; pass++) { BoxBlur(wts, W, Hh, biomeBlendRadiusWorld, true); BoxBlur(wts, W, Hh, biomeBlendRadiusWorld, false); }
+            }
+            if (biomeMap == null || biomeMap.width != W || biomeMap.height != Hh)
+            {
+                DestroySafe(biomeMap);
+                biomeMap = new Texture2D(W, Hh, TextureFormat.RGBA32, false, true)
+                    { name = "Biome Weights", hideFlags = HideFlags.DontSave, filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
+            }
+            var px = new Color32[W * Hh];
+            for (int i = 0; i < px.Length; i++)
+                px[i] = new Color32((byte)Mathf.RoundToInt(wts[i * 4] * 255), (byte)Mathf.RoundToInt(wts[i * 4 + 1] * 255),
+                                    (byte)Mathf.RoundToInt(wts[i * 4 + 2] * 255), (byte)Mathf.RoundToInt(wts[i * 4 + 3] * 255));
+            biomeMap.SetPixels32(px);   // 行优先 z * W + x，正好是贴图的 (x, y)
+            biomeMap.Apply(false);
+            Shader.SetGlobalTexture("_WortBiomeMap", biomeMap);
+            Shader.SetGlobalVector("_WortBiomeRect", new Vector4(0, 0, W, Hh));
+            Shader.SetGlobalFloat("_WortBiomeOn", 1);
+        }
+
+        /// <summary>
+        /// 在显卡里把贴图逐层逐 mip 复制进数组。cx = -1 表示整张；否则从大贴图里取第 (cx, cy) 格（左下起，每格 = 第一张的尺寸）。
+        /// 压缩格式按 4×4 块复制，比一块还小的 mip 从第一张整张复制（只在极远处用到）。不一致的贴图报错并用第一张代替。
+        /// </summary>
+        private Texture2DArray BuildArray(List<(Texture tex, int cx, int cy)> list, bool linear, string name)
+        {
+            var first = list[0].tex as Texture2D;
+            if (first == null) { Debug.LogError($"[TerrainLab] {name}：第 0 套缺贴图", this); return null; }
+            int S = first.width, mips = first.mipmapCount;
+            var arr = new Texture2DArray(S, first.height, list.Count, first.format, mips > 1, linear)
+                { name = name, hideFlags = HideFlags.DontSave, wrapMode = TextureWrapMode.Repeat, filterMode = FilterMode.Trilinear, anisoLevel = 4 };
+            for (int i = 0; i < list.Count; i++)
+            {
+                var (tex, cx, cy) = list[i];
+                var t = tex as Texture2D;
+                bool cell = cx >= 0;
+                bool ok = t != null && t.format == first.format &&
+                          (cell ? t.width >= (cx + 1) * S && t.height >= (cy + 1) * first.height : t.width == S && t.height == first.height && t.mipmapCount == mips);
+                if (!ok)
+                {
+                    Debug.LogError($"[TerrainLab] {name} 第 {i} 层（{(t != null ? t.name : "空")}）尺寸 / 格式和第一张（{first.name} {S}×{first.height} {first.format}）不一致，先用第一张代替。请统一导入设置。", this);
+                    t = first; cell = false;
+                }
+                for (int mip = 0; mip < mips; mip++)
+                {
+                    int ms = Mathf.Max(1, S >> mip);
+                    if (!cell) Graphics.CopyTexture(t, 0, mip, arr, i, mip);
+                    else if (ms >= 4 && mip < t.mipmapCount) Graphics.CopyTexture(t, 0, mip, cx * ms, cy * ms, ms, ms, arr, i, mip, 0, 0);
+                    else Graphics.CopyTexture(first, 0, mip, arr, i, mip);
                 }
             }
-            if (missing > 0)
-                Debug.LogWarning($"[TerrainLab] {chunk.name}：{missing} 块瓦片在套件里找不到（如 {firstMissing}），没有画。", this);
-            if (order.Count == 0)
-                return 0;
-            var parts = new CombineInstance[order.Count];
-            for (int k = 0; k < order.Count; k++)
+            return arr;
+        }
+
+        /// <summary>RGBA 权重图的一维方框模糊（边缘按边上的值延伸）。</summary>
+        private static void BoxBlur(float[] w, int W, int H, int r, bool alongX)
+        {
+            int len = alongX ? W : H, lines = alongX ? H : W;
+            var line = new float[len * 4]; var acc = new float[4];
+            for (int l = 0; l < lines; l++)
             {
-                var part = new Mesh { indexFormat = IndexFormat.UInt32, hideFlags = HideFlags.DontSave };
-                part.CombineMeshes(groups[order[k]].ToArray(), true, true);
-                parts[k] = new CombineInstance { mesh = part, transform = Matrix4x4.identity };
+                for (int i = 0; i < len; i++) { int idx = (alongX ? l * W + i : i * W + l) * 4; for (int c = 0; c < 4; c++) line[i * 4 + c] = w[idx + c]; }
+                for (int c = 0; c < 4; c++) acc[c] = 0;
+                for (int k = -r; k <= r; k++) { int j = Mathf.Clamp(k, 0, len - 1); for (int c = 0; c < 4; c++) acc[c] += line[j * 4 + c]; }
+                for (int i = 0; i < len; i++)
+                {
+                    int idx = (alongX ? l * W + i : i * W + l) * 4;
+                    for (int c = 0; c < 4; c++) w[idx + c] = acc[c] / (2 * r + 1);
+                    int add = Mathf.Clamp(i + r + 1, 0, len - 1), sub = Mathf.Clamp(i - r, 0, len - 1);
+                    for (int c = 0; c < 4; c++) acc[c] += line[add * 4 + c] - line[sub * 4 + c];
+                }
             }
-            var combined = new Mesh { indexFormat = IndexFormat.UInt32, hideFlags = HideFlags.DontSave, name = $"{chunk.name} Tiles" };
-            combined.CombineMeshes(parts, false, false);
-            foreach (var part in parts) DestroySafe(part.mesh);
-            foreach (var t in temps) DestroySafe(t);
-            var go = new GameObject("Tiles") { hideFlags = HideFlags.DontSave };
-            go.transform.SetParent(chunk.transform, false);
-            go.isStatic = true;
-            go.AddComponent<MeshFilter>().sharedMesh = combined;
-            var renderer = go.AddComponent<MeshRenderer>();
-            renderer.sharedMaterials = order.ToArray();
-            renderer.shadowCastingMode = ShadowCastingMode.On;
-            long tris = 0;
-            for (int k = 0; k < combined.subMeshCount; k++) tris += combined.GetIndexCount(k) / 3;
-            return (int)tris;
         }
 
         /// <summary>
@@ -315,6 +462,7 @@ namespace Wort.Terrain
             }
             var sw = Stopwatch.StartNew();
             // 共用的缓存先在主线程算好，避免多个线程同时去算
+            if (UseProcCliff) PrepareProcCliff(map);
             if (voxels.RoadMask == null) voxels.RoadMask = RoadSurface.BuildMask(map);
             if (voxels.RoadMouths == null) voxels.RoadMouths = RoadSurface.BuildMouths(map);
             var builds = new ChunkBuild[list.Count];
@@ -654,7 +802,8 @@ namespace Wort.Terrain
 
         // ---- 空白测试地与体素笔刷（Minecraft 式） ----
         public TestGroundAsset TestGroundData { get => testGround; set => testGround = value; }
-        public TilesetAsset[] Tilesets { get => tilesets; set => tilesets = value; }
+        public ProcCliffSet[] ProcCliffSets { get => procCliffSets; set => procCliffSets = value; }
+        public bool ProcCliff { get => procCliff; set => procCliff = value; }
         public bool IsTestGround => generator == GeneratorKind.TestGround;
 
         /// <summary>世界空间射线打体素面（高度场 DDA，见 VoxelPick）。</summary>

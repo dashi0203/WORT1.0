@@ -44,7 +44,6 @@ namespace Wort.Tools
             if (random) return RandomMode.Run(seed, refresh, outDir);
             if (terrace) return TerraceMode.Run(seed, outDir, chunks, cliff);
             if (args.Contains("--looks")) return LooksMode.Run(seed, outDir);
-            if (args.Contains("--tiles")) return TilesMode.Run(outDir);
             if (layout != null) return LayoutMode.Run(layout, outDir);
             Directory.CreateDirectory(outDir);
 
