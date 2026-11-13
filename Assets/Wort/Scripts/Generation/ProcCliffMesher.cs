@@ -77,18 +77,23 @@ namespace Wort.Generation
                     if (hn < h && hw >= h && EdgeH(map, x - 1, z + 1, 2) >= h) mask |= 8192;
 
                     // 顶面：靠露边的格一格一块（着色器按这一格的掩码算倒角、泥土内收）；四周同高的格留给后面合并成大矩形
-                    if (mask != 0)
+                    bool nearSlope = SlopeAt(map, x - 1, z) >= 0 || SlopeAt(map, x + 1, z) >= 0 || SlopeAt(map, x, z - 1) >= 0 || SlopeAt(map, x, z + 1) >= 0;
+                    if (mask != 0 || nearSlope)   // 挨着坡道的格也单独画（边上要和坡道侧墙的半格顶点对上）
                     {
                         var top = m.Group(set, ProcCliffMesh.Part.Top);   // 北边不再裁剪（改成往外伸），TopClip 不再使用
                         // 东西边和邻格有高低差时（那边有侧面 / 顶面窄条，顶点在半格），这条边加中点，避免 T 形接缝
-                        bool midW = hw != h, midE = he != h;
+                        // 旁边是坡道、且坡道沿这条边在中点分段（坡向和这条边垂直）时，这条边也加中点
+                        bool SlopeMid(int dx, int dz) { int su = SlopeAt(map, x + dx, z + dz); return su >= 0 && (dx != 0 ? (su == 0 || su == 2) : (su == 1 || su == 3)); }
+                        bool midW = hw != h || SlopeMid(-1, 0), midE = he != h || SlopeMid(1, 0);
+                        bool midN = hn < h || SlopeMid(0, 1), midS = SlopeMid(0, -1);
                         var ring = new List<(double, double)> { (lx, lz) };
                         if (midW) ring.Add((lx, lz + 0.5));
                         ring.Add((lx, lz + 1));
-                        if (hn < h) ring.Add((lx + 0.5, lz + 1));   // 北边往外伸的窄条顶点在半格
+                        if (midN) ring.Add((lx + 0.5, lz + 1));   // 北边往外伸的窄条顶点在半格
                         ring.Add((lx + 1, lz + 1));
                         if (midE) ring.Add((lx + 1, lz + 0.5));
                         ring.Add((lx + 1, lz));
+                        if (midS) ring.Add((lx + 0.5, lz));
                         TopFan(m, top, ring, lx + 0.5, lz + 0.5, h, mask, x, z);
                     }
                     else interior[lz * size + lx] = true;
@@ -188,10 +193,29 @@ namespace Wort.Generation
                             double edge = side > 0 ? lx + 1 : lx;
                             double oS = SideOut(map, x, z, side, h, oz + lz + 1, h, hb), oN = NorthOut(map, x, z, h, ox + edge);
                             if (oS < 1e-4 || oN < 1e-4) continue;
-                            if (side > 0)
-                                Quad(m, topN, edge, h, lz + 1, edge, h, lz + 1 + oN, edge + oS, h, lz + 1 + oN, edge + oS, h, lz + 1, 0, 1, 0, 1, 0, 0, -1, 1, mask, h, 0, x, z);
-                            else
-                                Quad(m, topN, edge - oS, h, lz + 1, edge - oS, h, lz + 1 + oN, edge, h, lz + 1 + oN, edge, h, lz + 1, 0, 1, 0, 1, 0, 0, -1, 1, mask, h, 0, x, z);
+                            // 补角用四分之一椭圆（半径 = 两条窄条的宽度），轮廓在角上是圆弧，不是直角
+                            int vb = m.VertexCount;
+                            void CV(double vx, double vz)
+                            {
+                                Vert(m, vx, h, vz);
+                                m.Normals.Add(0); m.Normals.Add(1); m.Normals.Add(0);
+                                m.Tangents.Add(1); m.Tangents.Add(0); m.Tangents.Add(0); m.Tangents.Add(-1);
+                                m.Data1.Add(1); m.Data1.Add(mask); m.Data1.Add(h); m.Data1.Add(0);
+                                m.Data2.Add(x); m.Data2.Add(z); m.Data2.Add(0); m.Data2.Add(0);
+                            }
+                            CV(edge, lz + 1);
+                            const int Arc = 4;
+                            for (int a = 0; a <= Arc; a++)
+                            {
+                                double th = Math.PI / 2 * a / Arc;   // 从北边窄条（th = 0）转到侧边窄条（th = 90°）
+                                CV(edge + side * oS * Math.Sin(th), lz + 1 + oN * Math.Cos(th));
+                            }
+                            for (int a = 0; a < Arc; a++)
+                            {
+                                // 从上往下看顺时针：东角 北→东 本身就是顺时针；西角 北→西 是逆时针，反过来
+                                if (side > 0) { topN.Add(vb); topN.Add(vb + 1 + a); topN.Add(vb + 2 + a); }
+                                else { topN.Add(vb); topN.Add(vb + 2 + a); topN.Add(vb + 1 + a); }
+                            }
                         }
                     }
 
@@ -282,28 +306,40 @@ namespace Wort.Generation
         /// </summary>
         static void EmitSlope(ProcCliffMesh m, RegionMap map, int set, int x, int z, int lx, int lz, int ox, int oz)
         {
-            int h = HeightAt(map, x, z), up = SlopeAt(map, x, z);
+            int h = HeightAt(map, x, z), up = SlopeAt(map, x, z), dn = (up + 2) & 3;
             int ux = Grid.DX4[up], uz = Grid.DZ4[up];
-            double Y(double cx, double cz) => h + 0.5 + (cx - 0.5) * ux + (cz - 0.5) * uz;   // 角点 (0/1, 0/1) 的坡面高度
+            double Y(double cx, double cz) => h + 0.5 + (cx - 0.5) * ux + (cz - 0.5) * uz;   // 局部点 (cx, cz) 的坡面高度
             double nl = Math.Sqrt(ux * ux + 1 + uz * uz);
-            var top = m.Group(set, ProcCliffMesh.Part.Top);
-            // 坡面的露边（1 北 2 东 4 南 8 西）：旁边比坡面这条边低就算露边，着色器照常画顶岩边和倒角（负责人 2026-11-13：斜坡没有顶岩石边）
+            double snx = -ux / nl, sny = 1 / nl, snz = -uz / nl;
+            // 并排的同一条坡道（同方向、同高度）：中间不是露边、不生成墙，两条坡面直接接上（负责人 2026-11-13：坡道没自动合并）
+            bool SameRamp(int d) => SlopeAt(map, x + Grid.DX4[d], z + Grid.DZ4[d]) == up && HeightAt(map, x + Grid.DX4[d], z + Grid.DZ4[d]) == h;
+            // 坡面的露边（1 北 2 东 4 南 8 西）：旁边比坡面这条边低就算露边，着色器照常画顶岩边和倒角
             int sm = 0;
             for (int d = 0; d < 4; d++)
             {
+                if (SameRamp(d)) continue;
                 int nb = EdgeH(map, x + Grid.DX4[d], z + Grid.DZ4[d], (d + 2) & 3);
-                int edgeTop = d == ((up + 2) & 3) ? h : h + 1;   // 坡底那条边高 h，其余（坡顶、两侧的高端）到 h + 1
-                if (nb < edgeTop && !(d == up && nb >= h + 1)) sm |= d == 0 ? 1 : d == 1 ? 2 : d == 2 ? 4 : 8;
+                int edgeTop = d == dn ? h : h + 1;
+                if (nb < edgeTop) sm |= d == 0 ? 1 : d == 1 ? 2 : d == 2 ? 4 : 8;
             }
-            Quad(m, top,
-                lx, Y(0, 0), lz, lx, Y(0, 1), lz + 1, lx + 1, Y(1, 1), lz + 1, lx + 1, Y(1, 0), lz,
-                -ux / nl, 1 / nl, -uz / nl, 1, 0, 0, -1,
-                1, sm, h + 1, 0, x, z);
+            var top = m.Group(set, ProcCliffMesh.Part.Top);
+            // 坡面沿坡向分成两段（两侧边在中点有顶点，和侧墙 / 窄条 / 并排坡道 / 旁边地面的半格顶点对上）
+            bool alongZ = uz != 0;
+            for (int c = 0; c < 2; c++)
+            {
+                double s0 = c * 0.5, s1 = s0 + 0.5;
+                if (alongZ)
+                    Quad(m, top, lx, Y(0, s0), lz + s0, lx, Y(0, s1), lz + s1, lx + 1, Y(1, s1), lz + s1, lx + 1, Y(1, s0), lz + s0,
+                        snx, sny, snz, 1, 0, 0, -1, 1, sm, h + 1, 0, x, z);
+                else
+                    Quad(m, top, lx + s0, Y(s0, 0), lz, lx + s0, Y(s0, 1), lz + 1, lx + s1, Y(s1, 1), lz + 1, lx + s1, Y(s1, 0), lz,
+                        snx, sny, snz, 1, 0, 0, -1, 1, sm, h + 1, 0, x, z);
+            }
             const int NoCorner = 1023 * 1024 + 1023;
             for (int d = 0; d < 4; d++)
             {
+                if (SameRamp(d)) continue;
                 int hb = EdgeH(map, x + Grid.DX4[d], z + Grid.DZ4[d], (d + 2) & 3);
-                // 这条边两个端点（从外面看左、右）的局部角点
                 double c0x, c0z, c1x, c1z;
                 switch (d)
                 {
@@ -314,33 +350,85 @@ namespace Wort.Generation
                 }
                 double t0 = Y(c0x, c0z), t1 = Y(c1x, c1z);
                 if (t0 <= hb + 1e-6 && t1 <= hb + 1e-6) continue;
-                double b0 = Math.Min(hb, t0), b1 = Math.Min(hb, t1);
-                double ax = lx + c0x, az = lz + c0z, bx = lx + c1x, bz = lz + c1z;
                 var grp = m.Group(set, d == 0 ? ProcCliffMesh.Part.Shadow : ProcCliffMesh.Part.Wall);
                 double k = d == 2 ? 2 : d == 0 ? 0 : 4, sgn = d == 1 ? 1 : d == 3 ? -1 : 0;
                 double nx = Grid.DX4[d], nz = Grid.DZ4[d];
                 double e0 = d == 2 ? oz + lz : d == 1 ? ox + lx + 1 : d == 3 ? ox + lx : 0;
                 double e1 = d == 2 ? x : z - 10, e2 = d == 2 ? x + 1 : 0, e3 = d == 2 ? NoCorner : 0;   // 坡道墙不做竖直转角平滑
-                void V(double px, double py, double pz, double yt)
-                {
-                    Vert(m, px, py, pz);
-                    m.Normals.Add((float)nx); m.Normals.Add(0); m.Normals.Add((float)nz);
-                    m.Tangents.Add((float)-nz); m.Tangents.Add(0); m.Tangents.Add((float)nx); m.Tangents.Add(1);
-                    m.Data1.Add((float)k); m.Data1.Add((float)sgn); m.Data1.Add((float)yt); m.Data1.Add(hb);
-                    m.Data2.Add((float)e0); m.Data2.Add((float)e1); m.Data2.Add((float)e2); m.Data2.Add((float)e3);
-                }
-                // 按 0.25m 一行竖向细分（和旁边普通墙的行对上，没有 T 形接缝）
+                bool sideways = d != up && d != dn;
+                bool bulge = sideways && (d == 1 || d == 3);   // 坡道东西两侧和普通侧面一样往外鼓
+                int segs = sideways ? 2 : 1;                     // 侧边分两段，和坡面中点对上
                 int rowsS = Math.Max(1, (int)Math.Ceiling((Math.Max(t0, t1) - hb) / Row - 1e-6));
-                for (int r = 0; r < rowsS; r++)
+                // 沿边参数 f（0 = 端点 0，1 = 端点 1）处：局部 x / z、崖顶高、墙底高、世界沿边坐标
+                void At(double f, out double px, out double pz, out double t, out double bt)
                 {
-                    double f0 = (double)r / rowsS, f1 = (double)(r + 1) / rowsS;
-                    double ya0 = b0 + (t0 - b0) * f0, ya1 = b0 + (t0 - b0) * f1, yb0 = b1 + (t1 - b1) * f0, yb1 = b1 + (t1 - b1) * f1;
-                    int vi = m.VertexCount;
-                    V(ax, ya0, az, t0); V(ax, ya1, az, t0); V(bx, yb1, bz, t1); V(bx, yb0, bz, t1);
-                    grp.Add(vi); grp.Add(vi + 1); grp.Add(vi + 2);
-                    grp.Add(vi); grp.Add(vi + 2); grp.Add(vi + 3);
+                    px = lx + c0x + (c1x - c0x) * f; pz = lz + c0z + (c1z - c0z) * f;
+                    t = t0 + (t1 - t0) * f; bt = Math.Min(hb, t);
+                }
+                // 坡顶那一端接台地（不是同一条坡道往上延续）：鼓出量在最后 0.35m 收为 0，和台地正面的格角对上
+                bool upEndClosed = SlopeAt(map, x + ux, z + uz) != up;
+                double Off(double y, double t, double px, double pz)
+                {
+                    if (!bulge) return 0;
+                    double o = Bulge(d == 1 ? 1 : -1, y, oz + pz, t) * EdgeTaper(y - hb);
+                    if (upEndClosed) o *= EdgeTaper(1 - ((px - lx - 0.5) * ux + (pz - lz - 0.5) * uz + 0.5));
+                    return o;
+                }
+                for (int g = 0; g < segs; g++)
+                {
+                    double fa = (double)g / segs, fb = (double)(g + 1) / segs;
+                    At(fa, out double pxa, out double pza, out double ta, out double ba);
+                    At(fb, out double pxb, out double pzb, out double tb, out double bb);
+                    for (int r = 0; r < rowsS; r++)
+                    {
+                        double ra0 = (double)r / rowsS, ra1 = (double)(r + 1) / rowsS;
+                        double ya0 = ba + (ta - ba) * ra0, ya1 = ba + (ta - ba) * ra1, yb0 = bb + (tb - bb) * ra0, yb1 = bb + (tb - bb) * ra1;
+                        double[,] P = {
+                            { pxa + nx * Off(ya0, ta, pxa, pza), ya0, pza }, { pxa + nx * Off(ya1, ta, pxa, pza), ya1, pza },
+                            { pxb + nx * Off(yb1, tb, pxb, pzb), yb1, pzb }, { pxb + nx * Off(yb0, tb, pxb, pzb), yb0, pzb } };
+                        // 法线按几何算，保证朝外
+                        double qx = P[1, 0] - P[0, 0], qy = P[1, 1] - P[0, 1], qz = P[1, 2] - P[0, 2], wx = P[3, 0] - P[0, 0], wy = P[3, 1] - P[0, 1], wz2 = P[3, 2] - P[0, 2];
+                        double fnx = qy * wz2 - qz * wy, fny = qz * wx - qx * wz2, fnz = qx * wy - qy * wx, fl = Math.Sqrt(fnx * fnx + fny * fny + fnz * fnz);
+                        if (fl < 1e-9) { fnx = nx; fny = 0; fnz = nz; fl = 1; }
+                        fnx /= fl; fny /= fl; fnz /= fl;
+                        if (fnx * nx + fnz * nz < 0) { fnx = -fnx; fny = -fny; fnz = -fnz; }
+                        int vi = m.VertexCount;
+                        for (int q = 0; q < 4; q++)
+                        {
+                            double yt = q < 2 ? ta : tb;
+                            Vert(m, P[q, 0], P[q, 1], P[q, 2]);
+                            m.Normals.Add((float)fnx); m.Normals.Add((float)fny); m.Normals.Add((float)fnz);
+                            m.Tangents.Add((float)-nz); m.Tangents.Add(0); m.Tangents.Add((float)nx); m.Tangents.Add(1);
+                            m.Data1.Add((float)k); m.Data1.Add((float)sgn); m.Data1.Add((float)yt); m.Data1.Add(hb);
+                            m.Data2.Add((float)e0); m.Data2.Add((float)e1); m.Data2.Add((float)e2); m.Data2.Add((float)e3);
+                        }
+                        grp.Add(vi); grp.Add(vi + 1); grp.Add(vi + 2);
+                        grp.Add(vi); grp.Add(vi + 2); grp.Add(vi + 3);
+                    }
+                    if (bulge)
+                    {
+                        // 坡面侧边往外接一条顺着坡斜的窄条，到鼓出后的墙顶边
+                        double oa = Off(ta, ta, pxa, pza), ob = Off(tb, tb, pxb, pzb);
+                        if (oa < 1e-4 && ob < 1e-4) continue;
+                        // 从上往下看顺时针：东侧 (边, a) → (边, b) → (外, b) → (外, a) 当 a 在南；按 z 排好
+                        bool aSouth = pza < pzb;
+                        double sz = aSouth ? pza : pzb, nzz = aSouth ? pzb : pza, ts = aSouth ? ta : tb, tn = aSouth ? tb : ta, os = aSouth ? oa : ob, on = aSouth ? ob : oa;
+                        if (d == 1)
+                            Quad(m, top, pxa, ts, sz, pxa, tn, nzz, pxa + on, tn, nzz, pxa + os, ts, sz, snx, sny, snz, 1, 0, 0, -1, 1, sm, h + 1, 0, x, z);
+                        else
+                            Quad(m, top, pxa - os, ts, sz, pxa - on, tn, nzz, pxa, tn, nzz, pxa, ts, sz, snx, sny, snz, 1, 0, 0, -1, 1, sm, h + 1, 0, x, z);
+                    }
                 }
             }
+        }
+
+        /// <summary>侧面鼓出量（m），崖顶高可以是小数（坡道）。崖顶处也鼓出一截（TopOut 比例），顶面侧边用同高窄条接过去，从上往下看轮廓是弯的。</summary>
+        public static double Bulge(int side, double y, double z, double h)
+        {
+            double t = (h - y) / 0.35;
+            if (t < 0) t = 0; else if (t > 1) t = 1;
+            t = t * (2 - t);
+            return (Bul0 + (Bul1 - Bul0) * ValueNoise2(y, z, side > 0 ? SeedE : SeedW, 0.4)) * (TopOut + (1 - TopOut) * t);
         }
 
         /// <summary>地图外当作和边上那格同高（不画边界墙，和 TilePlacer 一致）。</summary>
@@ -398,14 +486,7 @@ namespace Wort.Generation
             return t * t * (3 - 2 * t);
         }
 
-        public static double Bulge(int side, double y, double z, int h)
-        {
-            double t = (h - y) / 0.35;
-            if (t < 0) t = 0; else if (t > 1) t = 1;
-            t = t * (2 - t);
-            // 崖顶处也鼓出一截（TopOut 比例），顶面东西边用一条同高的窄条接过去，从上往下看侧边轮廓是弯的（负责人 2026-11-13：顶上和原竖直面重合，侧边直线太明显）
-            return (Bul0 + (Bul1 - Bul0) * ValueNoise2(y, z, side > 0 ? SeedE : SeedW, 0.4)) * (TopOut + (1 - TopOut) * t);
-        }
+        public static double Bulge(int side, double y, double z, int h) => Bulge(side, y, z, (double)h);
 
         /// <summary>二维值噪声 [0,1)，格距 period（m），平滑插值。</summary>
         public static double ValueNoise2(double a, double b, uint seed, double period)
