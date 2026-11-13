@@ -137,6 +137,8 @@ def shadow(P):
 def render(biome, cpath, npath, trpath, trnpath):
     cliff = load(X / cpath); nmap = load(X / npath) * 2 - 1
     earth = load(GROUND / f'{biome}.png')
+    en_ = GROUND / f'{biome}_Normal_Periodic768.png'   # 泥土法线：同一流程，不做向下延伸、幅度 0.12（隐约可见）
+    enm = load(en_) * 2 - 1 if en_.exists() else None
     toprock = load(X / trpath) if trpath else None
     trn = load(X / trnpath) * 2 - 1 if trnpath else None
     u0, v0 = -1.0, -1.0
@@ -174,7 +176,11 @@ def render(biome, cpath, npath, trpath, trnpath):
     n = len(x)
     uu = hu.ravel()
     tc = samp(cliff, uu, y); te = samp(earth, x, z); nt = samp(nmap, uu, y)
-    N = np.tile([0.0, 1.0, 0.0], (n, 1)); alb = te.copy()
+    if enm is not None:
+        ne = samp(enm, x, z); Ne = np.c_[ne[:, 0], ne[:, 2], ne[:, 1]]; Ne /= np.linalg.norm(Ne, axis=1, keepdims=True)
+    else:
+        Ne = np.tile([0.0, 1.0, 0.0], (n, 1))
+    N = Ne.copy(); alb = te.copy()
     Nw = np.c_[nt[:, 0], nt[:, 1], -nt[:, 2]]; Nw /= np.linalg.norm(Nw, axis=1, keepdims=True)
     lc = tc @ [0.299, 0.587, 0.114]; le = te @ [0.299, 0.587, 0.114]
     qf = np.clip((FOOT - (y - yb_)) / FOOT + (le - lc) * 1.2, 0, 1); qf = qf * qf * (3 - 2 * qf)
@@ -214,7 +220,7 @@ def render(biome, cpath, npath, trpath, trnpath):
         rn2 = samp(trn, xi / TR_PERIOD, zi / TR_PERIOD)
         Nr = np.c_[rn2[:, 0], rn2[:, 2], rn2[:, 1]]; Nr /= np.linalg.norm(Nr, axis=1, keepdims=True)   # 切线 +x、副切线 +z
     else:
-        rk = te[idx]; Nr = np.tile([0.0, 1.0, 0.0], (k_, 1))
+        rk = te[idx]; Nr = Ne[idx]
     lr = rk @ [0.299, 0.587, 0.114]; lE = te[idx] @ [0.299, 0.587, 0.114]
     wi = INSET0 + (INSET1 - INSET0) * (0.6 * vnoise(alongs, 81, 0.5) + 0.4 * vnoise(alongs, 82, 0.12))
     wi = wi + 0.15 * np.clip((vnoise(alongs, 83, 0.9) - 0.75) / 0.25, 0, 1)
@@ -224,7 +230,7 @@ def render(biome, cpath, npath, trpath, trnpath):
     D2 = D - (lr - 0.35) * 1.4 + (vnoise2(xi, zi, 9, 0.07) - 0.5) * 0.6                   # 倒角：跟着顶岩明暗 + 碎边
     t = np.clip(1 - D2, 0, 1); t = t * t * (3 - 2 * t)
     dl = np.sqrt(dirx ** 2 + dirz ** 2) + 1e-9
-    base = Nr * (1 - qe[:, None]) + np.array([0, 1.0, 0]) * qe[:, None]
+    base = Nr * (1 - qe[:, None]) + Ne[idx] * qe[:, None]
     nb = base + np.c_[dirx / dl, np.zeros(k_), dirz / dl] * t[:, None]
     nb /= np.linalg.norm(nb, axis=1, keepdims=True)
     N[idx] = nb
