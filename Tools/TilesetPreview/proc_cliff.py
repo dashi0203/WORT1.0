@@ -25,6 +25,8 @@ SETS = [('OliveStrata', 'IMG_9471_BaseColor.png', 'IMG_9471_Normal_Periodic512.p
         ('RustCrag', 'Redo/Forest_Cliff_BaseColor.png', 'Redo/Forest_Cliff_Normal_Periodic512.png', None, None),
         ('Limestone', 'IMG_9485_BaseColor.png', 'IMG_9485_Normal_Periodic512.png', 'Redo/Human_TopRock_BaseColor.png', 'Redo/Human_TopRock_Normal_Periodic512.png')]
 TR_PERIOD = 2.7    # 顶岩平铺周期（m），不取整数，和崖壁 1m 错开
+NCLIP = 0.12       # 顶面北边透明裁剪最大深度（m）
+WALL_GAIN, WALL_SAT = 1.12, 1.12   # 崖壁提亮 / 加饱和（Unity 材质参数，预览模拟）
 TOPB = 0.55        # 崖壁顶部融合顶岩的高度（m）
 INSET0, INSET1 = 0.15, 0.35   # 泥土离露边内收（m）
 SUB = 4                    # 每格顶面细分
@@ -166,6 +168,13 @@ def render(biome, cpath, npath, trpath, trnpath):
         Px = sum(wp[i] * P[i, 0] for i in range(3)); Py = sum(wp[i] * P[i, 1] for i in range(3)); Pz = sum(wp[i] * P[i, 2] for i in range(3))
         dep = Py - Pz + (0.002 if k == 3 else 0)
         sl = (slice(ya, yb + 1), slice(xa, xb + 1))
+        if k == 1:
+            # 顶面北边是真正的轮廓线（后面是更低的地面）：着色器透明裁剪，按噪声把边咬掉 0–NCLIP，轮廓不再笔直
+            cix, ciz, ch_ = int(round(P[:, 0].min())), int(round(P[:, 2].min())), P[0, 1]
+            if hc(cix, ciz + 1) < ch_:
+                cw = NCLIP * (0.55 * vnoise(Px, 31, 0.35) + 0.45 * vnoise(Px, 32, 0.09))
+                cw = cw + 0.10 * np.clip((vnoise(Px, 33, 0.8) - 0.7) / 0.3, 0, 1)
+                ins = ins & ((ciz + 1 - Pz) > cw)
         ok = ins & (dep > depth[sl])
         if not ok.any(): continue
         depth[sl][ok] = dep[ok]; kind[sl][ok] = k
@@ -254,6 +263,10 @@ def render(biome, cpath, npath, trpath, trnpath):
     Ns = Ng + np.c_[np.zeros(n), nt[:, 1], np.zeros(n)] * 0.6 + np.c_[np.zeros(n), np.zeros(n), -nt[:, 0]] * 0.6 * np.sign(Ng[:, 0:1]).ravel()[:, None]
     Ns /= np.linalg.norm(Ns, axis=1, keepdims=True) + 1e-9
     N[m] = Ns[m]; alb[m] = ((ts * (1 - qs[:, None]) + te * qs[:, None]) * (1 - qtop[:, None]) + trw * qtop[:, None])[m]
+    # 崖壁 / 侧面：预览里模拟 Unity 材质上的提亮与加饱和（不改贴图）
+    mw = (kd == 2) | (kd == 4)
+    lw = alb[mw] @ [0.2126, 0.7152, 0.0722]
+    alb[mw] = np.clip((lw[:, None] + (alb[mw] - lw[:, None]) * WALL_SAT) * WALL_GAIN, 0, 1)
     alb = LIFT + alb * (1 - LIFT)
     sh = shadow(np.c_[x, y, z])
     lam = np.clip(N @ L, 0, 1) * sh
