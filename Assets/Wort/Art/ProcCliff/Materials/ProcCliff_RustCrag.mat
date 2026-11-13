@@ -65,6 +65,9 @@ Material:
     - _WallSat: 1.12
     - _EdgeFx: 1
     - _WallTopFx: 1
+    - _ShadowEdge: 1
+    - _ShadowNotch0: 0.06
+    - _ShadowNotch1: 0.2
     m_Colors: []
   m_BuildTextureStacks: []
   m_AllowLocking: 1

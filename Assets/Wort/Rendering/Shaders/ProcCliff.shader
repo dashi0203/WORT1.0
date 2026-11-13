@@ -36,6 +36,9 @@ Shader "Wort/ProcCliff"
         _WallSat ("Wall Saturation", Range(0, 2)) = 1.12
         [Toggle] _EdgeFx ("Edge Effects (bevel / bend)", Float) = 1
         [Toggle] _WallTopFx ("Wall Top Blend", Float) = 1
+        [Toggle] _ShadowEdge ("Jagged Shadow Edges", Float) = 1
+        _ShadowNotch0 ("Shadow Notch Min (m)", Float) = 0.06
+        _ShadowNotch1 ("Shadow Notch Max (m)", Float) = 0.2
     }
     SubShader
     {
@@ -53,6 +56,7 @@ Shader "Wort/ProcCliff"
             float _EarthPeriod, _UseTopRock, _TopRockPeriod;
             float _Inset0, _Inset1, _BevelR0, _BevelR1, _TopBlend, _FootBlend;
             float _ClipNorth, _NorthClip, _BlackLift, _WallGain, _WallSat, _EdgeFx, _WallTopFx;
+            float _ShadowEdge, _ShadowNotch0, _ShadowNotch1;
         CBUFFER_END
 
         // ---- 噪声（只在 GPU 上用，不需要和 C# 一致）----
@@ -93,6 +97,30 @@ Shader "Wort/ProcCliff"
             float cw = _NorthClip * (0.55 * vnoise(P.x, 31, 0.35) + 0.45 * vnoise(P.x, 32, 0.09));
             cw += 0.10 * saturate((vnoise(P.x, 33, 0.8) - 0.7) / 0.3);
             clip(dN - cw);
+        }
+        // 阴影专用的边缘裁剪（负责人 2026-11-13：影子横平竖直）：只在 ShadowCaster 里用，画面不变。
+        // 顶面在露边内侧、墙面（正面 / 侧面 / 只投影的面）在墙顶以下，按同一个沿边噪声咬掉 _ShadowNotch0–_ShadowNotch1，投到地上的影子轮廓变得参差。
+        float shadowNotch(float along) { return _ShadowNotch0 + (_ShadowNotch1 - _ShadowNotch0) * (0.6 * vnoise(along, 51, 0.4) + 0.4 * vnoise(along, 52, 0.1)); }
+        void ShadowEdgeClip(float3 P, float4 d1, float4 d2, float3 nWS)
+        {
+            if (_ShadowEdge < 0.5) return;
+            if (d1.x < 1.5 && d1.x > 0.5)
+            {
+                // 顶面：到各露边的距离
+                float mask = d1.y; float fx = P.x - d2.x, fz = P.z - d2.y;
+                float c = 1;
+                if (fmod(mask, 2) >= 1) c = min(c, (1 - fz) - shadowNotch(P.x));
+                if (fmod(floor(mask / 2), 2) >= 1) c = min(c, (1 - fx) - shadowNotch(P.z));
+                if (fmod(floor(mask / 4), 2) >= 1) c = min(c, fz - shadowNotch(P.x));
+                if (fmod(floor(mask / 8), 2) >= 1) c = min(c, fx - shadowNotch(P.z));
+                clip(c);
+            }
+            else
+            {
+                // 墙面 / 只投影的面：离墙顶的深度；沿边坐标按朝向取 x 或 z（与顶面同一条边对上）
+                float along = abs(nWS.x) > abs(nWS.z) ? P.z : P.x;
+                clip((d1.z - P.y) - shadowNotch(along));
+            }
         }
         ENDHLSL
 
@@ -326,7 +354,7 @@ Shader "Wort/ProcCliff"
             float3 _LightDirection;
             float3 _LightPosition;
             struct SA { float4 positionOS : POSITION; float3 normalOS : NORMAL; float4 d1 : TEXCOORD1; float4 d2 : TEXCOORD2; };
-            struct SV { float4 positionCS : SV_POSITION; float3 positionWS : TEXCOORD0; float4 d1 : TEXCOORD1; float4 d2 : TEXCOORD2; };
+            struct SV { float4 positionCS : SV_POSITION; float3 positionWS : TEXCOORD0; float4 d1 : TEXCOORD1; float4 d2 : TEXCOORD2; float3 normalWS : TEXCOORD3; };
             SV svert(SA v)
             {
                 SV o;
@@ -343,10 +371,10 @@ Shader "Wort/ProcCliff"
             #else
                 cs.z = max(cs.z, UNITY_NEAR_CLIP_VALUE);
             #endif
-                o.positionCS = cs; o.positionWS = w; o.d1 = v.d1; o.d2 = v.d2;
+                o.positionCS = cs; o.positionWS = w; o.d1 = v.d1; o.d2 = v.d2; o.normalWS = n;
                 return o;
             }
-            half4 sfrag(SV i) : SV_Target { NorthClip(i.positionWS, i.d1, i.d2); return 0; }
+            half4 sfrag(SV i) : SV_Target { NorthClip(i.positionWS, i.d1, i.d2); ShadowEdgeClip(i.positionWS, i.d1, i.d2, i.normalWS); return 0; }
             ENDHLSL
         }
         Pass
