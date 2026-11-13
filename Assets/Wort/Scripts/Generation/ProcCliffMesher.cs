@@ -366,7 +366,9 @@ namespace Wort.Generation
             bool northClosed = EdgeH(map, x + side, z + 1, sideEdge) >= y;
 
             double taper = EdgeTaper(y - hb);
-            if (southClosed) taper *= EdgeTaper(wz - z);
+            // 南边露边（这一格有正面）：侧面鼓包在南端 0.35m 内收为 0，转角落回格线，正面不再往两边拉宽成同一平面的“挤出”（负责人 2026-11-13）
+            bool southOpen = EdgeH(map, x, z - 1, 0) < h;
+            if (southClosed || southOpen) taper *= EdgeTaper(wz - z);
             if (northClosed) taper *= EdgeTaper(z + 1 - wz);
             return Bulge(side, y, wz, h) * taper;
         }
