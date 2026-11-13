@@ -287,10 +287,18 @@ namespace Wort.Generation
             double Y(double cx, double cz) => h + 0.5 + (cx - 0.5) * ux + (cz - 0.5) * uz;   // 角点 (0/1, 0/1) 的坡面高度
             double nl = Math.Sqrt(ux * ux + 1 + uz * uz);
             var top = m.Group(set, ProcCliffMesh.Part.Top);
+            // 坡面的露边（1 北 2 东 4 南 8 西）：旁边比坡面这条边低就算露边，着色器照常画顶岩边和倒角（负责人 2026-11-13：斜坡没有顶岩石边）
+            int sm = 0;
+            for (int d = 0; d < 4; d++)
+            {
+                int nb = EdgeH(map, x + Grid.DX4[d], z + Grid.DZ4[d], (d + 2) & 3);
+                int edgeTop = d == ((up + 2) & 3) ? h : h + 1;   // 坡底那条边高 h，其余（坡顶、两侧的高端）到 h + 1
+                if (nb < edgeTop && !(d == up && nb >= h + 1)) sm |= d == 0 ? 1 : d == 1 ? 2 : d == 2 ? 4 : 8;
+            }
             Quad(m, top,
                 lx, Y(0, 0), lz, lx, Y(0, 1), lz + 1, lx + 1, Y(1, 1), lz + 1, lx + 1, Y(1, 0), lz,
                 -ux / nl, 1 / nl, -uz / nl, 1, 0, 0, -1,
-                1, 0, h + 1, 0, x, z);
+                1, sm, h + 1, 0, x, z);
             const int NoCorner = 1023 * 1024 + 1023;
             for (int d = 0; d < 4; d++)
             {

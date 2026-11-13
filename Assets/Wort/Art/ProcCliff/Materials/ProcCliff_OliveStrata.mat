@@ -65,10 +65,10 @@ Material:
     - _WallSat: 1.12
     - _EdgeFx: 1
     - _WallTopFx: 1
-    - _ShadowEdge: 1
+    - _ShadowEdge: 0
     - _VarOn: 1
     - _FootAO: 0.8
-    - _CasterPush: 0.08
+    - _CasterPush: 0
     - _P22: 0.15
     - _PRow: 0.2
     - _PCol: 0.2

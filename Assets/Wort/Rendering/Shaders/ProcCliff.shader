@@ -39,7 +39,7 @@ Shader "Wort/ProcCliff"
         [Toggle] _EdgeFx ("Edge Effects (bevel / bend)", Float) = 1
         [Toggle] _WallTopFx ("Wall Top Blend", Float) = 1
         _FootAO ("Cliff Foot Darkening", Range(0.5, 1)) = 0.8
-        _CasterPush ("Shadow Caster Push (m)", Range(0, 0.3)) = 0.08
+        _CasterPush ("Shadow Caster Push (m)", Range(0, 0.3)) = 0
         [Toggle] _VarOn ("Cliff Variants", Float) = 1
         _P22 ("Variant 2x2 Chance (per 2x2 block)", Range(0, 1)) = 0.15
         _PRow ("Variant Row Pattern Chance", Range(0, 1)) = 0.2
@@ -54,7 +54,7 @@ Shader "Wort/ProcCliff"
         [HideInInspector] _ArrSize ("", Float) = 512
         _BiomePatch ("Biome Patch Strength", Float) = 0.8
         _BiomeSharp ("Biome Edge Softness", Float) = 0.025
-        [Toggle] _ShadowEdge ("Jagged Shadow Edges", Float) = 1
+        [Toggle] _ShadowEdge ("Jagged Shadow Edges", Float) = 0
         _ShadowNotch0 ("Shadow Notch Min (m)", Float) = 0.06
         _ShadowNotch1 ("Shadow Notch Max (m)", Float) = 0.2
     }
@@ -454,8 +454,8 @@ Shader "Wort/ProcCliff"
             // 自带投影 Pass：北边透明裁剪也进阴影（影子边缘跟着轮廓变碎）
             Name "ShadowCaster"
             Tags { "LightMode" = "ShadowCaster" }
-            // 只画背光面（Cull Front）：外壳闭合（顶面 + 正面 / 侧面 + 只投影的北东西面），光从咬碎的缝进来也会被出口面挡住；双面会在地面上出自阴影条纹
-            ZWrite On ZTest LEqual ColorMask 0 Cull Front
+            // 标准做法（Cull Back）：迎光面投影，URP 的偏移处理自阴影。之前的 Cull Front + 外推会让影子和崖壁错开（漏光缝）；影子边缘咬碎默认关闭（开了会在空心外壳上漏光）
+            ZWrite On ZTest LEqual ColorMask 0 Cull Back
             HLSLPROGRAM
             #pragma vertex svert
             #pragma fragment sfrag
