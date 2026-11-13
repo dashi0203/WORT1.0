@@ -34,8 +34,9 @@ namespace Wort.Tests
         {
             var m = Block();
             // 顶面：靠露边的 12 格一格一块（北边 4 格进裁剪组），中间 2×2 合并成一块 → Top = 8 格 × 2 + 2
-            Assert.AreEqual(18, OnBlock(m, ProcCliffMesh.Part.Top));
-            Assert.AreEqual(8, OnBlock(m, ProcCliffMesh.Part.TopClip));
+            //       另加东西两侧顶边往外的窄条：每侧 4 格 × 2 段 × 2（北边一格进裁剪组）→ Top 再 + 24、TopClip 再 + 8
+            Assert.AreEqual(18 + 24, OnBlock(m, ProcCliffMesh.Part.Top));
+            Assert.AreEqual(8 + 8, OnBlock(m, ProcCliffMesh.Part.TopClip));
             // 正面 4 格连成一段：16 行 × 2 = 32；东西两侧各：前排整高 16 行 × 2 段 × 2 = 64，后三格只有顶层 4 行 × 2 段 × 2 × 3 = 48 → 两侧 224
             Assert.AreEqual(32 + 224, OnBlock(m, ProcCliffMesh.Part.Wall));
             // 只投影：北、东、西各 4 块平面
@@ -109,9 +110,9 @@ namespace Wort.Tests
                 float k = m.Data1[v * 4], y = m.Positions[v * 3 + 1], top = m.Data1[v * 4 + 2];
                 if (k == 1) Assert.AreEqual(top, y, 1e-5f, "顶面不变形");
             }
-            // 鼓起在崖顶处为 0、往下大于 0
-            Assert.AreEqual(0.0, ProcCliffMesher.Bulge(1, 5, 11.3, 5), 1e-9);
-            Assert.Greater(ProcCliffMesher.Bulge(1, 4.5, 11.3, 5), 0.0);
+            // 鼓起在崖顶处也有一截（顶面窄条接过去），往下更大
+            Assert.Greater(ProcCliffMesher.Bulge(1, 5, 11.3, 5), 0.0);
+            Assert.Greater(ProcCliffMesher.Bulge(1, 4.5, 11.3, 5), ProcCliffMesher.Bulge(1, 5, 11.3, 5));
         }
     }
 }

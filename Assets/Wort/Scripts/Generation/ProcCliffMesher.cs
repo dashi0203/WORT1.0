@@ -41,6 +41,7 @@ namespace Wort.Generation
     /// </summary>
     public static class ProcCliffMesher
     {
+        const double TopOut = 0.45;           // 崖顶处的鼓出量 = 最大鼓出量 × 0.45（约 3–14cm，沿边随噪声变化）
         const int Sub = 2;                    // 鼓起侧面每格沿边细分（负责人 2026-11-13：4 → 2）
         const double Bul0 = 0.06, Bul1 = 0.30;  // 侧面鼓出量（m）
         const double Row = 0.25;              // 竖向细分（m）
@@ -140,6 +141,21 @@ namespace Wort.Generation
                                     QuadAuto(m, wall, a0, y0, z0, a1, y1, z0, b1, y1, z1, b0, y0, z1, side, 4, side, h, hb, ox + edge, fz, ExposedMask(map, x + side, z));
                                 else
                                     QuadAuto(m, wall, b0, y0, z1, b1, y1, z1, a1, y1, z0, a0, y0, z0, side, 4, side, h, hb, ox + edge, fz, ExposedMask(map, x + side, z));
+                            }
+                            if (r == rows - 1)
+                            {
+                                // 顶面往外接一条同高的窄条，到侧面顶边（鼓出后的位置）：顶面本身不变形，轮廓跟着鼓包走
+                                var topG = m.Group(set, (mask & 1) != 0 ? ProcCliffMesh.Part.TopClip : ProcCliffMesh.Part.Top);
+                                for (int c = 0; c < Sub; c++)
+                                {
+                                    double z0 = lz + (double)c / Sub, z1 = lz + (double)(c + 1) / Sub;
+                                    double o0 = SideOut(map, x, z, side, h, oz + z0, h, hb), o1 = SideOut(map, x, z, side, h, oz + z1, h, hb);
+                                    if (o0 < 1e-4 && o1 < 1e-4) continue;
+                                    if (side > 0)
+                                        Quad(m, topG, edge, h, z0, edge, h, z1, edge + o1, h, z1, edge + o0, h, z0, 0, 1, 0, 1, 0, 0, -1, 1, mask, h, 0, x, z);
+                                    else
+                                        Quad(m, topG, edge - o0, h, z0, edge - o1, h, z1, edge, h, z1, edge, h, z0, 0, 1, 0, 1, 0, 0, -1, 1, mask, h, 0, x, z);
+                                }
                             }
                         }
                     }
@@ -316,7 +332,8 @@ namespace Wort.Generation
             double t = (h - y) / 0.35;
             if (t < 0) t = 0; else if (t > 1) t = 1;
             t = t * (2 - t);
-            return (Bul0 + (Bul1 - Bul0) * ValueNoise2(y, z, side > 0 ? SeedE : SeedW, 0.4)) * t;
+            // 崖顶处也鼓出一截（TopOut 比例），顶面东西边用一条同高的窄条接过去，从上往下看侧边轮廓是弯的（负责人 2026-11-13：顶上和原竖直面重合，侧边直线太明显）
+            return (Bul0 + (Bul1 - Bul0) * ValueNoise2(y, z, side > 0 ? SeedE : SeedW, 0.4)) * (TopOut + (1 - TopOut) * t);
         }
 
         /// <summary>二维值噪声 [0,1)，格距 period（m），平滑插值。</summary>
