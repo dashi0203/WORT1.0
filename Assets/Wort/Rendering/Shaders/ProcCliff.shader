@@ -11,6 +11,7 @@
 // - Biome 融合：贴图在数组 _ColArr / _NrmArr 里（TerrainLab 运行时打包），每像素按权重图取候选套件，各自算 Surface 再按分数合成（斑块式过渡）。
 //   上面 _CliffMap 等属性只是每套材质存贴图用的，渲染时不直接读。
 // - 主光源乘云影（cookie，Wort.Rendering.SkyLighting），和阴影是同一个乘积。
+// - 环境光乘世界空间 AO（WortAO.hlsl：地形高度场 + 物体胶囊；Wort.Rendering.WorldAO 调参 / 调试显示）。
 // - 性能开关：_EdgeFx = 0 关掉倒角和法线弯折，_WallTopFx = 0 关掉墙顶融合（对比开销用）。
 Shader "Wort/ProcCliff"
 {
@@ -148,6 +149,7 @@ Shader "Wort/ProcCliff"
             #pragma multi_compile_fog
             #pragma multi_compile_fragment _ _LIGHT_COOKIES   // 主光源 cookie = 云影
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
+            #include "WortAO.hlsl"   // 世界空间 AO（地形高度场 + 物体胶囊），参数见 Wort.Rendering.WorldAO
 
             struct Attributes
             {
@@ -399,8 +401,10 @@ Shader "Wort/ProcCliff"
                 // 带 positionWS 的重载才会乘主光源 cookie（云影，Wort.Rendering.SkyLighting 生成；只削弱直射光）
                 Light light = GetMainLight(TransformWorldToShadowCoord(P), P, half4(1, 1, 1, 1));
                 float ndl = saturate(dot(N, light.direction));
-                half3 diffuse = light.color * ndl * light.shadowAttenuation;
-                half3 color = albedo * (diffuse + SampleSH(N));
+                float aoDbg; float wao = WortAO(P, ng, aoDbg);   // 只乘环境光（直射光按 WorldAO.directLighting，默认不乘）
+                if (aoDbg >= 0) return half4(aoDbg.xxx, 1);
+                half3 diffuse = light.color * ndl * light.shadowAttenuation * WortAODirect(wao);
+                half3 color = albedo * (diffuse + SampleSH(N) * wao);
                 color = MixFog(color, i.fog);
                 return half4(color, 1);
             }

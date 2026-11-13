@@ -52,6 +52,7 @@ namespace Wort.Editor
             volume.sharedProfile = AssetDatabase.LoadAssetAtPath<VolumeProfile>(VolumeProfilePath);
 
             var player = CreatePlayer();
+            WorldAOEditor.Create();   // 世界空间 AO（主角顺便挂上遮蔽体）
 
             // 错切相机：与 topdowntemp 相同（正交、垂直朝下、shear 1、orthoSize 9.5）
             var camGo = new GameObject("Main Camera") { tag = "MainCamera" };

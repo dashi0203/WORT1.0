@@ -150,6 +150,7 @@ namespace Wort.Terrain
                 for (int cx = 0; cx < settings.ChunksX; cx++)
                     all.Add((cx, cz));
             int triangles = BuildChunks(root.transform, map, voxels, all, useed, out long tCompute, out long tApply);
+            Wort.Rendering.WorldAOField.Upload(map);   // 世界空间 AO 用的高度场（WortAO.hlsl）
             BuildRoomHints(root.transform);
             BuildClimbs(root.transform);
             sw.Stop();
@@ -863,6 +864,7 @@ namespace Wort.Terrain
             if (heightsChanged && LastMap != null)
             {
                 lastVoxels = new RegionVoxels(LastMap);
+                Wort.Rendering.WorldAOField.Upload(LastMap);   // 体素笔刷改了高度：AO 高度场跟着更新
                 LastMap.HeightRange(out _, out int max);
                 LastMap.Stats["maxHeight"] = max;
             }

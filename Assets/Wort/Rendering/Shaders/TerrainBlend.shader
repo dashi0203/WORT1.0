@@ -35,6 +35,7 @@ Shader "Wort/TerrainBlend"
             #pragma multi_compile_fragment _ _SCREEN_SPACE_OCCLUSION   // URP SSAO（PC_Renderer 里的 Renderer Feature）
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
+            #include "WortAO.hlsl"   // 世界空间 AO，参数见 Wort.Rendering.WorldAO
 
             TEXTURE2D(_DirtTex); SAMPLER(sampler_DirtTex);
             TEXTURE2D(_RockTex); SAMPLER(sampler_RockTex);
@@ -96,8 +97,10 @@ Shader "Wort/TerrainBlend"
                 // 带 positionWS 的重载才会乘主光源 cookie（云影，Wort.Rendering.SkyLighting 生成）
                 Light light = GetMainLight(TransformWorldToShadowCoord(i.positionWS), i.positionWS, half4(1, 1, 1, 1));
                 AmbientOcclusionFactor ao = GetScreenSpaceAmbientOcclusion(GetNormalizedScreenSpaceUV(i.positionCS));
-                half3 diffuse = light.color * saturate(dot(n, light.direction)) * light.shadowAttenuation * ao.directAmbientOcclusion; // 主光源不乘 distanceAttenuation（方向光本来就是 1；见上面 Forward+ 的说明）
-                half3 color = albedo * (diffuse + SampleSH(n) * ao.indirectAmbientOcclusion);
+                float aoDbg; float wao = WortAO(i.positionWS, n, aoDbg);
+                if (aoDbg >= 0) return half4(aoDbg.xxx, 1);
+                half3 diffuse = light.color * saturate(dot(n, light.direction)) * light.shadowAttenuation * ao.directAmbientOcclusion * WortAODirect(wao); // 主光源不乘 distanceAttenuation（方向光本来就是 1；见上面 Forward+ 的说明）
+                half3 color = albedo * (diffuse + SampleSH(n) * ao.indirectAmbientOcclusion * wao);
                 color = MixFog(color, i.fog);
                 return half4(color, 1);
             }
