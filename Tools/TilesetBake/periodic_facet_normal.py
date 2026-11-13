@@ -7,7 +7,7 @@
 默认 256 个顶点 = 512 个三角面，与 Blender 那档面数一致。
 正交俯视下面法线 = 烘焙结果，不需要 Blender。
 
-用法：python periodic_facet_normal.py <含 IMG_*_BaseColor.png 的目录> <输出目录> [顶点数=256]
+用法：python periodic_facet_normal.py <含 *_BaseColor.png 的目录> <输出目录> [顶点数=256]
 依赖：numpy、pillow、scipy
 """
 import sys
@@ -66,7 +66,7 @@ def triangulate(z, nverts):
 def main():
     src, out = Path(sys.argv[1]), Path(sys.argv[2]); out.mkdir(parents=True, exist_ok=True)
     nverts = int(sys.argv[3]) if len(sys.argv) > 3 else 256
-    for f in sorted(src.glob('IMG_*_BaseColor.png')):
+    for f in sorted(src.glob('*_BaseColor.png')):
         stem = f.name.replace('_BaseColor.png', '')
         z = .5 * (height67(f) - .5) * S          # 像素单位
         gx, gy, nv = triangulate(z, nverts)
