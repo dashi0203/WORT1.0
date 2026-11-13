@@ -36,6 +36,7 @@ Shader "Wort/TerrainBlend"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "WortAO.hlsl"   // 世界空间 AO，参数见 Wort.Rendering.WorldAO
+            #include "WortSpace.hlsl" // 遮挡虚化 / 高度裁切 / 压暗 / 薄雾（深度 pass 用的是 URP Lit 的，不裁）
 
             TEXTURE2D(_DirtTex); SAMPLER(sampler_DirtTex);
             TEXTURE2D(_RockTex); SAMPLER(sampler_RockTex);
@@ -74,6 +75,7 @@ Shader "Wort/TerrainBlend"
 
             half4 frag(Varyings i) : SV_Target
             {
+                WortSpaceClip(i.positionWS);
                 float3 n = normalize(i.normalWS);
                 float2 uv = abs(n.y) > 0.6 ? i.positionWS.xz : (abs(n.z) > abs(n.x) ? i.positionWS.xy : i.positionWS.zy);
                 float2 uv2 = uv * 0.43 + float2(0.31, 0.17);
@@ -101,6 +103,7 @@ Shader "Wort/TerrainBlend"
                 if (aoDbg >= 0) return half4(aoDbg.xxx, 1);
                 half3 diffuse = light.color * saturate(dot(n, light.direction)) * light.shadowAttenuation * ao.directAmbientOcclusion * WortAODirect(wao); // 主光源不乘 distanceAttenuation（方向光本来就是 1；见上面 Forward+ 的说明）
                 half3 color = albedo * (diffuse + SampleSH(n) * ao.indirectAmbientOcclusion * wao);
+                color = WortSpaceShade(color, i.positionWS);
                 color = MixFog(color, i.fog);
                 return half4(color, 1);
             }

@@ -12,6 +12,7 @@
 //   上面 _CliffMap 等属性只是每套材质存贴图用的，渲染时不直接读。
 // - 主光源乘云影（cookie，Wort.Rendering.SkyLighting），和阴影是同一个乘积。
 // - 环境光乘世界空间 AO（WortAO.hlsl：地形高度场 + 物体胶囊；Wort.Rendering.WorldAO 调参 / 调试显示）。
+// - 空间呈现（WortSpace.hlsl，Wort.Rendering.SpatialView）：遮挡虚化 / 高度裁切在 ForwardLit 和深度 pass 里裁，投影 pass 不裁；最低层压暗、脚下薄雾。
 // - 性能开关：_EdgeFx = 0 关掉倒角和法线弯折，_WallTopFx = 0 关掉墙顶融合（对比开销用）。
 Shader "Wort/ProcCliff"
 {
@@ -150,6 +151,7 @@ Shader "Wort/ProcCliff"
             #pragma multi_compile_fragment _ _LIGHT_COOKIES   // 主光源 cookie = 云影
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "WortAO.hlsl"   // 世界空间 AO（地形高度场 + 物体胶囊），参数见 Wort.Rendering.WorldAO
+            #include "WortSpace.hlsl" // 遮挡虚化、高度裁切、最低层压暗、脚下薄雾，参数见 Wort.Rendering.SpatialView
 
             struct Attributes
             {
@@ -369,6 +371,7 @@ Shader "Wort/ProcCliff"
             half4 frag(Varyings i) : SV_Target
             {
                 float3 P = i.positionWS;
+                WortSpaceClip(P);   // 遮挡虚化 / 高度裁切（投影 pass 不裁，照常投影）
                 float3 ng = normalize(i.normalWS);
                 _FW = max(length(ddx(P)), length(ddy(P)));   // 一个像素在世界里多大：所有贴图的 mip 都按它算（分支 / 循环里不用硬件求导）
                 // Biome 融合（负责人 2026-11-13，斑块式过渡；预览 proc_cliff.py BIOME=1）：
@@ -405,6 +408,7 @@ Shader "Wort/ProcCliff"
                 if (aoDbg >= 0) return half4(aoDbg.xxx, 1);
                 half3 diffuse = light.color * ndl * light.shadowAttenuation * WortAODirect(wao);
                 half3 color = albedo * (diffuse + SampleSH(N) * wao);
+                color = WortSpaceShade(color, P);   // 最低层压暗 + 主角脚下薄雾
                 color = MixFog(color, i.fog);
                 return half4(color, 1);
             }
@@ -460,7 +464,8 @@ Shader "Wort/ProcCliff"
             struct DA { float4 positionOS : POSITION; float4 d1 : TEXCOORD1; float4 d2 : TEXCOORD2; };
             struct DV { float4 positionCS : SV_POSITION; float3 positionWS : TEXCOORD0; float4 d1 : TEXCOORD1; float4 d2 : TEXCOORD2; };
             DV dvert(DA v) { DV o; float3 w = TransformObjectToWorld(v.positionOS.xyz); o.positionWS = w; o.positionCS = TransformWorldToHClip(w); o.d1 = v.d1; o.d2 = v.d2; return o; }
-            half dfrag(DV i) : SV_Target { return i.positionCS.z; }
+            #include "WortSpace.hlsl"
+            half dfrag(DV i) : SV_Target { WortSpaceClip(i.positionWS); return i.positionCS.z; }
             ENDHLSL
         }
         Pass
@@ -474,7 +479,8 @@ Shader "Wort/ProcCliff"
             struct NA { float4 positionOS : POSITION; float3 normalOS : NORMAL; float4 d1 : TEXCOORD1; float4 d2 : TEXCOORD2; };
             struct NV { float4 positionCS : SV_POSITION; float3 positionWS : TEXCOORD0; float3 normalWS : TEXCOORD1; float4 d1 : TEXCOORD2; float4 d2 : TEXCOORD3; };
             NV nvert(NA v) { NV o; float3 w = TransformObjectToWorld(v.positionOS.xyz); o.positionWS = w; o.positionCS = TransformWorldToHClip(w); o.normalWS = TransformObjectToWorldNormal(v.normalOS); o.d1 = v.d1; o.d2 = v.d2; return o; }
-            half4 nfrag(NV i) : SV_Target { return half4(normalize(i.normalWS), 0); }
+            #include "WortSpace.hlsl"
+            half4 nfrag(NV i) : SV_Target { WortSpaceClip(i.positionWS); return half4(normalize(i.normalWS), 0); }
             ENDHLSL
         }
     }

@@ -53,6 +53,7 @@ namespace Wort.Editor
 
             var player = CreatePlayer();
             WorldAOEditor.Create();   // 世界空间 AO（主角顺便挂上遮蔽体）
+            SpatialViewEditor.Create();   // 遮挡虚化、鹰眼视觉、最低层压暗、脚下薄雾
 
             // 错切相机：与 topdowntemp 相同（正交、垂直朝下、shear 1、orthoSize 9.5）
             var camGo = new GameObject("Main Camera") { tag = "MainCamera" };
@@ -62,7 +63,7 @@ namespace Wort.Editor
             cam.nearClipPlane = 0.3f;
             cam.farClipPlane = 1000f;
             cam.clearFlags = CameraClearFlags.SolidColor;
-            cam.backgroundColor = new Color(0.10f, 0.14f, 0.19f);
+            cam.backgroundColor = Color.black;   // 透过虚化 / 裁切看到的空处是黑的
             camGo.transform.SetPositionAndRotation(new Vector3(256f, 30f, 180f), Quaternion.Euler(90f, 0f, 0f)); // 高度 30：正交相机高度不影响画面，降低后阴影贴图集中在地面附近（负责人 2026-11-13：影子太糊）
             camGo.AddComponent<AudioListener>();
             cam.GetUniversalAdditionalCameraData().renderPostProcessing = true;

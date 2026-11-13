@@ -108,6 +108,9 @@ namespace Wort.Rendering
     public static class WorldAOField
     {
         private static Texture2D tex;
+        /// <summary>地图里最低的地面高度（最低一层压暗用，SpatialView 读）。</summary>
+        public static float MinHeight { get; private set; }
+        public static bool HasField => tex != null;
         private static readonly int IdTex = Shader.PropertyToID("_WortHeightTex");
         private static readonly int IdRect = Shader.PropertyToID("_WortHeightRect");
 
@@ -131,8 +134,13 @@ namespace Wort.Rendering
                 };
             }
             var px = new Color[w * h];
+            int min = int.MaxValue;
             for (int i = 0; i < px.Length; i++)
+            {
                 px[i] = new Color(map.Height[i], map.Slope != null ? map.Slope[i] + 1 : 0, 0, 0);
+                if (map.Height[i] < min) min = map.Height[i];
+            }
+            MinHeight = min;
             tex.SetPixels(px);   // 行优先 z * W + x，正好是贴图的 (x, y)
             tex.Apply(false);
             Shader.SetGlobalTexture(IdTex, tex);
