@@ -29,7 +29,10 @@ Forward+ 修复后本地确认：瓦片受光、有影子（负责人截图）�
 2026-11-13 负责人的法线做法（`TilesetExperiment/WORKFLOW.md`）：原色图 → 高度 → 向下 64px 包络 67% → 置换 → Collapse 减面约 512 面 + Flat → Cycles 烘焙。云端核对 hash 一致，体积明显。
 - 高度可以从法线反推（Poisson 积分，和 H67 相关 0.999），运行时暂不需要高度图。
 - 问题：减面网格不周期，对边接缝明显（对边差 13–20，内部相邻差约 1.3）；2D 后处理（周期 + 平滑分解）只能降到 10–16，不够。
-- 方案：`TilesetExperiment/bake_seamless.py`——边界简化成每边 8 段并用顶点组保护，只减内部，3×3 平铺后烘焙。云端没有 Blender，**待负责人本地跑**，看输出的 `border_match` 和接缝。
+- 第一次尝试 `TilesetExperiment/bake_seamless.py`（边界每边 8 段 + 顶点组保护，3×3 平铺烘焙）：dot 本地跑通，对边几何一致，但边界成了贯穿的直折线、边上有细长三角，平铺后网格线明显，弃用。
+- 现用 `Tools/TilesetBake/periodic_facet_normal.py`（纯 Python，云端可跑）：在环面上贪心插点三角化（256 顶点 = 512 面），正交俯视直接光栅化面法线，天然无缝。
+  对边差 0.4–1.2（与图内一致），折边强度与 Blender 版相当，与 Blender 版法线相关 0.86–0.90。输出 `TilesetExperiment/IMG_*_Normal_Periodic512.png`。
+- 另：原色图本身也不无缝（红褐 9473 上下接缝最明显），要另行处理。
 
 等负责人 / Codex：
 1. 本地按上一次给的一次性步骤拉新（先把本地未跟踪的 `Assets/Wort/Art/Tilesets` 挪到项目外备份），在 Unity 里试体素笔刷，发 Console 和截图。
