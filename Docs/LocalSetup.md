@@ -108,8 +108,9 @@ git restore .
 只做下面这几步，不要操作 Unity 界面，不要用 computer use，不要新建、修改、提交或删除任何文件：
 
 1. 在项目目录运行 git status，把输出原样发给我。
-   - 如果被改动的文件只有这 4 个，直接继续：
+   - 如果被改动的文件只在下面这 5 个之内，直接继续：
      Assets/Wort/Rendering/PC_RPAsset.asset
+     Assets/Wort/Rendering/SampleSceneProfile.asset
      Packages/packages-lock.json
      ProjectSettings/EditorBuildSettings.asset
      ProjectSettings/EditorSettings.asset

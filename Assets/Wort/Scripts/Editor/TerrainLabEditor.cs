@@ -56,6 +56,23 @@ namespace Wort.Editor
                 SceneView.RepaintAll();
             }
 
+            // 程序化崖壁没开（或材质套丢了，例如切到没有这两个字段的旧分支、场景设置被丢掉）时，任何生成器下都给一键恢复
+            if (lab.IsTestGround || lab.Generator == TerrainLab.GeneratorKind.Terrace5x5)
+            {
+                if (!lab.UseProcCliff)
+                {
+                    EditorGUILayout.HelpBox("程序化崖壁没有打开或没有材质套，地形会用旧的崖面外观画（没有 Biome 融合）。", MessageType.Warning);
+                    if (GUILayout.Button("打开程序化崖壁并填入材质", GUILayout.Height(24)))
+                    {
+                        Undo.RecordObject(lab, "Enable Proc Cliff");
+                        lab.ProcCliff = true;
+                        FillProcCliffSets(lab);
+                        EditorUtility.SetDirty(lab);
+                        Generate(lab);
+                    }
+                }
+            }
+
             EditorGUILayout.Space();
             using (new EditorGUILayout.HorizontalScope())
             {

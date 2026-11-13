@@ -13,7 +13,11 @@ GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
 - 现行地形着色器是 `Wort/ProcCliff`：主光源改用带 `positionWS` 的 `GetMainLight`，加 `_LIGHT_COOKIES` → 地形也有云影。
 - SSAO（负责人反馈）：主角每走一步全图 AO 跳变；屏幕边缘（尤其下沿的崖脚）非常深，阴天更明显。
   原因：URP 的屏幕空间 SSAO 噪声固定在屏幕上，相机一动就和地面错位；采样落到屏幕外读不到深度，被当成遮挡；错切投影下深度重建也可能有偏差。
-  先在 `PC_Renderer` 里关掉 SSAO（参数保留）。替代方案（待负责人决定）：按体素高度场在世界空间算 AO（崖脚、内拐角、墙根），
+  先在 `PC_Renderer` 里关掉 SSAO（参数保留）。
+- 合并后负责人本地仍“没有 Biome”：Terrain Lab 的 `Proc Cliff` 没勾、`Proc Cliff Sets` 为空（`Test Ground`、`Road Overlay` 引用也空了）。
+  原因：中途拉过本分支的旧版本（没有这些字段），Unity 重新加载 `TerrainLab` 时把场景里这几项丢了，拉回后变成默认值 → 退回旧崖面外观。
+  修复：`procCliff` 默认改为开；Inspector 顶部在程序化崖壁没生效时（任何生成器）显示警告和“打开程序化崖壁并填入材质”按钮。
+  拉新模板允许的本地改动加上 `SampleSceneProfile.asset`（负责人本地有改动，新提交不涉及它）。替代方案（待负责人决定）：按体素高度场在世界空间算 AO（崖脚、内拐角、墙根），
   固定在地面上不闪、没有屏幕边缘问题，也省掉 SSAO 的全屏开销。
 
 ## 2026-11-13 云影 + 天气光照（SkyLighting）、地形着色器接 SSAO

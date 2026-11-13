@@ -54,7 +54,7 @@ namespace Wort.Terrain
         private TestGroundAsset testGround;
 
         [SerializeField, Tooltip("TestGround / Terrace5x5 用程序化崖壁（ProcCliffMesher + Wort/ProcCliff）。关掉就用旧的崖面外观（CliffMesher）。模块化瓦片路线已删除（负责人 2026-11-13）。")]
-        private bool procCliff;
+        private bool procCliff = true;   // 默认开：设置被丢掉（例如切到旧分支）时不会悄悄退回旧外观
 
         [SerializeField, Tooltip("程序化崖壁的材质套（编号 = 数组下标，和瓦片套件编号一致）。Inspector 里可以一键填入。")]
         private ProcCliffSet[] procCliffSets;
