@@ -76,7 +76,8 @@ namespace Wort.Rendering
 
         [Header("其他")]
         [Tooltip("编辑模式下也运行（会改动场景里的太阳和环境光，关掉组件即还原）")]
-        public bool runInEditMode = true;
+        [UnityEngine.Serialization.FormerlySerializedAs("runInEditMode")]
+        public bool previewInEditMode = true;
         [SerializeField] private ComputeShader compute;
 
         // —— 运行时状态（Inspector 只读显示） ——
@@ -125,7 +126,7 @@ namespace Wort.Rendering
         private static readonly int IdScale = Shader.PropertyToID("_Scale");
         private static readonly int IdBlur = Shader.PropertyToID("_Blur");
 
-        private bool Active => Application.isPlaying || runInEditMode;
+        private bool Active => Application.isPlaying || previewInEditMode;
 
         private void OnEnable()
         {

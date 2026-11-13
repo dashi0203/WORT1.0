@@ -48,11 +48,11 @@ float BlurAt(int2 c, int2 dir)
 {
     float s = max(_Blur.x, 0.01);
     int r = min(4, (int)ceil(s * 2.5));
-    int size = (int)_Res.x;
+    uint mask = (uint)_Res.x - 1;   // 边长是 2 的幂（SkyLighting.OnValidate 保证），按位与 = 无缝重复，比整数取模快
     float sum = 0, wsum = 0;
     for (int k = -r; k <= r; k++)
     {
-        int2 t = (c + dir * k + size) % size;   // 无缝重复
+        uint2 t = (uint2)(c + dir * k + (int)_Res.x) & mask;
         float w = exp(-0.5 * (k / s) * (k / s));
         sum += _RawIn[t] * w;
         wsum += w;

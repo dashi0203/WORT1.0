@@ -26,13 +26,16 @@ GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
   - 没有自动曝光：环境光改成三色渐变（Trilight），晴天 / 阴天两套天空色插值，再把被云挡掉的直射光按 `scatterReturn` 加回来；阴天亮度约为晴天的 60%。
   - 阴天降饱和度 28%：组件自己建一个隐藏的全局 Volume（优先级 100），只接管 Color Adjustments 的饱和度。
   - 太阳的颜色 / 强度也由组件设（`driveSun`，可关）。运行时太阳物体按 128m 的整数倍跟着相机挪（图案不跳），以后太阳转动时云影滑动小。
-  - 编辑模式也运行（`runInEditMode`），会改动场景里的太阳和环境光；关掉组件全部还原。
+  - 编辑模式也运行（`previewInEditMode`），会改动场景里的太阳和环境光；关掉组件全部还原。
 - 菜单 `Wort/Add Sky Lighting (Cloud Shadows)`：给当前场景加上组件；`Wort/Create Terrain Lab Scene` 新建场景时也自动加。
 - `Wort/TileSurface`、`Wort/TerrainBlend`：`GetMainLight` 换成带 `positionWS` 的重载（才会乘 cookie），加 `_LIGHT_COOKIES`；
   加 `_SCREEN_SPACE_OCCLUSION`，环境光乘 SSAO（直射光按 Direct Lighting Strength 乘一部分）。之前这两个着色器收不到 SSAO，只有角色有。
 - `PC_Renderer` 的 SSAO（URP 模板自带，一直开着）：Intensity 0.4 → 0.9，Radius 0.3 → 0.6（按 1m 体素调），Falloff 100 → 300（相机高 80m）。
 
-**云端没有 Unity，以上都没编译过。** 需要负责人本地确认：
+本地首测（负责人）：编译通过，只有两条警告，已修：字段 `runInEditMode` 和 MonoBehaviour 自带的同名成员冲突，改名 `previewInEditMode`（带 FormerlySerializedAs）；
+模糊里的整数取模换成按位与（边长是 2 的幂）。
+
+仍需负责人本地确认：
 1. 编译是否通过；菜单加组件后 Game 视图里有没有云影在移动。
 2. 相机移动时云影是否固定在地面上（如果跟着相机滑，说明 URP 的 cookie 映射和我设想的不同，告诉我）。
 3. 角色（URP Lit）和地形是否同时被云影遮住；树影进云影后是否变淡。
