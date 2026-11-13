@@ -61,7 +61,7 @@ def vnoise2(a, b, seed, per=0.4):
     return (r(i, j) * (1 - fa) + r(i + 1, j) * fa) * (1 - fb) + (r(i, j + 1) * (1 - fa) + r(i + 1, j + 1) * fa) * fb
 
 def bulge(side, y, z, h):  # 东(1) / 西(-1) 侧面在 (y, z) 处往外鼓多少；世界坐标噪声，相邻面自动连续；顶沿 h 处收为 0（顶面不变形）
-    t = np.clip((h - y) / 0.35, 0, 1); t = t * t * (3 - 2 * t)
+    t = np.clip((h - y) / 0.35, 0, 1); t = t * (2 - t)          # 顶上线性起步（约 45° 朝上），往下变缓
     return (BUL0 + (BUL1 - BUL0) * vnoise2(y, z, 3 if side > 0 else 4)) * t
 
 tris = []   # (P 3×3, kind, extra, U 3)  kind: 1 顶面 2 正面 4 侧面；extra = (崖脚高, 崖顶高, 法线…)
@@ -171,7 +171,7 @@ def render(biome, stem):
     lc = tc @ [0.299, 0.587, 0.114]; le = te @ [0.299, 0.587, 0.114]
     qf = np.clip((FOOT - (y - yb_)) / FOOT + (le - lc) * 1.2, 0, 1); qf = qf * qf * (3 - 2 * qf)
     qt = np.clip((TOP - (yt_ - y)) / TOP + (le - lc) * 1.2 - 0.25, 0, 1); qt = qt * qt * (3 - 2 * qt)
-    q = np.maximum(qf, qt)
+    q = qf     # 崖顶不再融泥土：顶沿由顶面倒角过渡，否则石头倒角和石头崖面之间夹一条泥土色（封边）
     # 顶面假倒角（着色器）：露边内侧一条“露出来的石头边”。
     #   宽度 = 两层噪声（长起伏 + 碎边）+ 偶尔的深缺口；边界再按崖壁贴图明暗推进 / 退缩（跟着石块走）；
     #   凸角用到两条边的距离合成圆角；倒角里法线往外倾，颜色从泥土渐变到崖壁石头。
@@ -200,14 +200,24 @@ def render(biome, stem):
     D2 = D - (lr - 0.35) * 1.4 + (vnoise2(x[idx], z[idx], 9, 0.07) - 0.5) * 0.6   # 跟着石块明暗 + 碎边
     t = np.clip(1 - D2, 0, 1); t = t * t * (3 - 2 * t)
     dl = np.sqrt(dirx ** 2 + dirz ** 2) + 1e-9
-    nb = np.c_[dirx / dl * 1.2 * t, np.ones(k_), dirz / dl * 1.2 * t]; nb /= np.linalg.norm(nb, axis=1, keepdims=True)
+    rn = samp(nmap, alongs, h0 - np.clip(D, 0, 1) * 0.3)          # 石头法线细节（切线 = 沿边方向，副切线 = 往里）
+    ux, uz = -dirz / dl, dirx / dl                                  # 沿边方向
+    tl = 1.0 * t
+    nb = np.c_[dirx / dl * tl, np.ones(k_), dirz / dl * tl]
+    nb += t[:, None] * 0.8 * (np.c_[ux, np.zeros(k_), uz] * rn[:, :1] + np.c_[dirx / dl, np.zeros(k_), dirz / dl] * rn[:, 1:2])
+    nb /= np.linalg.norm(nb, axis=1, keepdims=True)
     N[idx] = nb
     alb[idx] = te[idx] * (1 - t[:, None] * 0.85) + rock * (t[:, None] * 0.85)
-    m = kd == 2; N[m] = Nw[m]; alb[m] = (tc * (1 - q[:, None]) + te * q[:, None])[m]
+    # 正面顶部也做假倒角：同一条宽度噪声（与顶面南边一致），法线往上倾，与顶面倒角在折线处都约 45°，折线就看不出来
+    wS = BEV0 + (BEV1 - BEV0) * (0.65 * vnoise(x, 21, 0.55) + 0.35 * vnoise(x, 41, 0.13))
+    wS = (wS + 0.30 * np.clip((vnoise(x, 61, 0.8) - 0.72) / 0.28, 0, 1)) * 0.6
+    tw = np.clip(1 - (yt_ - y) / wS - (lc - 0.35) * 0.8, 0, 1); tw = tw * tw * (3 - 2 * tw)
+    Nf = Nw + tw[:, None] * np.array([0, 1.0, 0]); Nf /= np.linalg.norm(Nf, axis=1, keepdims=True)
+    m = kd == 2; N[m] = Nf[m]; alb[m] = (tc * (1 - q[:, None]) + te * q[:, None])[m]
     # 侧面：崖壁贴图按 (z, y)，几何法线
     m = kd == 4
     ts = tc; ls = lc
-    qs = np.maximum(np.clip((FOOT - (y - yb_)) / FOOT + (le - ls) * 1.2, 0, 1), np.clip((TOP - (yt_ - y)) / TOP + (le - ls) * 1.2 - 0.25, 0, 1))
+    qs = np.clip((FOOT - (y - yb_)) / FOOT + (le - ls) * 1.2, 0, 1)
     Ng = en.reshape(-1, 3)
     # 侧面也叠法线贴图（切线沿轮廓方向，简化：在几何法线上加法线贴图的 xy 扰动）
     Ns = Ng + np.c_[np.zeros(n), nt[:, 1], np.zeros(n)] * 0.6 + np.c_[np.zeros(n), np.zeros(n), -nt[:, 0]] * 0.6 * np.sign(Ng[:, 0:1]).ravel()[:, None]
