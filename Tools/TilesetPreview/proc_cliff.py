@@ -47,11 +47,11 @@ def vnoise(t, seed, per=0.45):
 
 # ---------- 网格 ----------
 # 鼓起规则（负责人 2026-11-13）：只有“看得见的体素层”的侧面往外鼓——
-#   顶层（这一列最上面那块体素）的东 / 西 / 北侧面，和前排（南面露出的体素）的东 / 西侧面。
-#   顶面、正面这两张平面本身不鼓；顶层的南侧就是正面，不鼓。被挡住的体素侧面不生成（Unity 里另做只投影的平面）。
-#   北侧面朝北看不见，只把顶面北边跟着推出去（轮廓）。
+#   顶层（这一列最上面那块体素）和前排（南面露出的体素）的东 / 西侧面；鼓起在顶沿处收为 0，往下才鼓出。
+#   顶面、正面这两张平面本身不变形；顶面露边用着色器假倒角。被挡住的体素侧面不生成（Unity 里另做只投影的平面）。
 # 贴图沿轮廓连续：正面 u = x；东侧 u = 东边 x + (z − 正面 z)，西侧 u = 西边 x − (z − 正面 z)，转角处接上；v = y。
 BUL0, BUL1 = 0.06, 0.30     # 侧面鼓出量（m）
+BEV0, BEV1 = 0.05, 0.15     # 顶面假倒角宽度（m，着色器）
 
 def vnoise2(a, b, seed, per=0.4):
     a = np.asarray(a, float) / per + seed * 7.1; b = np.asarray(b, float) / per - seed * 3.7
@@ -60,11 +60,9 @@ def vnoise2(a, b, seed, per=0.4):
     r = lambda p, q: (np.sin(p * 12.9898 + q * 78.233 + seed * 4.1) * 43758.5453) % 1.0
     return (r(i, j) * (1 - fa) + r(i + 1, j) * fa) * (1 - fb) + (r(i, j + 1) * (1 - fa) + r(i + 1, j + 1) * fa) * fb
 
-def bulge(side, y, z):     # 东(1) / 西(-1) 侧面在 (y, z) 处往外鼓多少；只看世界坐标，相邻面自动连续
-    return BUL0 + (BUL1 - BUL0) * vnoise2(y, z, 3 if side > 0 else 4)
-
-def bulge_n(y, x):         # 北侧（只用于顶面北边轮廓）
-    return BUL0 + (BUL1 - BUL0) * vnoise2(y, x, 2)
+def bulge(side, y, z, h):  # 东(1) / 西(-1) 侧面在 (y, z) 处往外鼓多少；世界坐标噪声，相邻面自动连续；顶沿 h 处收为 0（顶面不变形）
+    t = np.clip((h - y) / 0.35, 0, 1); t = t * t * (3 - 2 * t)
+    return (BUL0 + (BUL1 - BUL0) * vnoise2(y, z, 3 if side > 0 else 4)) * t
 
 tris = []   # (P 3×3, kind, extra, U 3)  kind: 1 顶面 2 正面 4 侧面；extra = (崖脚高, 崖顶高, 法线…)
 def quad(a, b, c, d, kind, extra=(0, 0), U=None):
@@ -77,22 +75,12 @@ def front_z(ix, iz):       # 这一列往南数，正面在哪个 z（用来让�
     while k > 0 and hc(ix, k - 1) >= h: k -= 1
     return float(k)
 
-def top_vertex(ix, iz, i, j, h):
-    x = ix + i / SUB; z = iz + j / SUB
-    dx = dz = 0.0
-    if j == SUB and hc(ix, iz + 1) < h: dz += bulge_n(h, x)
-    if i == SUB and hc(ix + 1, iz) < h: dx += bulge(1, h, z)
-    if i == 0 and hc(ix - 1, iz) < h: dx -= bulge(-1, h, z)
-    return [x + dx, h, z + dz]
-
 for ix in range(NX):
     for iz in range(NZ):
         h = H[ix, iz]
         if h == 0: continue
-        V = [[top_vertex(ix, iz, i, j, h) for i in range(SUB + 1)] for j in range(SUB + 1)]
-        for j in range(SUB):
-            for i in range(SUB):
-                quad(V[j][i], V[j][i + 1], V[j + 1][i + 1], V[j + 1][i], 1)
+        # 顶面：平的 1m 方块（边缘的倒角是着色器里的假倒角，不动网格）
+        quad([ix, h, iz], [ix + 1, h, iz], [ix + 1, h, iz + 1], [ix, h, iz + 1], 1)
         hs = hc(ix, iz - 1)
         front = hs < h
         # 正面：平面 z = iz，从 hs 到 h；东西两头若露边，端点跟着侧面鼓出量走
@@ -100,7 +88,7 @@ for ix in range(NX):
             ys = np.linspace(hs, h, int((h - hs) * SUB) + 1)
             def xe(side, y):
                 edge = ix + (1.0 if side > 0 else 0.0)
-                return edge + side * bulge(side, y, iz) if hc(ix + side, iz) < y + 1e-6 and hc(ix + side, iz) < h else edge
+                return edge + side * bulge(side, y, iz, h) if hc(ix + side, iz) < y + 1e-6 and hc(ix + side, iz) < h else edge
             for k in range(len(ys) - 1):
                 y0, y1 = ys[k], ys[k + 1]
                 a_, b_, c_, d_ = [xe(-1, y0), y0, iz], [xe(1, y0), y0, iz], [xe(1, y1), y1, iz], [xe(-1, y1), y1, iz]
@@ -114,7 +102,7 @@ for ix in range(NX):
             ys = np.linspace(lo, h, int(round((h - lo) * SUB)) + 1)
             zs = [iz + j / SUB for j in range(SUB + 1)]
             edge = ix + (1.0 if side > 0 else 0.0)
-            G = [[[edge + side * bulge(side, y_, z_), y_, z_] for z_ in zs] for y_ in ys]
+            G = [[[edge + side * bulge(side, y_, z_, h), y_, z_] for z_ in zs] for y_ in ys]
             for r in range(len(ys) - 1):
                 for c in range(SUB):
                     a_, b_, c2, d_ = G[r][c], G[r][c + 1], G[r + 1][c + 1], G[r + 1][c]
@@ -184,6 +172,21 @@ def render(biome, stem):
     qf = np.clip((FOOT - (y - yb_)) / FOOT + (le - lc) * 1.2, 0, 1); qf = qf * qf * (3 - 2 * qf)
     qt = np.clip((TOP - (yt_ - y)) / TOP + (le - lc) * 1.2 - 0.25, 0, 1); qt = qt * qt * (3 - 2 * qt)
     q = np.maximum(qf, qt)
+    # 顶面假倒角：露边内侧一窄条（宽 BEV0–BEV1，随噪声变）法线往外倾，最多 45°
+    m = kd == 1
+    cx = np.floor(x - 1e-6).astype(int); cz = np.floor(z - 1e-6).astype(int); fx = x - cx; fz = z - cz
+    hh = np.vectorize(hc)
+    ok = m & (cx >= -1) & (cx <= NX) & (cz >= -1) & (cz <= NZ)
+    idx = np.where(ok)[0]
+    h0 = hh(cx[idx], cz[idx])
+    tilt = np.zeros((len(idx), 3))
+    for dx_, dz_, dist, along, seed in ((0, -1, fz[idx], x[idx], 1), (0, 1, 1 - fz[idx], x[idx], 2), (1, 0, 1 - fx[idx], z[idx], 3), (-1, 0, fx[idx], z[idx], 4)):
+        exposed = hh(cx[idx] + dx_, cz[idx] + dz_) < h0
+        w = BEV0 + (BEV1 - BEV0) * vnoise(along, seed + 20)
+        t = np.clip(1 - dist / w, 0, 1) * exposed
+        tilt += np.c_[np.full(len(idx), dx_), np.zeros(len(idx)), np.full(len(idx), dz_)] * t[:, None]
+    nb = np.c_[tilt[:, 0], np.ones(len(idx)), tilt[:, 2]]; nb /= np.linalg.norm(nb, axis=1, keepdims=True)
+    N[idx] = nb
     m = kd == 2; N[m] = Nw[m]; alb[m] = (tc * (1 - q[:, None]) + te * q[:, None])[m]
     # 侧面：崖壁贴图按 (z, y)，几何法线
     m = kd == 4
