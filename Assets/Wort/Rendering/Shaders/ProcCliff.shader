@@ -8,6 +8,7 @@
 // - 墙面：崖壁颜色 + 法线；顶部 _TopBlend 内融合顶岩（按“顶面越过折线的延续”展开取样，石块从顶面绕到墙上），崖脚 _FootBlend 内融合泥土。
 // - _ClipNorth = 1（TopClip 材质，只用在北面露边的格）：北边是真正的轮廓线，按噪声透明裁剪 0–_NorthClip，轮廓不再笔直。
 // - 暗部提亮 _BlackLift（同 TileSurface）；崖壁提亮 / 加饱和 _WallGain、_WallSat。
+// - 平滑法线（负责人 2026-11-13）：顶沿、竖直转角（正面 ↔ 侧面）、崖脚内凹圆角（墙底 ↔ 墙根前地面）都在折线两侧各转 45°，两边同一个宽度函数，折线处对齐。
 // - 性能开关：_EdgeFx = 0 关掉倒角和法线弯折，_WallTopFx = 0 关掉墙顶融合（对比开销用）。
 Shader "Wort/ProcCliff"
 {
@@ -166,10 +167,26 @@ Shader "Wort/ProcCliff"
                     if (fmod(floor(cm / 8), 2) >= 1) dc = min(dc, length(float2(fx, fz)));
                     float dr = min(dm, dc);   // 顶岩边 / 泥土内收用；倒角只看真正的露边 dm
                     float3 earthN = topFrame(UnpackNormal(SAMPLE_TEXTURE2D(_EarthNormal, sampler_EarthNormal, ue)));
-                    if (dr > 0.6 || _EdgeFx < 0.5)
+                    // 崖脚（内凹圆角）的地面一侧：哪边邻居更高，墙根前 r 内法线往外倾到 45°（墙底同样往上翻 45°，交界线对齐）
+                    float hm = floor(mask / 256);
+                    float dHN = fmod(hm, 2) >= 1 ? 1 - fz : 9, dHE = fmod(floor(hm / 2), 2) >= 1 ? 1 - fx : 9;
+                    float dHS = fmod(floor(hm / 4), 2) >= 1 ? fz : 9, dHW = fmod(floor(hm / 8), 2) >= 1 ? fx : 9;
+                    float dH = min(min(dHN, dHE), min(dHS, dHW));
+                    if ((dr > 0.6 && dH > 0.4) || _EdgeFx < 0.5)
                     {
-                        // 离露边远：只有泥土（大部分像素走这里，和普通材质一样便宜）
+                        // 离露边、墙根都远：只有泥土（大部分像素走这里，和普通材质一样便宜）
                         albedo = earthC; N = earthN;
+                    }
+                    else if (dr > 0.6)
+                    {
+                        // 墙根前的地面：沿墙方向取宽度（与墙底同一个函数：北墙 x / 20，东墙 z / 21，南墙 x / 22，西墙 z / 23）
+                        float along = P.x, seed = 20; float3 away = float3(0, 0, -1);
+                        if (dHE <= dH + 1e-5) { along = P.z; seed = 21; away = float3(-1, 0, 0); }
+                        else if (dHS <= dH + 1e-5) { along = P.x; seed = 22; away = float3(0, 0, 1); }
+                        else if (dHW <= dH + 1e-5) { along = P.z; seed = 23; away = float3(1, 0, 0); }
+                        float sg = saturate(1 - dH / bevelR(along, seed));
+                        albedo = earthC;
+                        N = sg > 0 ? normalize(rotateAxis(earthN, normalize(cross(up, away)), radians(45) * sg)) : earthN;
                     }
                     else
                     {
@@ -222,6 +239,7 @@ Shader "Wort/ProcCliff"
                     half3 ew = SAMPLE_TEXTURE2D(_EarthMap, sampler_EarthMap, float2(cu, P.y) / _EarthPeriod).rgb;
                     float lc = lum(tc);
                     float qf = smooth01((_FootBlend - (P.y - yb)) / _FootBlend + (lum(ew) - lc) * 1.2);
+                    qf = max(qf, smooth01(1 - (P.y - yb) / 0.06));   // 贴地那一点一定是泥土，和地面同色
                     // 崖壁提亮 / 加饱和只作用在崖壁本身（融合之前），崖脚泥土、墙顶顶岩保持和地面 / 顶面同色
                     float lt0 = lum(tc);
                     half3 tcw = saturate((lt0 + (tc - lt0) * _WallSat) * _WallGain);
@@ -242,18 +260,42 @@ Shader "Wort/ProcCliff"
                         float3 rockW = rotateAxis(topFrame(trn), k, radians(90));      // 顶面坐标 → 墙面
                         Wv = normalize(lerp(Wv, rockW, qt));
                     }
-                    // 崖脚：法线跟着融合比例转向朝上并叠泥土细节，到最底下和地面受光一致（颜色才接得上）
+                    // 崖脚融合区：法线细节跟着颜色换成泥土的（顶面坐标 → 墙面）
                     if (qf > 0)
                     {
                         float3 en = topFrame(UnpackNormal(SAMPLE_TEXTURE2D(_EarthNormal, sampler_EarthNormal, float2(cu, P.y) / _EarthPeriod)));
-                        Wv = normalize(lerp(Wv, en, qf));
+                        Wv = normalize(lerp(Wv, rotateAxis(en, k, radians(90)), qf));
                     }
                     N = Wv;
                     if (_EdgeFx > 0.5)
                     {
                         // 平滑倒角：离崖顶 r 内往上翻到 45°（与顶面同一个 r，折线处对上）
                         float sw = saturate(1 - (yt - P.y) / bevelR(along, seed));
-                        if (sw > 0) N = normalize(rotateAxis(Wv, k, -radians(45) * sw));
+                        if (sw > 0) N = normalize(rotateAxis(N, k, -radians(45) * sw));
+                        // 崖脚内凹圆角：离崖脚 r 内往上翻到 45°，和墙根前地面的 45° 在交界线对齐（地面一侧见顶面分支，种子 20–23）
+                        float fseed = side ? (sgn > 0 ? 23 : 21) : 20;
+                        float sf = saturate(1 - (P.y - yb) / bevelR(along, fseed));
+                        if (sf > 0) N = normalize(rotateAxis(N, k, -radians(45) * sf));
+                        // 竖直转角：正面在段的东西两头（那一侧更低时）转向侧面，侧面在正面转角附近转向正面，各 45°，转角处对齐
+                        if (!side)
+                        {
+                            float packed = i.d2.w, hwS = floor(packed / 1024), heE = packed - hwS * 1024;
+                            if (P.y > heE + 0.01)
+                            {
+                                float sv = saturate(1 - max(i.d2.z - P.x, 0) / bevelR(P.y + i.d2.z, 40));
+                                if (sv > 0) N = normalize(rotateAxis(N, up, -radians(45) * sv));
+                            }
+                            if (P.y > hwS + 0.01)
+                            {
+                                float sv = saturate(1 - max(P.x - i.d2.y, 0) / bevelR(P.y + i.d2.y, 40));
+                                if (sv > 0) N = normalize(rotateAxis(N, up, radians(45) * sv));
+                            }
+                        }
+                        else
+                        {
+                            float sv = saturate(1 - max(P.z - i.d2.y, 0) / bevelR(P.y + edge, 40));
+                            if (sv > 0) N = normalize(rotateAxis(N, up, sgn * radians(45) * sv));
+                        }
                     }
                 }
 
@@ -270,7 +312,43 @@ Shader "Wort/ProcCliff"
             }
             ENDHLSL
         }
-        UsePass "Universal Render Pipeline/Lit/ShadowCaster"
+        Pass
+        {
+            // 自带投影 Pass：北边透明裁剪也进阴影（影子边缘跟着轮廓变碎）
+            Name "ShadowCaster"
+            Tags { "LightMode" = "ShadowCaster" }
+            ZWrite On ZTest LEqual ColorMask 0
+            HLSLPROGRAM
+            #pragma vertex svert
+            #pragma fragment sfrag
+            #pragma multi_compile_vertex _ _CASTING_PUNCTUAL_LIGHT_SHADOW
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
+            float3 _LightDirection;
+            float3 _LightPosition;
+            struct SA { float4 positionOS : POSITION; float3 normalOS : NORMAL; float4 d1 : TEXCOORD1; float4 d2 : TEXCOORD2; };
+            struct SV { float4 positionCS : SV_POSITION; float3 positionWS : TEXCOORD0; float4 d1 : TEXCOORD1; float4 d2 : TEXCOORD2; };
+            SV svert(SA v)
+            {
+                SV o;
+                float3 w = TransformObjectToWorld(v.positionOS.xyz);
+                float3 n = TransformObjectToWorldNormal(v.normalOS);
+            #if _CASTING_PUNCTUAL_LIGHT_SHADOW
+                float3 ld = normalize(_LightPosition - w);
+            #else
+                float3 ld = _LightDirection;
+            #endif
+                float4 cs = TransformWorldToHClip(ApplyShadowBias(w, n, ld));
+            #if UNITY_REVERSED_Z
+                cs.z = min(cs.z, UNITY_NEAR_CLIP_VALUE);
+            #else
+                cs.z = max(cs.z, UNITY_NEAR_CLIP_VALUE);
+            #endif
+                o.positionCS = cs; o.positionWS = w; o.d1 = v.d1; o.d2 = v.d2;
+                return o;
+            }
+            half4 sfrag(SV i) : SV_Target { NorthClip(i.positionWS, i.d1, i.d2); return 0; }
+            ENDHLSL
+        }
         Pass
         {
             Name "DepthOnly"

@@ -12,9 +12,9 @@ namespace Wort.Generation
         public readonly List<float> Positions = new List<float>();
         public readonly List<float> Normals = new List<float>();
         public readonly List<float> Tangents = new List<float>();   // xyzw
-        /// <summary>每顶点 4 个数：种类（1 顶面 / 2 正面 / 4 侧面 / 0 投影面）、顶面露边掩码或侧面朝向、崖顶高、崖脚高。</summary>
+        /// <summary>每顶点 4 个数：种类（1 顶面 / 2 正面 / 4 侧面 / 0 投影面）、顶面掩码（1–8 露边、16–128 内拐角、256–2048 更高的邻居）或侧面朝向、崖顶高、崖脚高。</summary>
         public readonly List<float> Data1 = new List<float>();
-        /// <summary>每顶点 4 个数：顶面 = 格的世界 x、z；正面 = 折线的世界 z；侧面 = 折线的世界 x、这一列正面的世界 z。</summary>
+        /// <summary>每顶点 4 个数：顶面 = 格的世界 x、z；正面 = 折线的世界 z、这一段西头 x、东头 x、西邻高 × 1024 + 东邻高；侧面 = 折线的世界 x、这一列正面的世界 z。</summary>
         public readonly List<float> Data2 = new List<float>();
         /// <summary>键 = 套件编号 × PartCount + 部分。</summary>
         public readonly SortedDictionary<int, List<int>> Indices = new SortedDictionary<int, List<int>>();
@@ -41,7 +41,7 @@ namespace Wort.Generation
     /// </summary>
     public static class ProcCliffMesher
     {
-        const int Sub = 4;                    // 鼓起侧面每格沿边细分
+        const int Sub = 2;                    // 鼓起侧面每格沿边细分（负责人 2026-11-13：4 → 2）
         const double Bul0 = 0.06, Bul1 = 0.30;  // 侧面鼓出量（m）
         const double Row = 0.25;              // 竖向细分（m）
         const uint SeedE = 0x51A3u, SeedW = 0x7C21u;
@@ -66,6 +66,8 @@ namespace Wort.Generation
                     if (hn >= h && hw >= h && HeightAt(map, x - 1, z + 1) < h) mask |= 32;
                     if (hs >= h && he >= h && HeightAt(map, x + 1, z - 1) < h) mask |= 64;
                     if (hs >= h && hw >= h && HeightAt(map, x - 1, z - 1) < h) mask |= 128;
+                    // 哪边邻居更高（北 256、东 512、南 1024、西 2048）：崖脚前面的地面往外倾（内凹圆角的地面一侧）
+                    mask |= (hn > h ? 256 : 0) | (he > h ? 512 : 0) | (hs > h ? 1024 : 0) | (hw > h ? 2048 : 0);
 
                     // 顶面：靠露边的格一格一块（着色器按这一格的掩码算倒角、泥土内收）；四周同高的格留给后面合并成大矩形
                     if (mask != 0)
@@ -79,20 +81,27 @@ namespace Wort.Generation
                     else interior[lz * size + lx] = true;
 
                     bool front = hs < h;
-                    if (front)
+                    // 正面：同高、同崖脚、同套件的一排连成一段（只在段的西头生成），东西两头露边时端点跟着侧面鼓出量走
+                    bool SameRun(int xx) => xx >= ox && xx < ox + size && HeightAt(map, xx, z) == h && HeightAt(map, xx, z - 1) == hs &&
+                                            (sets == null || sets.Length != map.W * map.H || sets[z * map.W + xx] == set);
+                    if (front && !SameRun(x - 1))
                     {
-                        // 正面：平面 z = lz；东西两头露边时端点跟着侧面鼓出量走
+                        int xe = x;
+                        while (SameRun(xe + 1)) xe++;
+                        int hwS = HeightAt(map, x - 1, z), heE = HeightAt(map, xe + 1, z);
                         var wall = m.Group(set, ProcCliffMesh.Part.Wall);
                         int rows = Math.Max(1, (int)Math.Round((h - hs) / Row));
+                        double l0 = lx, r1 = xe - ox + 1;
                         for (int r = 0; r < rows; r++)
                         {
                             double y0 = hs + (h - hs) * (double)r / rows, y1 = hs + (h - hs) * (double)(r + 1) / rows;
-                            double xl0 = lx - Out(map, x, z, -1, y0, h), xl1 = lx - Out(map, x, z, -1, y1, h);
-                            double xr0 = lx + 1 + Out(map, x, z, 1, y0, h), xr1 = lx + 1 + Out(map, x, z, 1, y1, h);
+                            double xl0 = l0 - Out(map, x, z, -1, y0, h), xl1 = l0 - Out(map, x, z, -1, y1, h);
+                            double xr0 = r1 + Out(map, xe, z, 1, y0, h), xr1 = r1 + Out(map, xe, z, 1, y1, h);
+                            // Data2：折线 z、这一段的西头 x、东头 x、西邻高 × 1024 + 东邻高（着色器做竖直转角的平滑法线）
                             Quad(m, wall,
                                 xl0, y0, lz, xl1, y1, lz, xr1, y1, lz, xr0, y0, lz,
                                 0, 0, -1, 1, 0, 0, -1,
-                                2, 0, h, hs, oz + lz, 0);
+                                2, 0, h, hs, oz + lz, x, xe + 1, hwS * 1024 + heE);
                         }
                     }
 
@@ -231,7 +240,7 @@ namespace Wort.Generation
             double ax, double ay, double az, double bx, double by, double bz,
             double cx, double cy, double cz, double dx, double dy, double dz,
             double nx, double ny, double nz, double tx, double ty, double tz, double tw,
-            double k, double d1, double d2, double d3, double e0, double e1)
+            double k, double d1, double d2, double d3, double e0, double e1, double e2 = 0, double e3 = 0)
         {
             int b = m.VertexCount;
             Vert(m, ax, ay, az); Vert(m, bx, by, bz); Vert(m, cx, cy, cz); Vert(m, dx, dy, dz);
@@ -240,7 +249,7 @@ namespace Wort.Generation
                 m.Normals.Add((float)nx); m.Normals.Add((float)ny); m.Normals.Add((float)nz);
                 m.Tangents.Add((float)tx); m.Tangents.Add((float)ty); m.Tangents.Add((float)tz); m.Tangents.Add((float)tw);
                 m.Data1.Add((float)k); m.Data1.Add((float)d1); m.Data1.Add((float)d2); m.Data1.Add((float)d3);
-                m.Data2.Add((float)e0); m.Data2.Add((float)e1); m.Data2.Add(0); m.Data2.Add(0);
+                m.Data2.Add((float)e0); m.Data2.Add((float)e1); m.Data2.Add((float)e2); m.Data2.Add((float)e3);
             }
             idx.Add(b); idx.Add(b + 1); idx.Add(b + 2);
             idx.Add(b); idx.Add(b + 2); idx.Add(b + 3);

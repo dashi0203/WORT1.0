@@ -36,8 +36,8 @@ namespace Wort.Tests
             // 顶面：靠露边的 12 格一格一块（北边 4 格进裁剪组），中间 2×2 合并成一块 → Top = 8 格 × 2 + 2
             Assert.AreEqual(18, OnBlock(m, ProcCliffMesh.Part.Top));
             Assert.AreEqual(8, OnBlock(m, ProcCliffMesh.Part.TopClip));
-            // 正面 4 格 × 16 行 × 2 = 128；东西两侧各：前排整高 16 行 × 4 段 × 2 = 128，后三格只有顶层 4 行 × 4 段 × 2 × 3 = 96 → 两侧 448
-            Assert.AreEqual(128 + 448, OnBlock(m, ProcCliffMesh.Part.Wall));
+            // 正面 4 格连成一段：16 行 × 2 = 32；东西两侧各：前排整高 16 行 × 2 段 × 2 = 64，后三格只有顶层 4 行 × 2 段 × 2 × 3 = 48 → 两侧 224
+            Assert.AreEqual(32 + 224, OnBlock(m, ProcCliffMesh.Part.Wall));
             // 只投影：北、东、西各 4 块平面
             Assert.AreEqual(24, OnBlock(m, ProcCliffMesh.Part.Shadow));
         }
