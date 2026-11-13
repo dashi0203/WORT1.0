@@ -56,6 +56,12 @@ namespace Wort.Terrain
         [SerializeField, Tooltip("TestGround 用的模块化瓦片套件（编号 = 数组下标，0 是默认）。为空时用原来的崖面外观。Inspector 里可以一键填入项目里的全部套件。")]
         private TilesetAsset[] tilesets;
 
+        [SerializeField, Tooltip("TestGround 用程序化崖壁（ProcCliffMesher + Wort/ProcCliff）代替模块化瓦片。关掉就回到瓦片，两种路线可以对比（负责人 2026-11-13）。")]
+        private bool procCliff;
+
+        [SerializeField, Tooltip("程序化崖壁的材质套（编号 = 数组下标，和瓦片套件编号一致）。Inspector 里可以一键填入。")]
+        private ProcCliffSet[] procCliffSets;
+
         private Material[] materials;
         private RegionVoxels lastVoxels;
         private RandomRegionResult lastRandom;
@@ -159,16 +165,25 @@ namespace Wort.Terrain
             public List<ColliderBoxes.Box> Boxes;
             public MeshData Slopes;
             public List<TilePlacement> Tiles; // 用模块化瓦片时：这个 chunk 的瓦片清单（Visual 为空）
+            public ProcCliffMesh Proc;        // 用程序化崖壁时：这个 chunk 的网格（Visual 为空）
         }
 
         /// <summary>TestGround 且指定了瓦片套件时，用模块化瓦片画地形。</summary>
-        public bool UseTiles => generator == GeneratorKind.TestGround && tilesets != null && tilesets.Length > 0 && tilesets[0] != null;
+        public bool UseTiles => !UseProcCliff && generator == GeneratorKind.TestGround && tilesets != null && tilesets.Length > 0 && tilesets[0] != null;
+
+        /// <summary>TestGround 且打开了程序化崖壁、指定了材质套时，用程序化崖壁画地形。</summary>
+        public bool UseProcCliff => generator == GeneratorKind.TestGround && procCliff && procCliffSets != null && procCliffSets.Length > 0 && procCliffSets[0] != null;
 
         /// <summary>只做计算，不碰任何 Unity 对象（所以能并行）。</summary>
         private ChunkBuild ComputeChunk(RegionMap map, RegionVoxels voxels, int cx, int cz, uint useed)
         {
             var b = new ChunkBuild { Cx = cx, Cz = cz };
-            if (UseTiles)
+            if (UseProcCliff)
+            {
+                b.Proc = ProcCliffMesher.Build(map, testGround != null ? testGround.Sets : null, cx, cz);
+                b.Visual = new MeshData();
+            }
+            else if (UseTiles)
             {
                 b.Tiles = new List<TilePlacement>();
                 TilePlacer.Chunk(map, testGround != null ? testGround.Sets : null, cx, cz, b.Tiles);
@@ -176,7 +191,7 @@ namespace Wort.Terrain
             }
             else
                 b.Visual = cliffDressing ? CliffMesher.Build(voxels, cx, cz, useed) : ChunkMesher.Build(voxels, cx, cz);
-            if (addColliders && (cliffDressing || b.Tiles != null))
+            if (addColliders && (cliffDressing || b.Tiles != null || b.Proc != null))
             {
                 b.Boxes = ColliderBoxes.Build(map, cx, cz);
                 b.Slopes = CliffMesher.SlopesOnly(voxels, cx, cz);
@@ -193,7 +208,9 @@ namespace Wort.Terrain
             chunk.transform.localPosition = new Vector3(b.Cx * settings.ChunkSize, 0f, b.Cz * settings.ChunkSize);
             chunk.isStatic = true;
             int triangles;
-            if (b.Tiles != null)
+            if (b.Proc != null)
+                triangles = AddProcCliff(chunk, b.Proc);
+            else if (b.Tiles != null)
                 triangles = AddTiles(chunk, b);
             else
             {
@@ -201,7 +218,7 @@ namespace Wort.Terrain
                 AddPart(chunk, "Water", b.Visual, true, false);
                 triangles = b.Visual.TriangleCount;
             }
-            if (addColliders && (cliffDressing || b.Tiles != null))
+            if (addColliders && (cliffDressing || b.Tiles != null || b.Proc != null))
                 AddBoxColliders(chunk, map, b); // 碰撞仍按 1m 格：同高矩形合并成碰撞盒 + 斜坡小网格
             return triangles;
         }
@@ -233,6 +250,69 @@ namespace Wort.Terrain
             if (tilesets == null || tilesets.Length == 0) return null;
             var t = set < tilesets.Length ? tilesets[set] : null;
             return t != null ? t : tilesets[0];
+        }
+
+        /// <summary>
+        /// 程序化崖壁：整个 chunk 一个网格（子网格 = 套件 × 部分），只投影的面放在子物体 Shadow 上（ShadowsOnly，屏幕上不画）。返回三角形数（不含只投影的面）。
+        /// </summary>
+        private int AddProcCliff(GameObject chunk, ProcCliffMesh pm)
+        {
+            int n = pm.VertexCount;
+            if (n == 0) return 0;
+            var pos = new Vector3[n]; var nor = new Vector3[n]; var tan = new Vector4[n];
+            var d1 = new List<Vector4>(n); var d2 = new List<Vector4>(n);
+            for (int i = 0; i < n; i++)
+            {
+                pos[i] = new Vector3(pm.Positions[i * 3], pm.Positions[i * 3 + 1], pm.Positions[i * 3 + 2]);
+                nor[i] = new Vector3(pm.Normals[i * 3], pm.Normals[i * 3 + 1], pm.Normals[i * 3 + 2]);
+                tan[i] = new Vector4(pm.Tangents[i * 4], pm.Tangents[i * 4 + 1], pm.Tangents[i * 4 + 2], pm.Tangents[i * 4 + 3]);
+                d1.Add(new Vector4(pm.Data1[i * 4], pm.Data1[i * 4 + 1], pm.Data1[i * 4 + 2], pm.Data1[i * 4 + 3]));
+                d2.Add(new Vector4(pm.Data2[i * 4], pm.Data2[i * 4 + 1], pm.Data2[i * 4 + 2], pm.Data2[i * 4 + 3]));
+            }
+            Mesh NewMesh(string name)
+            {
+                var m = new Mesh { indexFormat = IndexFormat.UInt32, hideFlags = HideFlags.DontSave, name = name };
+                m.vertices = pos; m.normals = nor; m.tangents = tan;
+                m.SetUVs(1, d1); m.SetUVs(2, d2);
+                return m;
+            }
+            var visGroups = new List<List<int>>(); var visMats = new List<Material>();
+            var shadowIdx = new List<int>(); Material shadowMat = null;
+            foreach (var kv in pm.Indices)
+            {
+                int set = kv.Key / ProcCliffMesh.PartCount;
+                var part = (ProcCliffMesh.Part)(kv.Key % ProcCliffMesh.PartCount);
+                var ps = set < procCliffSets.Length && procCliffSets[set] != null ? procCliffSets[set] : procCliffSets[0];
+                if (part == ProcCliffMesh.Part.Shadow) { shadowIdx.AddRange(kv.Value); if (shadowMat == null) shadowMat = ps.main; continue; }
+                visGroups.Add(kv.Value);
+                visMats.Add(part == ProcCliffMesh.Part.TopClip && ps.clip != null ? ps.clip : ps.main);
+            }
+            long tris = 0;
+            var mesh = NewMesh($"{chunk.name} ProcCliff");
+            mesh.subMeshCount = visGroups.Count;
+            for (int k = 0; k < visGroups.Count; k++) { mesh.SetTriangles(visGroups[k], k, false); tris += visGroups[k].Count / 3; }
+            mesh.RecalculateBounds();
+            var go = new GameObject("ProcCliff") { hideFlags = HideFlags.DontSave };
+            go.transform.SetParent(chunk.transform, false);
+            go.isStatic = true;
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var renderer = go.AddComponent<MeshRenderer>();
+            renderer.sharedMaterials = visMats.ToArray();
+            renderer.shadowCastingMode = ShadowCastingMode.On;
+            if (shadowIdx.Count > 0)
+            {
+                // 看不见的北 / 东 / 西竖面：只进阴影贴图，保证台地挡光完整（负责人 2026-11-13）
+                var sm = NewMesh($"{chunk.name} ProcCliff Shadow");
+                sm.SetTriangles(shadowIdx, 0, true);
+                var sgo = new GameObject("Shadow") { hideFlags = HideFlags.DontSave };
+                sgo.transform.SetParent(go.transform, false);
+                sgo.isStatic = true;
+                sgo.AddComponent<MeshFilter>().sharedMesh = sm;
+                var sr = sgo.AddComponent<MeshRenderer>();
+                sr.sharedMaterial = shadowMat;
+                sr.shadowCastingMode = ShadowCastingMode.ShadowsOnly;
+            }
+            return (int)tris;
         }
 
         /// <summary>
@@ -655,6 +735,8 @@ namespace Wort.Terrain
         // ---- 空白测试地与体素笔刷（Minecraft 式） ----
         public TestGroundAsset TestGroundData { get => testGround; set => testGround = value; }
         public TilesetAsset[] Tilesets { get => tilesets; set => tilesets = value; }
+        public ProcCliffSet[] ProcCliffSets { get => procCliffSets; set => procCliffSets = value; }
+        public bool ProcCliff { get => procCliff; set => procCliff = value; }
         public bool IsTestGround => generator == GeneratorKind.TestGround;
 
         /// <summary>世界空间射线打体素面（高度场 DDA，见 VoxelPick）。</summary>

@@ -300,7 +300,27 @@ namespace Wort.Editor
                     Generate(lab);
                 }
             }
-            if (!lab.UseTiles)
+            // 程序化崖壁 / 模块化瓦片 对比（负责人 2026-11-13：先在测试地上两种路线各看一遍、量性能）
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                bool proc = EditorGUILayout.ToggleLeft("程序化崖壁（关掉 = 模块化瓦片）", lab.ProcCliff);
+                if (proc != lab.ProcCliff)
+                {
+                    Undo.RecordObject(lab, "Toggle Proc Cliff");
+                    lab.ProcCliff = proc;
+                    if (proc && (lab.ProcCliffSets == null || lab.ProcCliffSets.Length == 0)) FillProcCliffSets(lab);
+                    EditorUtility.SetDirty(lab);
+                    Generate(lab);
+                }
+                if (GUILayout.Button("填入程序化崖壁材质"))
+                {
+                    Undo.RecordObject(lab, "Assign Proc Cliff Sets");
+                    FillProcCliffSets(lab);
+                    EditorUtility.SetDirty(lab);
+                    Generate(lab);
+                }
+            }
+            if (!lab.UseTiles && !lab.UseProcCliff)
                 EditorGUILayout.HelpBox("还没有指定瓦片套件，地形用原来的崖面外观画。点“填入项目里的全部套件”。", MessageType.Warning);
             EditorGUILayout.HelpBox(
                 "方块：左键 = 放一块（点顶面往上叠，点侧面在旁边那格填到这一层）；Shift + 左键或右键 = 挖一块（点侧面会连上面的一起挖掉，柱子不能悬空）。按住拖动连续放 / 挖。\n" +
@@ -308,6 +328,19 @@ namespace Wort.Editor
                 "刷套件：左键拖动把范围内的格换成当前套件（墙件跟着高的那一格）。\n" +
                 "数字键 1–9 切换套件；Alt + 拖动照常转视角。所有修改都可以 Ctrl+Z 撤销。",
                 MessageType.None);
+        }
+
+        /// <summary>按名字排序填入项目里全部 ProcCliffSet（和瓦片套件同样按名字排序，编号对得上）。</summary>
+        private static void FillProcCliffSets(TerrainLab lab)
+        {
+            var found = new List<ProcCliffSet>();
+            foreach (var guid in AssetDatabase.FindAssets("t:ProcCliffSet"))
+            {
+                var t = AssetDatabase.LoadAssetAtPath<ProcCliffSet>(AssetDatabase.GUIDToAssetPath(guid));
+                if (t != null) found.Add(t);
+            }
+            found.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+            lab.ProcCliffSets = found.ToArray();
         }
 
         /// <summary>找或建测试地资源（Assets/Wort/Data/TestGround.asset）并指定给 TerrainLab。</summary>

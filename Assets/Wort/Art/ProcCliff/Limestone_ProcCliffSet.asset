@@ -1,0 +1,16 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3aa12a93853a49369ce4e4bf5069c2e9, type: 3}
+  m_Name: Limestone_ProcCliffSet
+  m_EditorClassIdentifier: 
+  main: {fileID: 2100000, guid: 6464fcd3f0624cabbe25ebe8ea64166d, type: 2}
+  clip: {fileID: 2100000, guid: 591a45df5c9c43fd9bdce4bb49b2f2d9, type: 2}
