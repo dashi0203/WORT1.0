@@ -1,0 +1,74 @@
+// 云影：每帧生成主光源 cookie（云透射率），由 Wort.Rendering.SkyLighting 调度。
+// - 贴图在光照空间里定义（cookie 本身就是沿太阳方向投影的），内容在 uv 上无缝重复：
+//   噪声贴图按整数倍平铺、风的偏移也是 uv 平移，所以 cookie 平铺时没有接缝，太阳挪动整块位置也不会跳。
+// - 一个 texel = 一条光线：沿云层厚度积几步密度（Beer-Lambert），云心厚、边缘薄 → 半透明的软边。
+// - 再做一次小的分离模糊当半影。只乘在主光源（直射光）上，环境光不受影响。
+#pragma kernel Generate
+#pragma kernel BlurX
+#pragma kernel BlurY
+
+Texture3D<float4> _CloudNoise;     // r = 云形状 fbm，gb = 扭曲，a = 细节 fbm；三个方向都无缝
+SamplerState s_linear_repeat_sampler;
+
+RWTexture2D<float> _Raw;
+Texture2D<float> _RawIn;
+RWTexture2D<float> _BlurOut;
+RWTexture2D<float4> _Cookie;
+
+float4 _Res;      // x = 边长（texel），y = 1 / 边长
+float4 _Motion;   // xy = 风造成的 uv 偏移，z = 形状随时间的演化，w = 细节随时间的演化
+float4 _Shape;    // x = 覆盖率对应的阈值，y = 云边软度，z = 消光系数（已含路径长度），w = 步数
+float4 _Scale;    // x = 形状噪声在一张 cookie 里重复几次（整数），y = 细节重复几次（整数），z = 扭曲强度（uv），w = 细节强度
+float4 _Blur;     // x = 半影模糊 sigma（texel），y = 整体透射率（高空薄云 / 阴天淡出）
+
+[numthreads(8, 8, 1)]
+void Generate(uint3 id : SV_DispatchThreadID)
+{
+    float2 uv = (id.xy + 0.5) * _Res.y;
+    float2 p = uv + _Motion.xy;
+    float2 warp = _CloudNoise.SampleLevel(s_linear_repeat_sampler, float3(p, _Motion.z * 0.5 + 0.21), 0).gb - 0.5;
+    float2 q = p + warp * _Scale.z;
+
+    int steps = max(1, (int)_Shape.w);
+    float tau = 0;
+    for (int i = 0; i < steps; i++)
+    {
+        float h = (i + 0.5) / steps;   // 在云层里的相对高度
+        float n = _CloudNoise.SampleLevel(s_linear_repeat_sampler, float3(q * _Scale.x, _Motion.z + h * 0.08), 0).r;
+        float det = _CloudNoise.SampleLevel(s_linear_repeat_sampler, float3(q * _Scale.y + 0.37, _Motion.w + h * 0.3 + 0.5), 0).a;
+        float prof = 4 * h * (1 - h);   // 云层上下沿变薄
+        float d = pow(saturate((n - _Shape.x) / _Shape.y), 1.2) * (0.5 + 0.5 * prof);
+        d *= lerp(1, 0.35 + 1.1 * det, _Scale.w);   // 小尺度絮状细节
+        tau += d;
+    }
+    _Raw[id.xy] = exp(-tau * _Shape.z / steps);
+}
+
+float BlurAt(int2 c, int2 dir)
+{
+    float s = max(_Blur.x, 0.01);
+    int r = min(4, (int)ceil(s * 2.5));
+    int size = (int)_Res.x;
+    float sum = 0, wsum = 0;
+    for (int k = -r; k <= r; k++)
+    {
+        int2 t = (c + dir * k + size) % size;   // 无缝重复
+        float w = exp(-0.5 * (k / s) * (k / s));
+        sum += _RawIn[t] * w;
+        wsum += w;
+    }
+    return sum / wsum;
+}
+
+[numthreads(8, 8, 1)]
+void BlurX(uint3 id : SV_DispatchThreadID)
+{
+    _BlurOut[id.xy] = BlurAt((int2)id.xy, int2(1, 0));
+}
+
+[numthreads(8, 8, 1)]
+void BlurY(uint3 id : SV_DispatchThreadID)
+{
+    float v = BlurAt((int2)id.xy, int2(0, 1)) * _Blur.y;
+    _Cookie[id.xy] = float4(v, v, v, 1);
+}

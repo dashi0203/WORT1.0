@@ -1,8 +1,47 @@
 # Wort 开发记录
 
-最后更新：2026-11-12 · 分支 `claude/ecstatic-maxwell-8c9ue4`（当天各分支已全部合并到这里，默认分支 `claude/focused-galileo-rr85m8` 与它同步） · 最新提交见 `git log`
+最后更新：2026-11-13 · 分支 `claude/elegant-wright-xknxr5`（从默认分支 `claude/focused-galileo-rr85m8` 的 2d04fdf 开出） · 最新提交见 `git log`
 
 GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
+
+## 2026-11-13 云影 + 天气光照（SkyLighting）、地形着色器接 SSAO
+
+负责人：画面“差点什么”，参考死亡之门 / Tiny Glade 的画面处理；先做云影。要求：
+- 不要和影子叠加的假 cookie，要能和 shadowmap 合并、软的半透明噪声；在乎性能。
+- 缩小尺度（屏幕上常能看到几块云影）；普通晴天的云影要深（离线预览里选定的那一张：大块、深色、边缘软）。
+- 天气：大晴天（无云影）→ 普通晴天（有云影）→ 晴转阴（云影变密再淡出成阴天氛围），过程是一条曲线；没有自动曝光，阴天不能发黑。
+- 普通晴天里云量也要起伏，而且不是超平滑的：会在小几十秒内从 0.25 较快变到 0.4；还要按时段变化。
+- 天气代码先不接（老 WORT 有，之后再接）。云量、深度都可以再调，主要效果已认可。
+
+做法（离线预览用 numpy 模拟过，负责人看过对比图和过渡视频后认可）：
+- 云影 = 主光源 cookie，每帧由 `Assets/Wort/Rendering/Shaders/CloudShadow.compute` 生成（256²，一张覆盖 128m，光照空间里无缝重复）。
+  一个 texel 是一条光线：沿云层厚度积 5 步密度（Beer-Lambert）→ 云心深、边缘半透明；再做一次分离模糊当半影。
+  URP 把 cookie 乘在主光源颜色上 → 只削弱直射光，和 shadowmap 是同一个乘积里的两个因子：云影下树影变淡，不会叠加变黑。
+- 性能：启动时 CPU 烘焙一张 64³ 无缝 3D 噪声（RGBA32，1MB）；每帧三次 256² 的 compute dispatch（预计 0.05ms 以下）；每像素只多一次 cookie 采样。不加投影物体，不动 shadowmap。
+- `Wort.Rendering.SkyLighting`（`Assets/Wort/Scripts/Runtime/Rendering/SkyLighting.cs`）：
+  - 输入 `overcast`（0 大晴天，0.35 普通晴天，1 阴天；以后由天气系统写）和 `hour`（以后由昼夜系统写）。
+  - 曲线：覆盖率 0（≤0.08）→ 45%（0.35）→ 100%（≥0.9）；云厚随 overcast 增加；0.7 以后整体直射光淡出（高空薄云层）。
+  - 普通晴天这一档（两头权重为 0）再叠两层：时段偏移（早上 −0.13、午后 +0.05、傍晚 −0.18，云厚同步变化），
+    和随机过程（停 20–90 秒，然后 6–25 秒内缓入缓出变到新值，±0.1）。
+  - 没有自动曝光：环境光改成三色渐变（Trilight），晴天 / 阴天两套天空色插值，再把被云挡掉的直射光按 `scatterReturn` 加回来；阴天亮度约为晴天的 60%。
+  - 阴天降饱和度 28%：组件自己建一个隐藏的全局 Volume（优先级 100），只接管 Color Adjustments 的饱和度。
+  - 太阳的颜色 / 强度也由组件设（`driveSun`，可关）。运行时太阳物体按 128m 的整数倍跟着相机挪（图案不跳），以后太阳转动时云影滑动小。
+  - 编辑模式也运行（`runInEditMode`），会改动场景里的太阳和环境光；关掉组件全部还原。
+- 菜单 `Wort/Add Sky Lighting (Cloud Shadows)`：给当前场景加上组件；`Wort/Create Terrain Lab Scene` 新建场景时也自动加。
+- `Wort/TileSurface`、`Wort/TerrainBlend`：`GetMainLight` 换成带 `positionWS` 的重载（才会乘 cookie），加 `_LIGHT_COOKIES`；
+  加 `_SCREEN_SPACE_OCCLUSION`，环境光乘 SSAO（直射光按 Direct Lighting Strength 乘一部分）。之前这两个着色器收不到 SSAO，只有角色有。
+- `PC_Renderer` 的 SSAO（URP 模板自带，一直开着）：Intensity 0.4 → 0.9，Radius 0.3 → 0.6（按 1m 体素调），Falloff 100 → 300（相机高 80m）。
+
+**云端没有 Unity，以上都没编译过。** 需要负责人本地确认：
+1. 编译是否通过；菜单加组件后 Game 视图里有没有云影在移动。
+2. 相机移动时云影是否固定在地面上（如果跟着相机滑，说明 URP 的 cookie 映射和我设想的不同，告诉我）。
+3. 角色（URP Lit）和地形是否同时被云影遮住；树影进云影后是否变淡。
+4. 拖 `overcast` 从 0 到 1：阴天是否发黑、偏灰是否合适；SSAO 是否太重。
+
+未决 / 下一步：
+- 接老 WORT 的天气（天气 → 目标 overcast + 过渡时长）；接昼夜（hour、太阳方向和颜色）。
+- 半影目前是固定宽度；高度雾 / 越低越暗、调色（LUT）、植物随风摆动、环境粒子还没做。
+- 离线预览脚本没进仓库（只是给负责人看效果用）。
 
 ## 2026-11-12 地基外观线收工：下次从这里开始
 

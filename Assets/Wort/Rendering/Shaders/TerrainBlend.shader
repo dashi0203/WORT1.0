@@ -2,7 +2,7 @@
 // 路面贴图按顶点色 g（RoadSurface 的路面权重）先盖在泥土上，岩石再盖在最上面。路面交界公式与 TerrainTextures.MixRoad 相同。
 // - 投影：顶面用世界 xz，侧面用沿墙坐标和 y（按法线选），1m 一张；再取一组 2.3m 一张的坐标平均，减轻平铺重复；
 // - 交界：权重 + 两张贴图 alpha（高度）之差，高的先露出来，公式与 Wort.Generation.TerrainTextures.Mix 相同；
-// - 光照：主光漫反射 + 阴影 + 环境光（SH）。阴影投射 / 深度沿用 URP Lit 的 pass。
+// - 光照：主光漫反射 + 阴影 + 云影（主光源 cookie）+ 环境光（SH）× SSAO。阴影投射 / 深度沿用 URP Lit 的 pass。
 Shader "Wort/TerrainBlend"
 {
     Properties
@@ -31,6 +31,8 @@ Shader "Wort/TerrainBlend"
             #pragma multi_compile _ _CLUSTER_LIGHT_LOOP
             #pragma multi_compile _ _FORWARD_PLUS
             #pragma multi_compile_fog
+            #pragma multi_compile_fragment _ _LIGHT_COOKIES            // 主光源 cookie = 云影
+            #pragma multi_compile_fragment _ _SCREEN_SPACE_OCCLUSION   // URP SSAO（PC_Renderer 里的 Renderer Feature）
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
@@ -91,9 +93,11 @@ Shader "Wort/TerrainBlend"
                 float m = saturate((t - 0.5) / _EdgeWidth + 0.5);
                 half3 albedo = lerp(d.rgb, r.rgb, m);
 
-                Light light = GetMainLight(TransformWorldToShadowCoord(i.positionWS));
-                half3 diffuse = light.color * saturate(dot(n, light.direction)) * light.shadowAttenuation; // 主光源不乘 distanceAttenuation（方向光本来就是 1；见上面 Forward+ 的说明）
-                half3 color = albedo * (diffuse + SampleSH(n));
+                // 带 positionWS 的重载才会乘主光源 cookie（云影，Wort.Rendering.SkyLighting 生成）
+                Light light = GetMainLight(TransformWorldToShadowCoord(i.positionWS), i.positionWS, half4(1, 1, 1, 1));
+                AmbientOcclusionFactor ao = GetScreenSpaceAmbientOcclusion(GetNormalizedScreenSpaceUV(i.positionCS));
+                half3 diffuse = light.color * saturate(dot(n, light.direction)) * light.shadowAttenuation * ao.directAmbientOcclusion; // 主光源不乘 distanceAttenuation（方向光本来就是 1；见上面 Forward+ 的说明）
+                half3 color = albedo * (diffuse + SampleSH(n) * ao.indirectAmbientOcclusion);
                 color = MixFog(color, i.fog);
                 return half4(color, 1);
             }

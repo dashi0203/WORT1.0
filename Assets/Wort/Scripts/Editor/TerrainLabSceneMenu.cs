@@ -43,6 +43,9 @@ namespace Wort.Editor
             lightGo.transform.rotation = Quaternion.Euler(55f, -35f, 0f);
             RenderSettings.sun = light;
 
+            // 云影 + 天气光照（Wort.Rendering.SkyLighting）
+            SkyLightingEditor.Create();
+
             var volumeGo = new GameObject("Global Volume");
             var volume = volumeGo.AddComponent<Volume>();
             volume.isGlobal = true;

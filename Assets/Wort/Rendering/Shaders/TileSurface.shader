@@ -3,6 +3,7 @@
 // - 光照（负责人 2026-11-12：颜色贴图来自参考图，明暗是画进去的，不能再按法线完整打一遍光）：
 //   漫反射 = lerp(几何法线的 N·L, 法线贴图的 N·L, _DetailNormal)。几何法线只给整块面的明暗（随时间 / 方向变化），
 //   法线贴图只加一层弱细节，石块的体积主要靠颜色贴图本身。环境光用几何法线。
+//   主光源乘云影（cookie，Wort.Rendering.SkyLighting）；环境光乘 SSAO（直射光按 URP 的 Direct Lighting Strength 也乘一部分）。
 // - 投影：_Projection = 0 用网格 UV（崖壁、顶沿，跟着瓦片旋转）；1 = 世界 xz（顶面砂土，跨格连续，没有格间接缝），_WorldTile 米一张。
 // - 路面：全局遮罩 _WortGroundMask（R = 路面权重，由 TerrainLab 按 RoadSurface 烘焙，覆盖 _WortGroundMaskRect = (x0, z0, 宽, 深) 的世界范围），
 //   只在 _RoadOn = 1 的材质（顶面砂土）朝上的面生效；交界公式与 Wort.Generation.TerrainTextures.MixRoad 相同（路面贴图 A = 高度，砂土 A = 高度，没有时取 0.5）。
@@ -51,6 +52,8 @@ Shader "Wort/TileSurface"
             #pragma multi_compile _ _CLUSTER_LIGHT_LOOP
             #pragma multi_compile _ _FORWARD_PLUS
             #pragma multi_compile_fog
+            #pragma multi_compile_fragment _ _LIGHT_COOKIES            // 主光源 cookie = 云影
+            #pragma multi_compile_fragment _ _SCREEN_SPACE_OCCLUSION   // URP SSAO（PC_Renderer 里的 Renderer Feature）
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
@@ -152,10 +155,12 @@ Shader "Wort/TileSurface"
                     }
                 }
 
-                Light light = GetMainLight(TransformWorldToShadowCoord(i.positionWS));
+                // 带 positionWS 的重载才会乘主光源 cookie（云影，Wort.Rendering.SkyLighting 生成）
+                Light light = GetMainLight(TransformWorldToShadowCoord(i.positionWS), i.positionWS, half4(1, 1, 1, 1));
+                AmbientOcclusionFactor ao = GetScreenSpaceAmbientOcclusion(GetNormalizedScreenSpaceUV(i.positionCS));
                 float ndl = lerp(saturate(dot(ng, light.direction)), saturate(dot(nm, light.direction)), _DetailNormal);
-                half3 diffuse = light.color * ndl * light.shadowAttenuation; // 主光源不乘 distanceAttenuation（方向光本来就是 1；见上面 Forward+ 的说明）
-                half3 color = albedo * (diffuse + SampleSH(ng)) * lipShade;
+                half3 diffuse = light.color * ndl * light.shadowAttenuation * ao.directAmbientOcclusion; // 主光源不乘 distanceAttenuation（方向光本来就是 1；见上面 Forward+ 的说明）
+                half3 color = albedo * (diffuse + SampleSH(ng) * ao.indirectAmbientOcclusion) * lipShade;
                 color = MixFog(color, i.fog);
                 return half4(color, 1);
             }
