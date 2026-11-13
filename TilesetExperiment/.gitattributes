@@ -1,0 +1,2 @@
+# Store experiment PNG files as ordinary Git binaries in this directory only.
+*.png -filter -diff -merge -text
