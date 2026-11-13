@@ -61,9 +61,9 @@ namespace Wort.Editor
                 P("desaturate", "饱和度降低");
                 P("sweepTime", "进出过渡用时（秒）");
                 P("eagleWave", "圆边波浪幅度");
-                P("eagleDissolve", "边缘溶解带宽（米）");
+                P("eagleRagged", "圆边参差深度（米）");
                 P("eagleCutJitter", "断口高低起伏（米）");
-                P("capDilate", "黑色横切面外扩（米）");
+                P("capOutset", "黑色横截面外扩（米）");
                 P("rimEnabled", "蓝色外扩边");
                 P("rimColor", "外扩边颜色");
                 P("rimMinPixels", "外扩边最细（像素）");

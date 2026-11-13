@@ -12,7 +12,7 @@ float4 _WortHoleEdge;     // x = 洞里黑色区域边缘往地面啃进去多�
 float4 _WortCutParams;    // x = 裁切高度，y = 裁切高度的起伏幅度（米），z = 时间，w = 截面外扩（米，盖住侧墙鼓包）
 float _WortCutOn;         // 1 = 裁切开（默认 0：场景里没有 SpatialView 时什么都不裁）
 float4 _WortCutCircle;    // 裁切范围（世界水平圆，和遮挡虚化同一套波浪 + 溶解）：xy = 圆心 xz，z = 半径（≤ 0 = 不限范围），w = 波浪幅度（比例）
-float4 _WortCutStyle;     // x = 边缘溶解带宽（米），y / z = 蓝色外扩边最细 / 最粗（像素），w = 外扩边开关
+float4 _WortCutStyle;     // x = 圆边参差的深度（米：边界往里不规则地缩进多少），y / z = 蓝色外扩边最细 / 最粗（像素），w = 外扩边开关
 float4 _WortCutRimColor;  // rgb = 外扩边颜色（线性，可以大于 1）
 float4 _WortEagleDim;     // 鹰眼视觉的反选区压暗：x = 比裁切圆再大多少（米），y = 压暗程度，z = 边缘软化宽度（米），w = 过渡（0–1）
 float4 _WortBottomParams; // x = 最低一层的高度，y = 渐变高度（米），z = 最多暗多少，w = 开关
@@ -54,19 +54,27 @@ float WortCutHeight(float2 xz)
     return _WortCutParams.x + _WortCutParams.y * (n * 2 - 1);
 }
 
-// 鹰眼视觉的裁切量（米，> 0 = 该裁）：在圆内（波浪边）且高于裁切高度。两项取小 = 两个条件同时满足
-float WortCutSigned(float3 P)
+// 鹰眼视觉的圆形范围（米，> 0 = 在圈内）：波浪边 + 连续的参差噪声（往里缩 0 到 _WortCutStyle.x 米）。
+// 地形裁切、黑色横截面、蓝色外扩边都用这一个函数，三者的边界完全对齐。
+float WortCutCircleSigned(float2 xz)
 {
     float R = _WortCutCircle.z;
-    if (R <= 0) return P.y - WortCutHeight(P.xz);
-    float2 d = P.xz - _WortCutCircle.xy;
+    float2 d = xz - _WortCutCircle.xy;
     float dist = length(d);
-    // 离圆很远（超过最大波浪 + 溶解带）：直接按“圆外”算，省掉 atan2 / sin / 噪声（画面上大部分像素走这里）
-    float rMax = R * (1 + _WortCutCircle.w) + _WortCutStyle.x;
-    if (dist > rMax + 0.5) return rMax - dist;
-    float r = R * WortWave(atan2(d.y, d.x), _WortCutParams.z, _WortCutCircle.w);
-    float inCircle = r - dist;
-    if (inCircle < -_WortCutStyle.x - 0.05) return inCircle;   // 圆外：不用算裁切高度
+    float rMax = R * (1 + _WortCutCircle.w);
+    if (dist > rMax + 0.5) return rMax - dist;   // 离圆远：不算角度和噪声（画面上大部分像素走这里）
+    float t = _WortCutParams.z;
+    float r = R * WortWave(atan2(d.y, d.x), t, _WortCutCircle.w);
+    float rag = WortNoise2(xz * 2.2 + t * 0.25) * 0.65 + WortNoise2(xz * 6.1 - t * 0.4) * 0.35;
+    return r - _WortCutStyle.x * rag - dist;
+}
+
+// 鹰眼视觉的裁切量（米，> 0 = 该裁）：在圈内且高于裁切高度。两项取小 = 两个条件同时满足
+float WortCutSigned(float3 P)
+{
+    if (_WortCutCircle.z <= 0) return P.y - WortCutHeight(P.xz);
+    float inCircle = WortCutCircleSigned(P.xz);
+    if (inCircle < -0.3) return inCircle;    // 圈外较远：不用算裁切高度（0.3m 以内要算，否则圈外比裁切面低的地面也会描上蓝边）
     return min(P.y - WortCutHeight(P.xz), inCircle);
 }
 
@@ -137,8 +145,7 @@ float WortHeightClip(float3 P)
 {
     if (_WortCutOn < 0.5) return -1e6;
     float s = WortCutSigned(P);
-    float band = max(_WortCutStyle.x, 1e-3);
-    if (s > 0) clip(band * WortDissolveNoise(P.xz, _WortCutParams.z) - s);   // s 超过 band × 噪声 才裁 → 边缘一圈碎碎地溶解
+    clip(-s);   // 边界本身已经是参差的连续曲线（不再碎点溶解），横截面和蓝边用同一条边界
     return s;
 }
 
@@ -150,7 +157,7 @@ float WortSpaceClip(float3 P)
     return s;
 }
 
-// 蓝色外扩边：裁切边界外侧留下的像素，离边界 3–5 像素以内（宽度沿边浮动）涂成边色；溶解带里留下的碎块也算边
+// 蓝色外扩边：裁切边界外侧留下的像素，离边界 3–5 像素以内（宽度沿边浮动）涂成边色
 half3 WortCutRim(half3 color, float s, float3 P)
 {
     if (_WortCutOn < 0.5 || _WortCutStyle.w < 0.5 || s < -1e5) return color;

@@ -1,5 +1,5 @@
 // 高度裁切的横切面（鹰眼视觉 / 以后的室内地下裁切；鹰眼视觉时只在圆形范围内）：裁切高度处一块水平面，按地形高度场判断“这里是不是实心的”，
-// 实心处画黑色，其余丢掉。边缘：比格线往外扩 _WortCutParams.w（盖住侧墙鼓包）并按噪声溶解；裁切高度的起伏和地形裁切用同一个函数，截面和断口对上。
+// 实心处画黑色，其余丢掉。圆边和地形裁切用同一个函数（WortCutCircleSigned），格线处只外扩一点点盖接缝，截面和断口、蓝边对齐。
 // 地形网格是空心的（背面 / 北面不全），不能用“画背面”的做法，所以用高度场。由 Wort.Rendering.SpatialView 生成平面并开关。
 Shader "Wort/CutCap"
 {
@@ -25,15 +25,10 @@ Shader "Wort/CutCap"
         {
             if (_WortCutOn < 0.5 || _WortHeightRect.z < 1) { clip(-1); return; }
             // 先判断圆形范围（便宜），圆外直接丢掉，不做后面的高度场查询
-            if (_WortCutCircle.z > 0)
-            {
-                float2 dc = P.xz - _WortCutCircle.xy;
-                float r = _WortCutCircle.z * WortWave(atan2(dc.y, dc.x), _WortCutParams.z, _WortCutCircle.w);
-                clip(r - length(dc) - max(_WortCutStyle.x, 1e-3) * WortDissolveNoise(P.xz, _WortCutParams.z) * 0.5);
-            }
+            if (_WortCutCircle.z > 0) clip(WortCutCircleSigned(P.xz));   // 和地形裁切同一条圆边
             float2 org = _WortHeightRect.xy;
             int2 c0 = (int2)floor(P.xz - org);
-            float dil = max(_WortCutParams.w, 0.02);
+            float dil = max(_WortCutParams.w, 0.005);
             float cutH = WortCutHeight(P.xz);   // 一个像素只算一次（起伏很缓，邻格用同一个值）
             float s = 0;
             [unroll] for (int dz = -1; dz <= 1; dz++)
@@ -42,11 +37,9 @@ Shader "Wort/CutCap"
                 int2 c = c0 + int2(dx, dz);
                 float2 bmin = org + float2(c);
                 float2 q = clamp(P.xz, bmin, bmin + 1);
-                if (WortCellHeight(c, q) > cutH)
-                    s = max(s, 1 - smoothstep(dil * 0.4, dil, length(q - P.xz)));
+                if (length(q - P.xz) <= dil && WortCellHeight(c, q) > cutH) s = 1;
             }
-            float n = WortNoise2(P.xz * 6 + _WortCutParams.z * 0.4) * 0.7 + WortNoise2(P.xz * 17) * 0.3;
-            clip(s - n * 0.9 - 0.05);
+            clip(s - 0.5);   // 实心格往外 _WortCutParams.w（默认 0.06m，只盖接缝，不伸出墙面）
         }
         ENDHLSL
         Pass

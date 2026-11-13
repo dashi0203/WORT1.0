@@ -79,8 +79,8 @@ namespace Wort.Rendering
         [Range(0.05f, 3f)] public float eagleDimSoft = 0.6f;
         [Tooltip("圆边波浪幅度（半径的比例，和遮挡虚化同一套）")]
         [Range(0f, 0.4f)] public float eagleWave = 0.12f;
-        [Tooltip("裁切边缘的溶解带宽（米）：边界外一圈碎碎地留下")]
-        [Range(0f, 1.5f)] public float eagleDissolve = 0.35f;
+        [Tooltip("圆边参差的深度（米）：边界往里不规则地缩进多少（地形、横截面、蓝边共用同一条边界）")]
+        [Range(0f, 1.5f)] public float eagleRagged = 0.35f;
         [Tooltip("裁切高度的起伏幅度（米）：墙上的断口高低起伏")]
         [Range(0f, 0.6f)] public float eagleCutJitter = 0.18f;
         [Tooltip("蓝色外扩边")]
@@ -90,8 +90,8 @@ namespace Wort.Rendering
         [Tooltip("外扩边宽度范围（像素），沿边随噪声在两者之间浮动")]
         [Range(0f, 12f)] public float rimMinPixels = 3f;
         [Range(0f, 12f)] public float rimMaxPixels = 5f;
-        [Tooltip("横切面比格线往外扩多少（米，盖住侧墙鼓包，同时是边缘溶解带）")]
-        [Range(0.02f, 0.6f)] public float capDilate = 0.32f;
+        [Tooltip("黑色横截面比格线往外扩多少（米）：只盖住接缝，太大会在墙线外多出一条黑边")]
+        [Range(0f, 0.4f)] public float capOutset = 0.06f;
 
         // —— 主角脚下薄雾 ——
         public bool fog = true;
@@ -204,9 +204,9 @@ namespace Wort.Rendering
             float cutY = feetY + cutAbove + (1f - e) * 6f;   // 裁切面从上往下落，同时圆从脚下展开
             Vector3 fp = player != null ? player.position : Vector3.zero;
             Shader.SetGlobalFloat(IdCutOn, cutOn ? 1f : 0f);
-            Shader.SetGlobalVector(IdCutParams, new Vector4(cutY, eagleCutJitter, time, capDilate));
+            Shader.SetGlobalVector(IdCutParams, new Vector4(cutY, eagleCutJitter, time, capOutset));
             Shader.SetGlobalVector(IdCutCircle, new Vector4(fp.x, fp.z, eagleRadius > 0f ? Mathf.Max(0.05f, eagleRadius * e) : 0f, eagleWave));
-            Shader.SetGlobalVector(IdCutStyle, new Vector4(eagleDissolve, rimMinPixels, Mathf.Max(rimMinPixels, rimMaxPixels), rimEnabled ? 1 : 0));
+            Shader.SetGlobalVector(IdCutStyle, new Vector4(eagleRagged, rimMinPixels, Mathf.Max(rimMinPixels, rimMaxPixels), rimEnabled ? 1 : 0));
             Color rl = rimColor.linear;
             Shader.SetGlobalVector(IdCutRim, new Vector4(rl.r, rl.g, rl.b, 1));
             Shader.SetGlobalVector(IdEagleDim, new Vector4(eagleDimExtra, eagleDim, eagleDimSoft, cutOn ? e : 0f));
@@ -309,7 +309,7 @@ namespace Wort.Rendering
             if (!capGo.activeSelf) capGo.SetActive(true);
             // 平面只铺到裁切圆（+ 波浪和外扩的余量），不铺满屏幕：横切面着色器每像素要查 9 格高度场，铺满屏幕很贵
             Vector3 f = player != null ? player.position : (cam != null ? cam.transform.position : Vector3.zero);
-            float half = eagleRadius > 0f ? eagleRadius * (1f + eagleWave) + eagleDissolve + capDilate + 0.5f : 60f;
+            float half = eagleRadius > 0f ? eagleRadius * (1f + eagleWave) + eagleRagged + capOutset + 0.5f : 60f;
             capGo.transform.position = new Vector3(f.x, 0f, f.z);
             capGo.transform.localScale = new Vector3(half, 1f, half);
         }
