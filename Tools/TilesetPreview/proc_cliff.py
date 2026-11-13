@@ -239,6 +239,7 @@ def render(biome, cpath, npath, trpath, trnpath):
     ao = 1 - 0.35 * np.clip(1 + se / 0.05, 0, 1) * (1 - qe) * (toprock is not None)      # 泥土边在顶岩上的暗边
     D2 = D - (lr - 0.35) * 1.4 + (vnoise2(xi, zi, 9, 0.07) - 0.5) * 0.6                   # 倒角：跟着顶岩明暗 + 碎边
     t = np.clip(1 - D2, 0, 1); t = t * t * (3 - 2 * t)
+    t = np.maximum(t, np.clip(1 - dm / 0.035, 0, 1))     # 贴着折线必须倾到位，与墙顶对上
     dl = np.sqrt(dirx ** 2 + dirz ** 2) + 1e-9
     base = Nr * (1 - qe[:, None]) + Ne[idx] * qe[:, None]
     nb = base + np.c_[dirx / dl, np.zeros(k_), dirz / dl] * t[:, None]
@@ -249,13 +250,19 @@ def render(biome, cpath, npath, trpath, trnpath):
     wS = BEV0 + (BEV1 - BEV0) * (0.65 * vnoise(x, 21, 0.55) + 0.35 * vnoise(x, 41, 0.13))
     wS = (wS + 0.30 * np.clip((vnoise(x, 61, 0.8) - 0.72) / 0.28, 0, 1)) * 0.6
     tw = np.clip(1 - (yt_ - y) / wS - (lc - 0.35) * 0.8, 0, 1); tw = tw * tw * (3 - 2 * tw)
+    tw = np.maximum(tw, np.clip(1 - (yt_ - y) / 0.035, 0, 1))
     Nf = Nw + tw[:, None] * np.array([0, 1.0, 0]); Nf /= np.linalg.norm(Nf, axis=1, keepdims=True)
     # 崖壁顶部融合顶岩（沼泽 / 森林即泥土）：顶面倒角是顶岩颜色，墙顶也渐变成顶岩，石头接石头，不夹泥土
     tsrc, tnsrc, tper = (toprock, trn, TR_PERIOD) if toprock is not None else (earth, enm, EARTH_P)
-    trw = samp(tsrc, uu / tper, y / tper)
+    # 展开取样：把墙面当作顶面越过折线的延续（正面：往南；侧面：往东 / 西），石块能从顶面绕到墙上，折线处贴图连续
+    sgn = np.sign(en.reshape(-1, 3)[:, 0])
+    edge = np.where(sgn > 0, np.floor(x), np.ceil(x))
+    su = np.where(kd == 4, edge + sgn * (yt_ - y), x)
+    sv = np.where(kd == 4, z, z - (yt_ - y))
+    trw = samp(tsrc, su / tper, sv / tper)
     # 墙顶融合区也换成顶岩（沼泽 / 森林即泥土）的法线：贴在竖面上，切线 +x、副切线 +y
     if tnsrc is not None:
-        tnw = samp(tnsrc, uu / tper, y / tper); Ntw = np.c_[tnw[:, 0], tnw[:, 1], -tnw[:, 2]]
+        tnw = samp(tnsrc, su / tper, sv / tper); Ntw = np.c_[tnw[:, 0], tnw[:, 1], -tnw[:, 2]]
     else:
         Ntw = np.tile([0.0, 0.0, -1.0], (n, 1))
     lt = trw @ [0.299, 0.587, 0.114]
