@@ -377,6 +377,12 @@ namespace Wort.Generation
                 }
                 // 坡顶那一端接台地（不是同一条坡道往上延续）：鼓出量在最后 0.35m 收为 0，和台地正面的格角对上
                 bool upEndClosed = SlopeAt(map, x + ux, z + uz) != up;
+                // 例外：坡顶那格是同高的体素、它这一侧也露出（侧墙和坡道侧墙在同一个竖直平面里接着走）——
+                // 那格的侧墙在这一端照常鼓出（公式相同：Bulge × EdgeTaper(y − 墙脚)），坡道这边也不收，两面对上，不留竖缝
+                //（负责人 2026-11-13 截图：一格高的体素接坡道，接口处透光）
+                if (upEndClosed && sideways && SlopeAt(map, x + ux, z + uz) < 0 && HeightAt(map, x + ux, z + uz) == h + 1 &&
+                    EdgeH(map, x + ux + Grid.DX4[d], z + uz + Grid.DZ4[d], (d + 2) & 3) < h + 1)
+                    upEndClosed = false;
                 double Off(double y, double t, double px, double pz)
                 {
                     if (!bulge) return 0;
