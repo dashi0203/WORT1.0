@@ -1,15 +1,13 @@
 """
-程序化崖壁预览（原型，不开 Unity）：体素高度场 → 游戏相机（正交俯视 + 纵向错切，屏幕 v = z + y）逐像素求交渲染。
+程序化崖壁预览（原型，不开 Unity）：体素高度场 → 生成网格 → 游戏相机（正交俯视 + 纵向错切，屏幕 v = z + y）光栅化。
+网格就是以后 Unity 里 CliffMesher 要生成的东西（这里用 Python 先定形）。
 
-几何（只画镜头看得见的：顶面 + 朝南竖面）：
-- 朝南竖面 = 平面，UV 按世界坐标（u = x，v = y，1m 一张），相邻格、上下层连续。
-- 顶沿倒角：露边的顶面边缘按噪声切一条 45° 倒角（宽 CH0–CH1，只往里收）。南边倒角迎光成亮线；
-  北边倒角和视线平行，看到的是顶面轮廓往里收；东西边倒角斜着露出一点。
-- 两头外凸：朝南竖面在一段崖的东西两头往外延伸，宽度随高度变化（顶上 0，往下最多 BULGE），只在人脚下方。
-着色（对应 Unity 的 Wort/TileSurface）：
-- 崖壁颜色 + 无缝法线（权重 1）；顶面泥土贴图按世界 xz；暗部提亮 0.08（sRGB）。
-- 崖脚往上 FOOT 内按高度差融合泥土；崖顶往下 TOP 内同样融合（交界跟着石块明暗走，不是直线）。
-- 阴影：沿光线方向在体素里步进（近似 Unity 的阴影，看不见的北 / 东 / 西面在 Unity 里只投影不渲染）。
+只生成镜头看得见的面（顶面 + 朝南竖面），看得见的体素露边一律往外鼓（负责人 2026-11-13，超出碰撞格）：
+- 侧面鼓起：只鼓“顶层”和“前排”体素的东 / 西侧面（顶层还有北边轮廓），被挡住的不生成；顶面 / 正面平面本身不鼓。
+- 贴图沿轮廓连续：正面 u = x，侧面 u 从正面转角接着走。
+- 正面：平面，UV 按世界坐标（u = x，v = y，1m 一张）连续；东西两头整个高度往外鼓。
+- 北 / 东 / 西的竖面看不见，不生成（Unity 里另做只投影的面）。
+着色（对应 Wort/TileSurface）：崖壁颜色 + 无缝法线（权重 1），顶面泥土按世界 xz，暗部提亮 0.08，崖脚 / 崖顶按高度差融合泥土，阴影按体素近似。
 
 用法：python3 proc_cliff.py <泥土贴图目录(含 OliveStrata.png 等)> <输出.png> [每米像素=48]
 """
@@ -23,144 +21,184 @@ X = REPO / 'TilesetExperiment'
 GROUND = Path(sys.argv[1]); OUT = sys.argv[2]
 PPM = int(sys.argv[3]) if len(sys.argv) > 3 else 48
 SETS = [('OliveStrata', 'IMG_9471'), ('RustCrag', 'IMG_9473'), ('Limestone', 'IMG_9485')]
-CH0, CH1 = 0.04, 0.14      # 倒角宽度范围（m）
-BULGE = 0.35               # 两头最大外凸（m）
-FOOT, TOP = 0.35, 0.22     # 崖脚 / 崖顶融合高度（m）
+SUB = 4                    # 每格顶面细分
+FOOT, TOP = 0.35, 0.22
 LIFT = 0.08
-L = np.array([0.329, 0.819, -0.470]); L /= np.linalg.norm(L)   # 指向光源（TerrainLab 的平行光）
+L = np.array([0.329, 0.819, -0.470]); L /= np.linalg.norm(L)
 
-# 测试地：x 向东，z 向北；数值 = 层数
 H = np.zeros((18, 13), int)
-H[1:5, 6:10] = 4            # 4×4×4 方块
-H[7:15, 5:11] = 2           # 台地
-H[10:15, 8:11] = 3          # 台地上再高一层（凹角）
-H[7:10, 2:5] = 1            # 一层高的小台
-H[12:17, 1:3] = 1           # 一层高的长条
+H[1:5, 6:10] = 4
+H[7:15, 5:11] = 2
+H[10:15, 8:11] = 3
+H[7:10, 2:5] = 1
+H[12:17, 1:3] = 1
 NX, NZ = H.shape
 YMAX = H.max()
 
-def h_at(ix, iz):
-    ok = (ix >= 0) & (ix < NX) & (iz >= 0) & (iz < NZ)
-    return np.where(ok, H[np.clip(ix, 0, NX - 1), np.clip(iz, 0, NZ - 1)], 0)
+def hc(ix, iz):
+    return H[ix, iz] if 0 <= ix < NX and 0 <= iz < NZ else 0
 
-def vnoise(t, seed):  # 一维值噪声，周期约 0.35m，0..1
-    t = t / 0.35 + seed * 17.3
+def vnoise(t, seed, per=0.45):
+    t = np.asarray(t, float) / per + seed * 17.3
     i = np.floor(t); f = t - i; f = f * f * (3 - 2 * f)
-    def r(k): return (np.sin(k * 12.9898 + seed * 78.233) * 43758.5453) % 1.0
+    r = lambda k: (np.sin(k * 12.9898 + seed * 78.233) * 43758.5453) % 1.0
     return r(i) * (1 - f) + r(i + 1) * f
 
-def ch(t, seed): return CH0 + (CH1 - CH0) * vnoise(t, seed)
 
-def load(p, linear=False):
-    a = np.asarray(Image.open(p).convert('RGB'), np.float32) / 255
-    return a
+# ---------- 网格 ----------
+# 鼓起规则（负责人 2026-11-13）：只有“看得见的体素层”的侧面往外鼓——
+#   顶层（这一列最上面那块体素）的东 / 西 / 北侧面，和前排（南面露出的体素）的东 / 西侧面。
+#   顶面、正面这两张平面本身不鼓；顶层的南侧就是正面，不鼓。被挡住的体素侧面不生成（Unity 里另做只投影的平面）。
+#   北侧面朝北看不见，只把顶面北边跟着推出去（轮廓）。
+# 贴图沿轮廓连续：正面 u = x；东侧 u = 东边 x + (z − 正面 z)，西侧 u = 西边 x − (z − 正面 z)，转角处接上；v = y。
+BUL0, BUL1 = 0.06, 0.30     # 侧面鼓出量（m）
 
+def vnoise2(a, b, seed, per=0.4):
+    a = np.asarray(a, float) / per + seed * 7.1; b = np.asarray(b, float) / per - seed * 3.7
+    i, j = np.floor(a), np.floor(b); fa, fb = a - i, b - j
+    fa = fa * fa * (3 - 2 * fa); fb = fb * fb * (3 - 2 * fb)
+    r = lambda p, q: (np.sin(p * 12.9898 + q * 78.233 + seed * 4.1) * 43758.5453) % 1.0
+    return (r(i, j) * (1 - fa) + r(i + 1, j) * fa) * (1 - fb) + (r(i, j + 1) * (1 - fa) + r(i + 1, j + 1) * fa) * fb
+
+def bulge(side, y, z):     # 东(1) / 西(-1) 侧面在 (y, z) 处往外鼓多少；只看世界坐标，相邻面自动连续
+    return BUL0 + (BUL1 - BUL0) * vnoise2(y, z, 3 if side > 0 else 4)
+
+def bulge_n(y, x):         # 北侧（只用于顶面北边轮廓）
+    return BUL0 + (BUL1 - BUL0) * vnoise2(y, x, 2)
+
+tris = []   # (P 3×3, kind, extra, U 3)  kind: 1 顶面 2 正面 4 侧面；extra = (崖脚高, 崖顶高, 法线…)
+def quad(a, b, c, d, kind, extra=(0, 0), U=None):
+    Ua = U if U is not None else (0, 0, 0, 0)
+    tris.append((np.array([a, b, c], float), kind, extra, np.array([Ua[0], Ua[1], Ua[2]], float)))
+    tris.append((np.array([a, c, d], float), kind, extra, np.array([Ua[0], Ua[2], Ua[3]], float)))
+
+def front_z(ix, iz):       # 这一列往南数，正面在哪个 z（用来让侧面 u 从正面转角接上）
+    h = hc(ix, iz); k = iz
+    while k > 0 and hc(ix, k - 1) >= h: k -= 1
+    return float(k)
+
+def top_vertex(ix, iz, i, j, h):
+    x = ix + i / SUB; z = iz + j / SUB
+    dx = dz = 0.0
+    if j == SUB and hc(ix, iz + 1) < h: dz += bulge_n(h, x)
+    if i == SUB and hc(ix + 1, iz) < h: dx += bulge(1, h, z)
+    if i == 0 and hc(ix - 1, iz) < h: dx -= bulge(-1, h, z)
+    return [x + dx, h, z + dz]
+
+for ix in range(NX):
+    for iz in range(NZ):
+        h = H[ix, iz]
+        if h == 0: continue
+        V = [[top_vertex(ix, iz, i, j, h) for i in range(SUB + 1)] for j in range(SUB + 1)]
+        for j in range(SUB):
+            for i in range(SUB):
+                quad(V[j][i], V[j][i + 1], V[j + 1][i + 1], V[j + 1][i], 1)
+        hs = hc(ix, iz - 1)
+        front = hs < h
+        # 正面：平面 z = iz，从 hs 到 h；东西两头若露边，端点跟着侧面鼓出量走
+        if front:
+            ys = np.linspace(hs, h, int((h - hs) * SUB) + 1)
+            def xe(side, y):
+                edge = ix + (1.0 if side > 0 else 0.0)
+                return edge + side * bulge(side, y, iz) if hc(ix + side, iz) < y + 1e-6 and hc(ix + side, iz) < h else edge
+            for k in range(len(ys) - 1):
+                y0, y1 = ys[k], ys[k + 1]
+                a_, b_, c_, d_ = [xe(-1, y0), y0, iz], [xe(1, y0), y0, iz], [xe(1, y1), y1, iz], [xe(-1, y1), y1, iz]
+                quad(a_, b_, c_, d_, 2, (hs, h), (a_[0], b_[0], c_[0], d_[0]))
+        # 东 / 西侧面：前排整个高度、顶层最上 1m；只在旁边这一格更低的高度上
+        fz = front_z(ix, iz)
+        for side in (1, -1):
+            hb = hc(ix + side, iz)
+            if hb >= h: continue
+            lo = hb if front else max(hb, h - 1)
+            ys = np.linspace(lo, h, int(round((h - lo) * SUB)) + 1)
+            zs = [iz + j / SUB for j in range(SUB + 1)]
+            edge = ix + (1.0 if side > 0 else 0.0)
+            G = [[[edge + side * bulge(side, y_, z_), y_, z_] for z_ in zs] for y_ in ys]
+            for r in range(len(ys) - 1):
+                for c in range(SUB):
+                    a_, b_, c2, d_ = G[r][c], G[r][c + 1], G[r + 1][c + 1], G[r + 1][c]
+                    n = np.cross(np.subtract(b_, a_), np.subtract(d_, a_)); n = n / (np.linalg.norm(n) + 1e-12)
+                    if n[0] * side < 0: n = -n
+                    U = [edge + side * (q[2] - fz) for q in (a_, b_, c2, d_)]
+                    quad(a_, b_, c2, d_, 4, (hb, h, *n), U)
+print('三角形', len(tris))
+
+# ---------- 光栅化 + 着色 ----------
+def load(p): return np.asarray(Image.open(p).convert('RGB'), np.float32) / 255
 def samp(t, u, v):
     th, tw = t.shape[:2]
     return t[(th - 1 - np.floor(v * th).astype(int)) % th, np.floor(u * tw).astype(int) % tw]
 
+def shadow(P):
+    sh = np.ones(len(P)); p0 = P + np.array([0, 0.02, 0])
+    for s in range(1, 140):
+        q = p0 + L * (s * 0.04)
+        ix = np.floor(q[:, 0]).astype(int); iz = np.floor(q[:, 2]).astype(int)
+        ok = (ix >= 0) & (ix < NX) & (iz >= 0) & (iz < NZ)
+        hh = np.where(ok, H[np.clip(ix, 0, NX - 1), np.clip(iz, 0, NZ - 1)], 0)
+        sh[q[:, 1] < hh - 1e-4] = 0
+    return sh
+
 def render(biome, stem):
     cliff = load(X / f'{stem}_BaseColor.png'); nmap = load(X / f'{stem}_Normal_Periodic512.png') * 2 - 1
     earth = load(GROUND / f'{biome}.png')
+    u0, v0 = -1.0, -1.0
     W = int((NX + 2) * PPM); Hh = int((NZ + YMAX + 2) * PPM)
-    px, py = np.meshgrid(np.arange(W) + 0.5, np.arange(Hh) + 0.5)
-    x = (px / PPM - 1).ravel(); v = ((Hh - py) / PPM - 1).ravel()
+    gx, gy = np.meshgrid(np.arange(W) + 0.5, np.arange(Hh) + 0.5)
+    wx = gx / PPM + u0; wz = (Hh - gy) / PPM + v0
+    depth = (0 - wz).astype(np.float64)          # 深度 = y − z（越大越靠近镜头）；地面 y = 0
+    kind = np.zeros((Hh, W), np.int8); hx = wx.copy(); hy = np.zeros_like(wx); hz = wz.copy()
+    eb = np.zeros_like(wx); et = np.zeros_like(wx); en = np.zeros((Hh, W, 3))
+    hu = wx.copy()
+    for P, k, extra, U in tris:
+        su = P[:, 0]; sv = P[:, 2] + P[:, 1]
+        px = (su - u0) * PPM; py = Hh - (sv - v0) * PPM
+        xa, xb = int(max(0, math.floor(px.min()))), int(min(W - 1, math.ceil(px.max())))
+        ya, yb = int(max(0, math.floor(py.min()))), int(min(Hh - 1, math.ceil(py.max())))
+        if xa > xb or ya > yb: continue
+        d = (px[1] - px[0]) * (py[2] - py[0]) - (py[1] - py[0]) * (px[2] - px[0])
+        if abs(d) < 1e-12: continue
+        X_, Y_ = np.meshgrid(np.arange(xa, xb + 1) + 0.5, np.arange(ya, yb + 1) + 0.5)
+        w1 = ((X_ - px[0]) * (py[2] - py[0]) - (Y_ - py[0]) * (px[2] - px[0])) / d
+        w2 = ((px[1] - px[0]) * (Y_ - py[0]) - (py[1] - py[0]) * (X_ - px[0])) / d
+        w0 = 1 - w1 - w2
+        ins = (w0 >= -1e-6) & (w1 >= -1e-6) & (w2 >= -1e-6)
+        wp = [w0, w1, w2]
+        Px = sum(wp[i] * P[i, 0] for i in range(3)); Py = sum(wp[i] * P[i, 1] for i in range(3)); Pz = sum(wp[i] * P[i, 2] for i in range(3))
+        dep = Py - Pz + (0.002 if k == 3 else 0)
+        sl = (slice(ya, yb + 1), slice(xa, xb + 1))
+        ok = ins & (dep > depth[sl])
+        if not ok.any(): continue
+        depth[sl][ok] = dep[ok]; kind[sl][ok] = k
+        hx[sl][ok] = Px[ok]; hy[sl][ok] = Py[ok]; hz[sl][ok] = Pz[ok]; eb[sl][ok] = extra[0]; et[sl][ok] = extra[1]
+        if len(extra) > 2: en[sl][ok] = extra[2:]
+        hu[sl][ok] = sum(wp[i] * U[i] for i in range(3))[ok]
+    x, y, z = hx.ravel(), hy.ravel(), hz.ravel(); kd = kind.ravel(); yb_ = eb.ravel(); yt_ = et.ravel()
     n = len(x)
-    kind = np.zeros(n, int)          # 0 背景 1 顶面 2 南面 3 南倒角 4 东西倒角
-    hit = np.zeros((n, 3)); yb = np.zeros(n)   # yb = 南面所在崖的崖脚高度
-    htop = np.zeros(n)
-    ix = np.floor(x).astype(int)
-    z = v - (YMAX + 0.01); iz = np.floor(z).astype(int); first = np.ones(n, bool)
-    act = np.ones(n, bool)
-    for _ in range(NZ + YMAX + 4):
-        a = np.where(act)[0]
-        if len(a) == 0: break
-        xa, va, iza, ixa = x[a], v[a], iz[a], ix[a]
-        h = h_at(ixa, iza)
-        ze = np.where(first[a], z[a], iza); ye = va - ze
-        hs = h_at(ixa, iza - 1)
-        # 1) 从南边进入、低于本格顶 → 南面（倒角区例外）
-        cS = ch(xa, 1)
-        enter = (~first[a]) & (ye <= h) & (ye >= 0) & (h > hs)
-        southface = enter & (ye <= h - cS)
-        southch = enter & (ye > h - cS)
-        # 两头外凸：本格比 ye 低，但东 / 西邻格在这个高度有朝南的面
-        bul = np.zeros(len(a), bool); bulH = np.zeros(len(a))
-        for dx, edge in ((1, ixa + 1.0), (-1, ixa + 0.0)):
-            hn = h_at(ixa + dx, iza); hns = h_at(ixa + dx, iza - 1)
-            d = np.abs(xa - edge)
-            depth = np.clip((hn - ye) / 0.6, 0, 1)
-            width = BULGE * depth * (0.45 + 0.55 * vnoise(ye * 1.7 + edge * 3.1, 5))
-            c = (~first[a]) & (ye < hn) & (ye > hns) & (ye >= h) & (d < width) & (ye >= 0)
-            bul |= c; bulH = np.where(c, np.maximum(bulH, hn), bulH)
-        sf = southface | bul
-        idx = a[sf]; kind[idx] = 2; hit[idx] = np.c_[xa[sf], ye[sf], iza[sf]]
-        yb[idx] = np.where(bul[sf] & ~southface[sf], h[sf], hs[sf])
-        htop[idx] = np.where(bul[sf] & ~southface[sf], bulH[sf], h[sf])
-        # 南倒角：平面 y = h − c + (z − iz)
-        zc = (va + iza - h + cS) / 2
-        idx = a[southch]; kind[idx] = 3; hit[idx] = np.c_[xa[southch], (va - zc)[southch], zc[southch]]; htop[idx] = h[southch]
-        done = sf | southch
-        # 2) 本格内落到顶面
-        zt = va - h
-        intop = (~done) & (zt >= ze - 1e-9) & (zt < iza + 1)
-        # 顶面上的倒角（露边才有）
-        cN = ch(xa, 2); cE = ch(zt, 3); cW = ch(zt, 4)
-        hn_ = h_at(ixa, iza + 1); he_ = h_at(ixa + 1, iza); hw_ = h_at(ixa - 1, iza)
-        fx = xa - ixa; fz = zt - iza
-        inS = (hs < h) & (fz < cS); inN = (hn_ < h) & (fz > 1 - cN)
-        inE = (he_ < h) & (fx > 1 - cE); inW = (hw_ < h) & (fx < cW)
-        top_ok = intop & ~inS & ~inN & ~inE & ~inW
-        idx = a[top_ok]; kind[idx] = 1; hit[idx] = np.c_[xa[top_ok], h[top_ok], zt[top_ok]]; htop[idx] = h[top_ok]
-        # 南倒角（从顶面那边落进去）
-        s2 = intop & inS
-        idx = a[s2]; kind[idx] = 3; hit[idx] = np.c_[xa[s2], (va - zc)[s2], zc[s2]]; htop[idx] = h[s2]
-        # 东 / 西倒角：y = h − (fx − (1 − cE))，视线 x 不变，直接求 y
-        for m_, yy in ((intop & inE & ~inS, h - (fx - (1 - cE))), (intop & inW & ~inS & ~inE, h - (cW - fx))):
-            zz = np.minimum(va - yy, iza + 1 - 1e-4)
-            m2 = m_
-            idx = a[m2]; kind[idx] = 4; hit[idx] = np.c_[xa[m2], yy[m2], zz[m2]]; htop[idx] = h[m2]
-        # 北倒角与视线平行：顶面往里收，继续往北
-        hitnow = kind[a] > 0
-        act[a[hitnow]] = False
-        nxt = a[~hitnow]
-        iz[nxt] += 1; first[nxt] = False
-        out = nxt[(v[nxt] - iz[nxt]) < -0.5]
-        act[out] = False
-    # 着色
-    col = np.zeros((n, 3)) + [0.10, 0.14, 0.19]
-    P = hit
-    tex_c = samp(cliff, P[:, 0], P[:, 1]); tex_e = samp(earth, P[:, 0], P[:, 2])
-    nt = samp(nmap, P[:, 0], P[:, 1])
-    N = np.zeros((n, 3)); alb = np.zeros((n, 3))
-    m = kind == 1; N[m] = [0, 1, 0]; alb[m] = tex_e[m]
-    m = kind == 2
+    uu = hu.ravel()
+    tc = samp(cliff, uu, y); te = samp(earth, x, z); nt = samp(nmap, uu, y)
+    N = np.tile([0.0, 1.0, 0.0], (n, 1)); alb = te.copy()
     Nw = np.c_[nt[:, 0], nt[:, 1], -nt[:, 2]]; Nw /= np.linalg.norm(Nw, axis=1, keepdims=True)
-    N[m] = Nw[m]
-    lc = tex_c @ [0.299, 0.587, 0.114]; le = tex_e @ [0.299, 0.587, 0.114]
-    hf = P[:, 1] - yb; ht = htop - P[:, 1]
-    qf = np.clip((FOOT - hf) / FOOT + (le - lc) * 1.2, 0, 1); qf = qf * qf * (3 - 2 * qf)
-    qt = np.clip((TOP - ht) / TOP + (le - lc) * 1.2 - 0.25, 0, 1); qt = qt * qt * (3 - 2 * qt)
+    lc = tc @ [0.299, 0.587, 0.114]; le = te @ [0.299, 0.587, 0.114]
+    qf = np.clip((FOOT - (y - yb_)) / FOOT + (le - lc) * 1.2, 0, 1); qf = qf * qf * (3 - 2 * qf)
+    qt = np.clip((TOP - (yt_ - y)) / TOP + (le - lc) * 1.2 - 0.25, 0, 1); qt = qt * qt * (3 - 2 * qt)
     q = np.maximum(qf, qt)
-    alb[m] = (tex_c * (1 - q[:, None]) + tex_e * q[:, None])[m]
-    m = kind == 3; N[m] = [0, 0.7071, -0.7071]; alb[m] = (tex_e * 0.6 + tex_c * 0.4)[m] * 1.08
-    m = kind == 4; sgn = np.sign(P[:, 0] - np.floor(P[:, 0]) - 0.5)
-    N[m] = np.c_[sgn * 0.7071, np.full(n, 0.7071), np.zeros(n)][m]; alb[m] = (tex_e * 0.6 + tex_c * 0.4)[m]
-    # 暗部提亮（sRGB）
+    m = kd == 2; N[m] = Nw[m]; alb[m] = (tc * (1 - q[:, None]) + te * q[:, None])[m]
+    # 侧面：崖壁贴图按 (z, y)，几何法线
+    m = kd == 4
+    ts = tc; ls = lc
+    qs = np.maximum(np.clip((FOOT - (y - yb_)) / FOOT + (le - ls) * 1.2, 0, 1), np.clip((TOP - (yt_ - y)) / TOP + (le - ls) * 1.2 - 0.25, 0, 1))
+    Ng = en.reshape(-1, 3)
+    # 侧面也叠法线贴图（切线沿轮廓方向，简化：在几何法线上加法线贴图的 xy 扰动）
+    Ns = Ng + np.c_[np.zeros(n), nt[:, 1], np.zeros(n)] * 0.6 + np.c_[np.zeros(n), np.zeros(n), -nt[:, 0]] * 0.6 * np.sign(Ng[:, 0:1]).ravel()[:, None]
+    Ns /= np.linalg.norm(Ns, axis=1, keepdims=True) + 1e-9
+    N[m] = Ns[m]; alb[m] = (ts * (1 - qs[:, None]) + te * qs[:, None])[m]
     alb = LIFT + alb * (1 - LIFT)
-    # 阴影：沿光线步进，进入体素即在阴影里
-    sh = np.ones(n)
-    g = np.where(kind > 0)[0]
-    p0 = P[g] + N[g] * 0.02
-    for s in range(1, 160):
-        q_ = p0 + L * (s * 0.04)
-        inside = q_[:, 1] < h_at(np.floor(q_[:, 0]).astype(int), np.floor(q_[:, 2]).astype(int)) - 1e-4
-        sh[g[inside]] = 0
+    sh = shadow(np.c_[x, y, z])
     lam = np.clip(N @ L, 0, 1) * sh
-    sky = 0.5 + 0.5 * N[:, 1]
-    k = 0.30 + 0.22 * sky + 0.78 * lam
-    hitm = kind > 0
-    col[hitm] = np.clip(alb[hitm] * k[hitm, None], 0, 1)
+    k = 0.30 + 0.22 * (0.5 + 0.5 * N[:, 1]) + 0.78 * lam
+    col = np.clip(alb * k[:, None], 0, 1)
     return (col.reshape(Hh, W, 3) * 255).astype(np.uint8)
 
 imgs = [render(b, s) for b, s in SETS]
