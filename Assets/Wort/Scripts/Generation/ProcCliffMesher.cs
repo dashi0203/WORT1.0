@@ -135,7 +135,8 @@ namespace Wort.Generation
                     {
                         int hb = side > 0 ? he : hw;
                         if (hb >= h) continue;
-                        double lo = front ? hb : Math.Max(hb, h - 1);
+                        bool rampSide = SlopeAt(map, x + side, z) == 0 || SlopeAt(map, x + side, z) == 2;
+                        double lo = front || rampSide ? hb : Math.Max(hb, h - 1);
                         int rows = Math.Max(1, (int)Math.Round((h - lo) / Row));
                         double edge = side > 0 ? lx + 1 : lx;
                         var wall = m.Group(set, ProcCliffMesh.Part.Wall);
@@ -144,7 +145,8 @@ namespace Wort.Generation
                         int nsUp = SlopeAt(map, x + side, z);
                         bool alongRamp = nsUp == 0 || nsUp == 2;
                         double SurfAt(double wz) => !alongRamp ? hb : HeightAt(map, x + side, z) + (nsUp == 0 ? wz - z : z + 1 - wz);
-                        double LoAt(double wz) => front ? SurfAt(wz) : Math.Max(SurfAt(wz), h - 1);
+                        // 挨着坡道的侧墙一直补到坡面（不只顶层 1m）：站在坡道上能看到这面墙，下半截不能缺
+                        double LoAt(double wz) => front || alongRamp ? SurfAt(wz) : Math.Max(SurfAt(wz), h - 1);
                         for (int r = 0; r < rows; r++)
                         {
                             double fr0 = (double)r / rows, fr1 = (double)(r + 1) / rows;
