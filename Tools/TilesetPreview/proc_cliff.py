@@ -149,7 +149,7 @@ def shadow(P):
         sh[q[:, 1] < hh - 1e-4] = 0
     return sh
 
-def render(biome, cpath, npath, trpath, trnpath):
+def render(biome, cpath, npath, trpath, trnpath, surface=False):
     cliff = load(X / cpath); nmap = load(X / npath) * 2 - 1
     earth = load(GROUND / f'{biome}.png')
     en_ = GROUND / f'{biome}_Normal_Periodic768.png'   # 泥土法线：同一流程，不做向下延伸、幅度 0.12（隐约可见）
@@ -311,14 +311,78 @@ def render(biome, cpath, npath, trpath, trnpath):
     mw = (kd == 2) | (kd == 4)
     lw = alb[mw] @ [0.2126, 0.7152, 0.0722]
     alb[mw] = np.clip((lw[:, None] + (alb[mw] - lw[:, None]) * WALL_SAT) * WALL_GAIN, 0, 1)
+    if surface:   # 只要颜色和法线（Biome 融合时三套各算一遍再合成）
+        return dict(alb=alb, N=N, x=x, y=y, z=z, shape=(Hh, W))
+    return light(alb, N, x, y, z, (Hh, W))
+
+def light(alb, N, x, y, z, shape):
     alb = LIFT + alb * (1 - LIFT)
     sh = shadow(np.c_[x, y, z])
     lam = np.clip(N @ L, 0, 1) * sh
     k = 0.30 + 0.22 * (0.5 + 0.5 * N[:, 1]) + 0.78 * lam
     col = np.clip(alb * k[:, None], 0, 1)
-    return (col.reshape(Hh, W, 3) * 255).astype(np.uint8)
+    return (col.reshape(shape[0], shape[1], 3) * 255).astype(np.uint8)
 
-imgs = [render(*a) for a in SETS]
+# ---------- Biome 融合（负责人 2026-11-13：斑块式过渡）----------
+# 每格一个 Biome 编号 → one-hot 权重按格模糊（BLEND_R 格）→ 每个像素取权重最大的两套，
+# t = 权重 + （大尺度斑块噪声 + 两套贴图明暗差）×（越靠近交界中线越大），过一个很陡的阈值：非此即彼，交界沿着石块 / 泥块轮廓走。
+BLEND_R = 4          # 权重模糊半径（格）
+PATCH = 2.5          # 斑块大小（m）
+SHARP = 0.06         # 阈值过渡的半宽（越小越硬）
+
+def biome_map():
+    B = np.zeros(H.shape, int)            # 0 沼泽 1 森林 2 人类区（= SETS 下标）
+    X_, Z_ = np.meshgrid(np.arange(NX), np.arange(NZ), indexing='ij')
+    B[X_ + 0.6 * Z_ > 10] = 1            # 东边森林（斜着的交界，穿过台地）
+    B[X_ + 0.6 * Z_ <= 10] = 2           # 西边人类区
+    B[(Z_ <= 3) & (X_ >= 4)] = 0          # 南边一条沼泽
+    return B
+
+def blur_weights(B, k):
+    w = np.stack([(B == i).astype(float) for i in range(k)], -1)
+    for _ in range(2):                    # 两遍方框模糊 ≈ 高斯
+        for ax in (0, 1):
+            pad = np.concatenate([np.repeat(w.take([0], ax), BLEND_R, ax), w, np.repeat(w.take([-1], ax), BLEND_R, ax)], ax)
+            c = np.cumsum(pad, ax); c = np.concatenate([np.zeros_like(c.take([0], ax)), c], ax)
+            n = w.shape[ax]
+            w = (c.take(range(2 * BLEND_R + 1, 2 * BLEND_R + 1 + n), ax) - c.take(range(0, n), ax)) / (2 * BLEND_R + 1)
+    return w
+
+def sample_w(w, x, z):                    # 格中心双线性
+    fx = np.clip(x - 0.5, 0, NX - 1.001); fz = np.clip(z - 0.5, 0, NZ - 1.001)
+    i, j = np.floor(fx).astype(int), np.floor(fz).astype(int); a, b = fx - i, fz - j
+    return (w[i, j] * ((1 - a) * (1 - b))[:, None] + w[i + 1, j] * (a * (1 - b))[:, None] +
+            w[i, j + 1] * ((1 - a) * b)[:, None] + w[i + 1, j + 1] * (a * b)[:, None])
+
+def blend_render(hard=False):
+    surf = [render(*a, surface=True) for a in SETS]
+    x, y, z = surf[0]['x'], surf[0]['y'], surf[0]['z']
+    W_ = sample_w(blur_weights(biome_map(), len(SETS)), x, z)
+    order = np.argsort(-W_, axis=1)
+    a_, b_ = np.minimum(order[:, 0], order[:, 1]), np.maximum(order[:, 0], order[:, 1])   # 按编号排，交界两侧顺序一致
+    idx = np.arange(len(x))
+    wa, wb = W_[idx, a_], W_[idx, b_]
+    g = wb / np.maximum(wa + wb, 1e-6)
+    A = np.stack([s_['alb'] for s_ in surf]); NN = np.stack([s_['N'] for s_ in surf])
+    albA, albB = A[a_, idx], A[b_, idx]; NA, NB = NN[a_, idx], NN[b_, idx]
+    lum = lambda c: c @ [0.299, 0.587, 0.114]
+    if hard:
+        q = (g > 0.5).astype(float)
+    else:
+        band = 1 - np.abs(2 * g - 1)
+        nz = 0.65 * vnoise2(x, z, 77, PATCH) + 0.35 * vnoise2(x, z, 78, PATCH / 3.5)   # 大斑块 + 碎边
+        t = g + ((nz - 0.5) * 1.6 + (lum(albB) - lum(albA)) * 0.9) * band
+        q = np.clip((t - 0.5 + SHARP) / (2 * SHARP), 0, 1); q = q * q * (3 - 2 * q)
+    alb = albA * (1 - q[:, None]) + albB * q[:, None]
+    N = NA * (1 - q[:, None]) + NB * q[:, None]; N /= np.linalg.norm(N, axis=1, keepdims=True)
+    return light(alb, N, x, y, z, surf[0]['shape'])
+
+import os
+if os.environ.get('BIOME'):
+    # BIOME=1：同一块地形三套 Biome 混在一起；左 = 硬交界（对照），右 = 斑块式融合
+    imgs = [blend_render(hard=True), blend_render()]
+else:
+    imgs = [render(*a) for a in SETS]
 gap = np.zeros((imgs[0].shape[0], 8, 3), np.uint8)
 Image.fromarray(np.concatenate(sum([[im, gap] for im in imgs], [])[:-1], 1)).save(OUT)
 print('输出', OUT)
