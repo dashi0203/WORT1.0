@@ -14,7 +14,7 @@ namespace Wort.Generation
         public readonly List<float> Tangents = new List<float>();   // xyzw
         /// <summary>每顶点 4 个数：种类（1 顶面 / 2 正面 / 4 侧面 / 0 投影面）、顶面掩码（1–8 露边、16–128 内拐角、256–2048 更高的邻居、4096–8192 北沿东／西内角收边）或侧面朝向、崖顶高、崖脚高。</summary>
         public readonly List<float> Data1 = new List<float>();
-        /// <summary>每顶点 4 个数：顶面 = 格的世界 x、z；正面 = 折线的世界 z、这一段西头 x、东头 x、西邻高 × 1024 + 东邻高；侧面 = 折线的世界 x、这一列正面的世界 z。</summary>
+        /// <summary>每顶点 4 个数：顶面 = 格的世界 x、z；正面 = 折线的世界 z、这一段西头 x、东头 x、西邻高 × 1024 + 东邻高；侧面 = 折线的世界 x、这一列正面的世界 z、崖脚那格的露边掩码。正面的崖脚格露边掩码放在 Data1.y。</summary>
         public readonly List<float> Data2 = new List<float>();
         /// <summary>键 = 套件编号 × PartCount + 部分。</summary>
         public readonly SortedDictionary<int, List<int>> Indices = new SortedDictionary<int, List<int>>();
@@ -88,7 +88,9 @@ namespace Wort.Generation
 
                     bool front = hs < h;
                     // 正面：同高、同崖脚、同套件的一排连成一段（只在段的西头生成），东西两头露边时端点跟着侧面鼓出量走
-                    bool SameRun(int xx) => xx >= ox && xx < ox + size && SlopeAt(map, xx, z) < 0 &&
+                    // 崖脚前面那格的露边（1 北 2 东 4 南 8 西）：着色器据此让崖脚融合到“地面实际的样子”（窄脊上是顶岩，不是泥土）
+                    int footMask = ExposedMask(map, x, z - 1);
+                    bool SameRun(int xx) => xx >= ox && xx < ox + size && SlopeAt(map, xx, z) < 0 && (footMask & 10) == 0 && (ExposedMask(map, xx, z - 1) & 10) == 0 &&
                                             HeightAt(map, xx, z) == h && EdgeH(map, xx, z - 1, 0) == hs &&
                                             (sets == null || sets.Length != map.W * map.H || sets[z * map.W + xx] == set);
                     if (front && !SameRun(x - 1))
@@ -108,7 +110,7 @@ namespace Wort.Generation
                             Quad(m, wall,
                                 xl0, y0, lz, xl1, y1, lz, xr1, y1, lz, xr0, y0, lz,
                                 0, 0, -1, 1, 0, 0, -1,
-                                2, 0, h, hs, oz + lz, x, xe + 1, hwS * 1024 + heE);
+                                2, footMask, h, hs, oz + lz, x, xe + 1, hwS * 1024 + heE);
                         }
                     }
 
@@ -135,9 +137,9 @@ namespace Wort.Generation
                                 double b1 = edge + side * SideOut(map, x, z, side, y1, wz1, h, hb);
                                 // 朝外看：东面右手边是 +z，西面右手边是 −z（Unity 顺时针为正面）
                                 if (side > 0)
-                                    QuadAuto(m, wall, a0, y0, z0, a1, y1, z0, b1, y1, z1, b0, y0, z1, side, 4, side, h, hb, ox + edge, fz);
+                                    QuadAuto(m, wall, a0, y0, z0, a1, y1, z0, b1, y1, z1, b0, y0, z1, side, 4, side, h, hb, ox + edge, fz, ExposedMask(map, x + side, z));
                                 else
-                                    QuadAuto(m, wall, b0, y0, z1, b1, y1, z1, a1, y1, z0, a0, y0, z0, side, 4, side, h, hb, ox + edge, fz);
+                                    QuadAuto(m, wall, b0, y0, z1, b1, y1, z1, a1, y1, z0, a0, y0, z0, side, 4, side, h, hb, ox + edge, fz, ExposedMask(map, x + side, z));
                             }
                         }
                     }
@@ -198,6 +200,15 @@ namespace Wort.Generation
             int k = z;
             while (k > 0 && HeightAt(map, x, k - 1) >= h) k--;
             return k;
+        }
+
+        /// <summary>格 (x, z) 的露边掩码（1 北 2 东 4 南 8 西）。坡道格当作没有露边。</summary>
+        static int ExposedMask(RegionMap map, int x, int z)
+        {
+            if (SlopeAt(map, x, z) >= 0) return 0;
+            int h = HeightAt(map, x, z);
+            return (EdgeH(map, x, z + 1, 2) < h ? 1 : 0) | (EdgeH(map, x + 1, z, 3) < h ? 2 : 0) |
+                   (EdgeH(map, x, z - 1, 0) < h ? 4 : 0) | (EdgeH(map, x - 1, z, 1) < h ? 8 : 0);
         }
 
         static int SlopeAt(RegionMap map, int x, int z)
@@ -344,7 +355,7 @@ namespace Wort.Generation
         static void QuadAuto(ProcCliffMesh m, List<int> idx,
             double ax, double ay, double az, double bx, double by, double bz,
             double cx, double cy, double cz, double dx, double dy, double dz,
-            int side, double k, double d1, double d2, double d3, double edgeWorld, double frontZ)
+            int side, double k, double d1, double d2, double d3, double edgeWorld, double frontZ, int footMask)
         {
             // 法线 = (b − a) × (d − a) 的反向（Unity 左手、顺时针为正面），保证朝外
             double ux = bx - ax, uy = by - ay, uz = bz - az, vx = dx - ax, vy = dy - ay, vz = dz - az;
@@ -353,7 +364,7 @@ namespace Wort.Generation
             if (len < 1e-12) { nx = side; ny = 0; nz = 0; len = 1; }
             nx /= len; ny /= len; nz /= len;
             if (nx * side < 0) { nx = -nx; ny = -ny; nz = -nz; }
-            Quad(m, idx, ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, nx, ny, nz, 0, 0, side, 1, k, d1, d2, d3, edgeWorld, frontZ);
+            Quad(m, idx, ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, nx, ny, nz, 0, 0, side, 1, k, d1, d2, d3, edgeWorld, frontZ, footMask);
         }
 
         static void Vert(ProcCliffMesh m, double x, double y, double z)

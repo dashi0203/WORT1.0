@@ -325,6 +325,14 @@ Shader "Wort/ProcCliff"
                     float footContact = smooth01(1 - (P.y - yb) / 0.06);
                     float2 footUv = lerp(float2(cu, P.y), P.xz, footContact) / ePer;
                     half3 ew = ColA(s * 19 + 1, footUv, ePer).rgb;
+                    // 崖脚那格地面在墙根处实际是什么：离它自己的露边近（窄脊、台地边一圈）就是顶岩，否则是泥土——崖脚融合到它，不是一律泥土
+                    float gm = side ? d2.z : (sgn == 0 ? d1.y : 0);
+                    float gfx = frac(P.x), gfz = frac(P.z);
+                    float dg = side ? min(fmod(gm, 2) >= 1 ? 1 - gfz : 9, fmod(floor(gm / 4), 2) >= 1 ? gfz : 9)
+                                    : min(fmod(floor(gm / 2), 2) >= 1 ? 1 - gfx : 9, fmod(floor(gm / 8), 2) >= 1 ? gfx : 9);
+                    float footRock = useTR > 0.5 ? 1 - smoothstep(-0.03, 0.03, dg - 0.5 * (_Inset0 + _Inset1)) : 0;
+                    float2 footUvR = lerp(float2(cu, P.y), P.xz, footContact) / trPer;
+                    if (footRock > 0) ew = lerp(ew, ColA(s * 19 + 2, footUvR, trPer).rgb, footRock);
                     float lc = lum(tc);
                     float qf = smooth01((_FootBlend - (P.y - yb)) / _FootBlend + (lum(ew) - lc) * 1.2);
                     qf = max(qf, footContact);   // 贴地那一点一定是泥土，和地面同色
@@ -352,6 +360,7 @@ Shader "Wort/ProcCliff"
                     if (qf > 0)
                     {
                         float3 en = topFrame(UnpackNormal(NrmA(s * 19 + 1, footUv, ePer)));
+                        if (footRock > 0) en = normalize(lerp(en, topFrame(UnpackNormal(NrmA(s * 19 + 2, footUvR, trPer))), footRock));
                         Wv = normalize(lerp(Wv, rotateAxis(en, k, radians(90)), qf));
                     }
                     N = Wv;
