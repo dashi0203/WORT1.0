@@ -42,6 +42,14 @@ Shader "Wort/ProcCliff"
         _P22 ("Variant 2x2 Chance (per 2x2 block)", Range(0, 1)) = 0.15
         _PRow ("Variant Row Pattern Chance", Range(0, 1)) = 0.2
         _PCol ("Variant Column Pattern Chance", Range(0, 1)) = 0.2
+        [HideInInspector] _ColArr ("", 2DArray) = "" {}
+        [HideInInspector] _NrmArr ("", 2DArray) = "" {}
+        [HideInInspector] _SetP0 ("", Vector) = (0, 2.7, 2, 0)
+        [HideInInspector] _SetP1 ("", Vector) = (0, 2.7, 2, 0)
+        [HideInInspector] _SetP2 ("", Vector) = (0, 2.7, 2, 0)
+        [HideInInspector] _SetP3 ("", Vector) = (0, 2.7, 2, 0)
+        [HideInInspector] _SetCount ("", Float) = 1
+        [HideInInspector] _ArrSize ("", Float) = 512
         _BiomePatch ("Biome Patch Strength", Float) = 0.8
         _BiomeSharp ("Biome Edge Softness", Float) = 0.025
         [Toggle] _ShadowEdge ("Jagged Shadow Edges", Float) = 1
@@ -391,7 +399,7 @@ Shader "Wort/ProcCliff"
                     if (w[k] > 0.02 && k < _SetCount)
                     {
                         Surface(k, P, ng, i.d1, i.d2, albs[k], ns[k]);
-                        float nz = 0.65 * vnoise2(P.xz, 77 + 13 * k, 2.5) + 0.35 * vnoise2(P.xz, 78 + 13 * k, 2.5 / 3.5);
+                        float nz = 0.45 * vnoise2(P.xz, 79 + 13 * k, 8) + 0.35 * vnoise2(P.xz, 77 + 13 * k, 2.5) + 0.2 * vnoise2(P.xz, 78 + 13 * k, 0.7);
                         sc[k] = w[k] + (nz - 0.5) * _BiomePatch + (lum(albs[k]) - 0.5) * 0.45;
                         best = max(best, sc[k]);
                     }
@@ -422,8 +430,8 @@ Shader "Wort/ProcCliff"
             // 自带投影 Pass：北边透明裁剪也进阴影（影子边缘跟着轮廓变碎）
             Name "ShadowCaster"
             Tags { "LightMode" = "ShadowCaster" }
-            // 双面投影：网格是空心的，边缘咬碎 / 北边裁剪开的缝里进来的光要被内侧的面挡住，否则影子会缺大块
-            ZWrite On ZTest LEqual ColorMask 0 Cull Off
+            // 只画背光面（Cull Front）：外壳闭合（顶面 + 正面 / 侧面 + 只投影的北东西面），光从咬碎的缝进来也会被出口面挡住；双面会在地面上出自阴影条纹
+            ZWrite On ZTest LEqual ColorMask 0 Cull Front
             HLSLPROGRAM
             #pragma vertex svert
             #pragma fragment sfrag

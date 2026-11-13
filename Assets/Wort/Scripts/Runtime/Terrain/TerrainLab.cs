@@ -65,6 +65,9 @@ namespace Wort.Terrain
         [SerializeField, Tooltip("程序化崖壁的 Biome 融合：权重按格模糊的半径（格）。测试地小，默认 4；正式世界按 GDD 是 32–64m 的过渡带。0 = 不融合（硬交界）。")]
         private int biomeBlendRadius = 4;
 
+        [SerializeField, Tooltip("正式生成器（5×5 等）的 Biome 融合半径（格）：地图自带的 Biome 是逐格硬分区，这里模糊成渐变带（GDD：过渡带 32–64m）。")]
+        private int biomeBlendRadiusWorld = 10;
+
         // 程序化崖壁运行时资源：各套贴图打包成的数组、合并材质、Biome 权重图（都不存盘）
         private Texture2DArray procColArr, procNrmArr;
         private Material procMat, procClipMat;
@@ -380,6 +383,11 @@ namespace Wort.Terrain
                 procMat.SetFloat("_ArrSize", procColArr != null ? procColArr.width : 512);
                 procMat.SetFloat("_ClipNorth", 0);
                 procClipMat = new Material(procMat) { name = "ProcCliff Clip (runtime)", hideFlags = HideFlags.DontSave };
+                // 数组和每套参数显式再设一遍（不依赖材质复制）
+                procClipMat.SetTexture("_ColArr", procColArr); procClipMat.SetTexture("_NrmArr", procNrmArr);
+                for (int i = 0; i < 4; i++) procClipMat.SetVector("_SetP" + i, setP[Mathf.Min(i, n - 1)]);
+                procClipMat.SetFloat("_SetCount", n);
+                procClipMat.SetFloat("_ArrSize", procColArr != null ? procColArr.width : 512);
                 procClipMat.SetFloat("_ClipNorth", 1);
                 procBuiltFor = procCliffSets;
             }
@@ -415,6 +423,8 @@ namespace Wort.Terrain
                     float t = wts[i * 4] + wts[i * 4 + 1] + wts[i * 4 + 2] + wts[i * 4 + 3];
                     if (t > 1e-5f) for (int c = 0; c < 4; c++) wts[i * 4 + c] /= t; else wts[i * 4] = 1;
                 }
+                if (biomeBlendRadiusWorld > 0)
+                    for (int pass = 0; pass < 2; pass++) { BoxBlur(wts, W, Hh, biomeBlendRadiusWorld, true); BoxBlur(wts, W, Hh, biomeBlendRadiusWorld, false); }
             }
             if (biomeMap == null || biomeMap.width != W || biomeMap.height != Hh)
             {
