@@ -327,7 +327,10 @@ Shader "Wort/ProcCliff"
                     float3 Wv = normalize(T * ct.x + B * ct.y + ng * ct.z);
                     // 崖脚融合泥土
                     float footContact = smooth01(1 - (P.y - yb) / 0.06);
-                    float2 footUv = lerp(float2(cu, P.y), P.xz, footContact) / ePer;
+                    // 墙根的泥土按“地面越过墙脚往墙里延续”展开取样（正面：往北，侧面：往里）：贴地处和地面同一块图案，往上也不拉伸
+                    //（之前在竖墙上直接用世界 xz 取样，贴地那一截被拉成密集横纹）
+                    float2 footW = side ? float2(edge - sgn * (P.y - yb), P.z) : float2(P.x, edge + (P.y - yb));
+                    float2 footUv = footW / ePer;
                     half3 ew = ColA(s * 19 + 1, footUv, ePer).rgb;
                     // 崖脚那格地面在墙根处实际是什么：离它自己的露边近（窄脊、台地边一圈）就是顶岩，否则是泥土——崖脚融合到它，不是一律泥土
                     float gm = side ? d2.z : (sgn == 0 ? d1.y : 0);
@@ -335,7 +338,7 @@ Shader "Wort/ProcCliff"
                     float dg = side ? min(fmod(gm, 2) >= 1 ? 1 - gfz : 9, fmod(floor(gm / 4), 2) >= 1 ? gfz : 9)
                                     : min(fmod(floor(gm / 2), 2) >= 1 ? 1 - gfx : 9, fmod(floor(gm / 8), 2) >= 1 ? gfx : 9);
                     float footRock = useTR > 0.5 ? 1 - smoothstep(-0.03, 0.03, dg - 0.5 * (_Inset0 + _Inset1)) : 0;
-                    float2 footUvR = lerp(float2(cu, P.y), P.xz, footContact) / trPer;
+                    float2 footUvR = footW / trPer;
                     if (footRock > 0) ew = lerp(ew, ColA(s * 19 + 2, footUvR, trPer).rgb, footRock);
                     float lc = lum(tc);
                     float qf = smooth01((_FootBlend - (P.y - yb)) / _FootBlend + (lum(ew) - lc) * 1.2);
