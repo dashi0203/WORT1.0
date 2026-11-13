@@ -79,12 +79,14 @@ namespace Wort.Generation
                     // 顶面：靠露边的格一格一块（着色器按这一格的掩码算倒角、泥土内收）；四周同高的格留给后面合并成大矩形
                     if (mask != 0)
                     {
-                        var top = m.Group(set, (mask & 1) != 0 ? ProcCliffMesh.Part.TopClip : ProcCliffMesh.Part.Top);
+                        var top = m.Group(set, ProcCliffMesh.Part.Top);   // 北边不再裁剪（改成往外伸），TopClip 不再使用
                         // 东西边和邻格有高低差时（那边有侧面 / 顶面窄条，顶点在半格），这条边加中点，避免 T 形接缝
                         bool midW = hw != h, midE = he != h;
                         var ring = new List<(double, double)> { (lx, lz) };
                         if (midW) ring.Add((lx, lz + 0.5));
-                        ring.Add((lx, lz + 1)); ring.Add((lx + 1, lz + 1));
+                        ring.Add((lx, lz + 1));
+                        if (hn < h) ring.Add((lx + 0.5, lz + 1));   // 北边往外伸的窄条顶点在半格
+                        ring.Add((lx + 1, lz + 1));
                         if (midE) ring.Add((lx + 1, lz + 0.5));
                         ring.Add((lx + 1, lz));
                         TopFan(m, top, ring, lx + 0.5, lz + 0.5, h, mask, x, z);
@@ -153,7 +155,7 @@ namespace Wort.Generation
                             if (r == rows - 1)
                             {
                                 // 顶面往外接一条同高的窄条，到侧面顶边（鼓出后的位置）：顶面本身不变形，轮廓跟着鼓包走
-                                var topG = m.Group(set, (mask & 1) != 0 ? ProcCliffMesh.Part.TopClip : ProcCliffMesh.Part.Top);
+                                var topG = m.Group(set, ProcCliffMesh.Part.Top);
                                 for (int c = 0; c < Sub; c++)
                                 {
                                     double z0 = lz + (double)c / Sub, z1 = lz + (double)(c + 1) / Sub;
@@ -165,6 +167,31 @@ namespace Wort.Generation
                                         Quad(m, topG, edge - o0, h, z0, edge - o1, h, z1, edge, h, z1, edge, h, z0, 0, 1, 0, 1, 0, 0, -1, 1, mask, h, 0, x, z);
                                 }
                             }
+                        }
+                    }
+
+                    // 北边露边：顶面往北伸出一条同高的窄条（负责人 2026-11-13：咬进去的假边缘和侧面鼓包对不上，改成往外伸），东西也露边时补角
+                    if (hn < h)
+                    {
+                        var topN = m.Group(set, ProcCliffMesh.Part.Top);
+                        for (int c = 0; c < Sub; c++)
+                        {
+                            double x0 = lx + (double)c / Sub, x1 = lx + (double)(c + 1) / Sub;
+                            double o0 = NorthOut(map, x, z, h, ox + x0), o1 = NorthOut(map, x, z, h, ox + x1);
+                            if (o0 < 1e-4 && o1 < 1e-4) continue;
+                            Quad(m, topN, x0, h, lz + 1, x0, h, lz + 1 + o0, x1, h, lz + 1 + o1, x1, h, lz + 1, 0, 1, 0, 1, 0, 0, -1, 1, mask, h, 0, x, z);
+                        }
+                        for (int side = -1; side <= 1; side += 2)
+                        {
+                            int hb = side > 0 ? he : hw;
+                            if (hb >= h) continue;
+                            double edge = side > 0 ? lx + 1 : lx;
+                            double oS = SideOut(map, x, z, side, h, oz + lz + 1, h, hb), oN = NorthOut(map, x, z, h, ox + edge);
+                            if (oS < 1e-4 || oN < 1e-4) continue;
+                            if (side > 0)
+                                Quad(m, topN, edge, h, lz + 1, edge, h, lz + 1 + oN, edge + oS, h, lz + 1 + oN, edge + oS, h, lz + 1, 0, 1, 0, 1, 0, 0, -1, 1, mask, h, 0, x, z);
+                            else
+                                Quad(m, topN, edge - oS, h, lz + 1, edge - oS, h, lz + 1 + oN, edge, h, lz + 1 + oN, edge, h, lz + 1, 0, 1, 0, 1, 0, 0, -1, 1, mask, h, 0, x, z);
                         }
                     }
 
@@ -337,11 +364,22 @@ namespace Wort.Generation
             // 对角邻格在这层封住转角时，侧面在折点回到格线；正面端点也用同一个偏移。
             bool southClosed = EdgeH(map, x + side, z - 1, sideEdge) >= y;
             bool northClosed = EdgeH(map, x + side, z + 1, sideEdge) >= y;
-            bool northClipped = EdgeH(map, x, z + 1, 2) < h;
+
             double taper = EdgeTaper(y - hb);
             if (southClosed) taper *= EdgeTaper(wz - z);
-            if (northClosed || northClipped) taper *= EdgeTaper(z + 1 - wz);
+            if (northClosed) taper *= EdgeTaper(z + 1 - wz);
             return Bulge(side, y, wz, h) * taper;
+        }
+
+        const uint SeedN = 0x3A91u;
+        /// <summary>北边往外伸多少（世界 x 的函数，同一条北沿上相邻格连续）：和侧面崖顶处一样是最大鼓出量的 TopOut 倍；
+        /// 东北 / 西北那格不低时（那里是它的侧墙，南端收为 0），这一端 0.35m 内收为 0，和那里的侧面对上。</summary>
+        static double NorthOut(RegionMap map, int x, int z, int h, double wx)
+        {
+            double o = (Bul0 + (Bul1 - Bul0) * ValueNoise2(h, wx, SeedN, 0.4)) * TopOut;
+            if (EdgeH(map, x + 1, z + 1, 2) >= h) o *= EdgeTaper(x + 1 - wx);   // 东北那格不低：那里是它的西侧墙（南端收为 0），北沿也收为 0
+            if (EdgeH(map, x - 1, z + 1, 2) >= h) o *= EdgeTaper(wx - x);
+            return o;
         }
 
         static double EdgeTaper(double distance)

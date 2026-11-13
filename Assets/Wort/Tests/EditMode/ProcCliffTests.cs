@@ -35,7 +35,7 @@ namespace Wort.Tests
             var m = Block();
             // 方块上：顶面、正面、侧面、只投影的面都有；北边那排顶面进裁剪组
             Assert.Greater(OnBlock(m, ProcCliffMesh.Part.Top), 0);
-            Assert.Greater(OnBlock(m, ProcCliffMesh.Part.TopClip), 0);
+            Assert.AreEqual(0, OnBlock(m, ProcCliffMesh.Part.TopClip));   // 北边不再裁剪，改成往外伸
             Assert.Greater(OnBlock(m, ProcCliffMesh.Part.Wall), 0);
             // 只投影：北、东、西各 4 块平面
             Assert.AreEqual(24, OnBlock(m, ProcCliffMesh.Part.Shadow));
