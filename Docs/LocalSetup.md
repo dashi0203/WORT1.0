@@ -115,17 +115,17 @@ git restore .
      ProjectSettings/EditorSettings.asset
    - 如果还有别的被改动的文件（尤其是 .cs 或 .shader），先停下来告诉我，不要自己还原。
    - 未跟踪的文件一律不要动。
-2. git fetch origin +refs/heads/claude/ecstatic-maxwell-8c9ue4:refs/remotes/origin/claude/ecstatic-maxwell-8c9ue4
-3. git switch claude/ecstatic-maxwell-8c9ue4
+2. git fetch origin +refs/heads/claude/dreamy-lovelace-jb85wx:refs/remotes/origin/claude/dreamy-lovelace-jb85wx
+3. git switch claude/dreamy-lovelace-jb85wx
    - 如果报 “invalid reference” 或分支不存在，改用（不要加 --track，单分支克隆下会报 “not a branch”）：
-     git switch -c claude/ecstatic-maxwell-8c9ue4 origin/claude/ecstatic-maxwell-8c9ue4
+     git switch -c claude/dreamy-lovelace-jb85wx origin/claude/dreamy-lovelace-jb85wx
    - 如果报 “untracked working tree files would be overwritten”，停下来把列出的文件发给我，不要自己删。
-4. git merge --ff-only origin/claude/ecstatic-maxwell-8c9ue4
+4. git merge --ff-only origin/claude/dreamy-lovelace-jb85wx
 5. git lfs pull
 6. 依次运行这三条，把输出都发给我：
    git log -1 --oneline
    git rev-parse --short HEAD
-   git rev-parse --short origin/claude/ecstatic-maxwell-8c9ue4
+   git rev-parse --short origin/claude/dreamy-lovelace-jb85wx
    后两条输出一样，就说明已经是最新；不一样就停下来告诉我。
 
 做完就结束，不要打开或操作 Unity，也不要做其他检查。
