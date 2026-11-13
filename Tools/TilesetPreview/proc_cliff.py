@@ -28,7 +28,7 @@ TR_PERIOD = 2.7    # 顶岩平铺周期（m），不取整数，和崖壁 1m 错
 NCLIP = 0.12       # 顶面北边透明裁剪最大深度（m）
 WALL_GAIN, WALL_SAT = 1.12, 1.12   # 崖壁提亮 / 加饱和（Unity 材质参数，预览模拟）
 EARTH_P = 2.0      # 泥土平铺周期（m）
-TOPB = 0.55        # 崖壁顶部融合顶岩的高度（m）
+TOPB = 0.35        # 崖壁顶部融合顶岩的高度（m）
 INSET0, INSET1 = 0.15, 0.35   # 泥土离露边内收（m）
 SUB = 4                    # 每格顶面细分
 FOOT, TOP = 0.35, 0.22
@@ -72,6 +72,9 @@ def vnoise2(a, b, seed, per=0.4):
 def bulge(side, y, z, h):  # 东(1) / 西(-1) 侧面在 (y, z) 处往外鼓多少；世界坐标噪声，相邻面自动连续；顶沿 h 处收为 0（顶面不变形）
     t = np.clip((h - y) / 0.35, 0, 1); t = t * (2 - t)          # 顶上线性起步（约 45° 朝上），往下变缓
     return (BUL0 + (BUL1 - BUL0) * vnoise2(y, z, 3 if side > 0 else 4)) * t
+
+def smooth_r(along, seed):   # 平滑倒角宽度（m）：18–32cm，沿边缓慢变化；顶面与墙面用同一个，折线两侧对上
+    return 0.18 + 0.14 * vnoise(along, 100 + seed, 0.7)
 
 tris = []   # (P 3×3, kind, extra, U 3)  kind: 1 顶面 2 正面 4 侧面；extra = (崖脚高, 崖顶高, 法线…)
 def quad(a, b, c, d, kind, extra=(0, 0), U=None):
@@ -211,9 +214,10 @@ def render(biome, cpath, npath, trpath, trnpath):
         w = BEV0 + (BEV1 - BEV0) * (0.65 * vnoise(along, seed + 20, 0.55) + 0.35 * vnoise(along, seed + 40, 0.13))
         notch = np.clip((vnoise(along, seed + 60, 0.8) - 0.72) / 0.28, 0, 1)        # 偶尔的深缺口
         edges.append((ex, dist / (w + 0.30 * notch), dx_, dz_, along, dist))
-    D = np.full(k_, 9.0); alongs = np.zeros(k_)
+    D = np.full(k_, 9.0); alongs = np.zeros(k_); dmn = np.full(k_, 9.0); seedn = np.ones(k_)
     dm = np.full(k_, 9.0)
-    for ex, dn, dx_, dz_, along, dist in edges:
+    for ei, (ex, dn, dx_, dz_, along, dist) in enumerate(edges):
+        closer = ex & (dist < dmn); dmn = np.where(closer, dist, dmn); seedn = np.where(closer, ei + 1, seedn)
         dm = np.where(ex, np.minimum(dm, dist), dm)
         dn = np.where(ex, dn, 9.0); better = dn < D
         D = np.where(better, dn, D); alongs = np.where(better, along, alongs)
@@ -239,10 +243,14 @@ def render(biome, cpath, npath, trpath, trnpath):
     ao = 1 - 0.35 * np.clip(1 + se / 0.05, 0, 1) * (1 - qe) * (toprock is not None)      # 泥土边在顶岩上的暗边
     D2 = D - (lr - 0.35) * 1.4 + (vnoise2(xi, zi, 9, 0.07) - 0.5) * 0.6                   # 倒角：跟着顶岩明暗 + 碎边
     t = np.clip(1 - D2, 0, 1); t = t * t * (3 - 2 * t)
-    t = np.maximum(t, np.clip(1 - dm / 0.035, 0, 1))     # 贴着折线必须倾到位，与墙顶对上
     dl = np.sqrt(dirx ** 2 + dirz ** 2) + 1e-9
     base = Nr * (1 - qe[:, None]) + Ne[idx] * qe[:, None]
-    nb = base + np.c_[dirx / dl, np.zeros(k_), dirz / dl] * t[:, None]
+    # 平滑倒角（负责人 2026-11-13）：离露边 r 内法线连续往外倒，到边上正好 45°；r 与墙面同一函数，折线两侧角度一致、亮度平滑过渡
+    rr = smooth_r(alongs, seedn)
+    sm = np.clip(1 - dm / rr, 0, 1)
+    th = np.radians(45) * sm
+    outd = np.c_[dirx / dl, np.zeros(k_), dirz / dl]
+    nb = np.array([0, 1.0, 0]) * np.cos(th)[:, None] + outd * np.sin(th)[:, None] + (base - np.array([0, 1.0, 0])) * (1 - sm)[:, None]
     nb /= np.linalg.norm(nb, axis=1, keepdims=True)
     N[idx] = nb
     alb[idx] = rk * (1 - qe[:, None]) * ao[:, None] + te[idx] * qe[:, None]
@@ -250,7 +258,6 @@ def render(biome, cpath, npath, trpath, trnpath):
     wS = BEV0 + (BEV1 - BEV0) * (0.65 * vnoise(x, 21, 0.55) + 0.35 * vnoise(x, 41, 0.13))
     wS = (wS + 0.30 * np.clip((vnoise(x, 61, 0.8) - 0.72) / 0.28, 0, 1)) * 0.6
     tw = np.clip(1 - (yt_ - y) / wS - (lc - 0.35) * 0.8, 0, 1); tw = tw * tw * (3 - 2 * tw)
-    tw = np.maximum(tw, np.clip(1 - (yt_ - y) / 0.035, 0, 1))
     Nf = Nw + tw[:, None] * np.array([0, 1.0, 0]); Nf /= np.linalg.norm(Nf, axis=1, keepdims=True)
     # 崖壁顶部融合顶岩（沼泽 / 森林即泥土）：顶面倒角是顶岩颜色，墙顶也渐变成顶岩，石头接石头，不夹泥土
     tsrc, tnsrc, tper = (toprock, trn, TR_PERIOD) if toprock is not None else (earth, enm, EARTH_P)
@@ -267,7 +274,11 @@ def render(biome, cpath, npath, trpath, trnpath):
         Ntw = np.tile([0.0, 0.0, -1.0], (n, 1))
     lt = trw @ [0.299, 0.587, 0.114]
     qtop = np.clip((TOPB - (yt_ - y)) / TOPB + (lt - lc) * 1.2 - 0.15 + (vnoise2(uu, y, 91, 0.08) - 0.5) * 0.5, 0, 1); qtop = qtop * qtop * (3 - 2 * qtop)
-    Nf2 = Nf * (1 - qtop[:, None]) + Ntw * qtop[:, None]; Nf2 /= np.linalg.norm(Nf2, axis=1, keepdims=True)
+    # 先混合崖壁 / 顶岩法线，最后再加“往上倾”的假倒角（否则倒角被顶岩法线盖掉，折线处亮度一下跳变）
+    Nf2 = Nw * (1 - qtop[:, None]) + Ntw * qtop[:, None]; Nf2 /= np.linalg.norm(Nf2, axis=1, keepdims=True)
+    rw = smooth_r(x, np.ones(n)); sw = np.clip(1 - (yt_ - y) / rw, 0, 1); thw = np.radians(45) * sw
+    Nf2 = np.array([0, 0, -1.0]) * np.cos(thw)[:, None] + np.array([0, 1.0, 0]) * np.sin(thw)[:, None] + (Nf2 - np.array([0, 0, -1.0])) * (1 - sw)[:, None]
+    Nf2 /= np.linalg.norm(Nf2, axis=1, keepdims=True)
     m = kd == 2; N[m] = Nf2[m]; alb[m] = ((tc * (1 - q[:, None]) + te * q[:, None]) * (1 - qtop[:, None]) + trw * qtop[:, None])[m]
     # 侧面：崖壁贴图按 (z, y)，几何法线
     m = kd == 4
@@ -279,6 +290,11 @@ def render(biome, cpath, npath, trpath, trnpath):
     Ns /= np.linalg.norm(Ns, axis=1, keepdims=True) + 1e-9
     Ntside = Ng + np.c_[np.zeros(n), Ntw[:, 1], np.zeros(n)] * 0.8; Ntside /= np.linalg.norm(Ntside, axis=1, keepdims=True)
     Ns2 = Ns * (1 - qtop[:, None]) + Ntside * qtop[:, None]; Ns2 /= np.linalg.norm(Ns2, axis=1, keepdims=True)
+    # 侧面顶部同样平滑翻上去：外侧法线 → 往上 45°
+    rs = smooth_r(z, np.where(sgn > 0, 3, 4)); ss = np.clip(1 - (yt_ - y) / rs, 0, 1); ths = np.radians(45) * ss
+    outs = np.c_[sgn, np.zeros(n), np.zeros(n)]
+    Ns2 = outs * np.cos(ths)[:, None] + np.array([0, 1.0, 0]) * np.sin(ths)[:, None] + (Ns2 - outs) * (1 - ss)[:, None]
+    Ns2 /= np.linalg.norm(Ns2, axis=1, keepdims=True)
     N[m] = Ns2[m]; alb[m] = ((ts * (1 - qs[:, None]) + te * qs[:, None]) * (1 - qtop[:, None]) + trw * qtop[:, None])[m]
     # 崖壁 / 侧面：预览里模拟 Unity 材质上的提亮与加饱和（不改贴图）
     mw = (kd == 2) | (kd == 4)
