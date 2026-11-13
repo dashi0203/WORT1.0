@@ -38,6 +38,7 @@ Shader "Wort/ProcCliff"
         _WallSat ("Wall Saturation", Range(0, 2)) = 1.12
         [Toggle] _EdgeFx ("Edge Effects (bevel / bend)", Float) = 1
         [Toggle] _WallTopFx ("Wall Top Blend", Float) = 1
+        _FootAO ("Cliff Foot Darkening", Range(0.5, 1)) = 0.8
         [Toggle] _VarOn ("Cliff Variants", Float) = 1
         _P22 ("Variant 2x2 Chance (per 2x2 block)", Range(0, 1)) = 0.15
         _PRow ("Variant Row Pattern Chance", Range(0, 1)) = 0.2
@@ -72,7 +73,7 @@ Shader "Wort/ProcCliff"
         CBUFFER_START(UnityPerMaterial)
             float4 _SetP0, _SetP1, _SetP2, _SetP3;   // 每套：(有顶岩, 顶岩周期, 泥土周期, 0)
             float _SetCount, _ArrSize, _BiomePatch, _BiomeSharp;
-            float _VarOn, _P22, _PRow, _PCol;
+            float _VarOn, _P22, _PRow, _PCol, _FootAO;
             float _EarthPeriod, _UseTopRock, _TopRockPeriod;
             float _Inset0, _Inset1, _BevelR0, _BevelR1, _TopBlend, _FootBlend;
             float _ClipNorth, _NorthClip, _BlackLift, _WallGain, _WallSat, _EdgeFx, _WallTopFx;
@@ -265,7 +266,7 @@ Shader "Wort/ProcCliff"
                         else if (dHW <= dH + 1e-5) { along = P.z; seed = 23; away = float3(1, 0, 0); }
                         float sg = saturate(1 - dH / bevelR(along, seed));
                         albedo = earthC;
-                        N = sg > 0 ? normalize(rotateAxis(earthN, normalize(cross(up, away)), radians(45) * sg)) : earthN;
+                        N = earthN;   // 崖脚地面不再往外倾（45° 朝南迎光，反而比平地亮）；改成下面的崖脚暗影
                     }
                     else
                     {
@@ -299,6 +300,8 @@ Shader "Wort/ProcCliff"
                         float3 k = normalize(cross(up, outd));
                         N = sm > 0 ? normalize(rotateAxis(base, k, radians(45) * sm)) : base;
                     }
+                    // 崖脚暗影（负责人 2026-11-13：崖底接缝发亮）：内凹的墙根应该更暗，离更高的邻格 0.35m 内逐渐压暗，墙面底部用同一条曲线，接缝两侧亮度一致
+                    albedo *= lerp(_FootAO, 1, smooth01(dH / 0.35));
                     // 坡道顶面：把“朝上”的结果整体转到几何法线
                     if (ng.y < 0.999)
                     {
@@ -364,15 +367,14 @@ Shader "Wort/ProcCliff"
                         Wv = normalize(lerp(Wv, rotateAxis(en, k, radians(90)), qf));
                     }
                     N = Wv;
+                    albedo *= lerp(_FootAO, 1, smooth01((P.y - yb) / 0.35));
                     if (_EdgeFx > 0.5)
                     {
                         // 平滑倒角：离崖顶 r 内往上翻到 45°（与顶面同一个 r，折线处对上）
                         float sw = saturate(1 - (yt - P.y) / bevelR(along, seed));
                         if (sw > 0) N = normalize(rotateAxis(N, k, -radians(45) * sw));
                         // 崖脚内凹圆角：离崖脚 r 内往上翻到 45°，和墙根前地面的 45° 在交界线对齐（地面一侧见顶面分支，种子 20–23）
-                        float fseed = side ? (sgn > 0 ? 23 : 21) : 20;
-                        float sf = saturate(1 - (P.y - yb) / bevelR(along, fseed));
-                        if (sf > 0) N = normalize(rotateAxis(N, k, -radians(45) * sf));
+                        // 崖脚：不再往上翻 45°（会比地面亮）；墙根的法线已随融合转成地面法线，再乘同一条崖脚暗影
                         // 竖直转角：正面在段的东西两头（那一侧更低时）转向侧面，侧面在正面转角附近转向正面，各 45°，转角处对齐
                         if (!side)
                         {

@@ -80,10 +80,14 @@ namespace Wort.Generation
                     if (mask != 0)
                     {
                         var top = m.Group(set, (mask & 1) != 0 ? ProcCliffMesh.Part.TopClip : ProcCliffMesh.Part.Top);
-                        Quad(m, top,
-                            lx, h, lz, lx, h, lz + 1, lx + 1, h, lz + 1, lx + 1, h, lz,
-                            0, 1, 0, 1, 0, 0, -1,
-                            1, mask, h, 0, x, z);
+                        // 东西边和邻格有高低差时（那边有侧面 / 顶面窄条，顶点在半格），这条边加中点，避免 T 形接缝
+                        bool midW = hw != h, midE = he != h;
+                        var ring = new List<(double, double)> { (lx, lz) };
+                        if (midW) ring.Add((lx, lz + 0.5));
+                        ring.Add((lx, lz + 1)); ring.Add((lx + 1, lz + 1));
+                        if (midE) ring.Add((lx + 1, lz + 0.5));
+                        ring.Add((lx + 1, lz));
+                        TopFan(m, top, ring, lx + 0.5, lz + 0.5, h, mask, x, z);
                     }
                     else interior[lz * size + lx] = true;
 
@@ -105,13 +109,17 @@ namespace Wort.Generation
                         for (int r = 0; r < rows; r++)
                         {
                             double y0 = hs + (h - hs) * (double)r / rows, y1 = hs + (h - hs) * (double)(r + 1) / rows;
-                            double xl0 = l0 - Out(map, x, z, -1, y0, h), xl1 = l0 - Out(map, x, z, -1, y1, h);
-                            double xr0 = r1 + Out(map, xe, z, 1, y0, h), xr1 = r1 + Out(map, xe, z, 1, y1, h);
+                            double ol0 = Out(map, x, z, -1, y0, h), ol1 = Out(map, x, z, -1, y1, h);
+                            double or0 = Out(map, xe, z, 1, y0, h), or1 = Out(map, xe, z, 1, y1, h);
+                            // 列：西头鼓出部分、每格一列（整数 x，和顶面 / 地面的格顶点对上）、东头鼓出部分
                             // Data2：折线 z、这一段的西头 x、东头 x、西邻高 × 1024 + 东邻高（着色器做竖直转角的平滑法线）
-                            Quad(m, wall,
-                                xl0, y0, lz, xl1, y1, lz, xr1, y1, lz, xr0, y0, lz,
-                                0, 0, -1, 1, 0, 0, -1,
-                                2, footMask, h, hs, oz + lz, x, xe + 1, hwS * 1024 + heE);
+                            void Col(double a0, double a1, double b0, double b1) =>
+                                Quad(m, wall, a0, y0, lz, a1, y1, lz, b1, y1, lz, b0, y0, lz,
+                                    0, 0, -1, 1, 0, 0, -1,
+                                    2, footMask, h, hs, oz + lz, x, xe + 1, hwS * 1024 + heE);
+                            if (ol0 > 1e-6 || ol1 > 1e-6) Col(l0 - ol0, l0 - ol1, l0, l0);
+                            for (double cxl = l0; cxl < r1 - 1e-6; cxl += 1) Col(cxl, cxl, cxl + 1, cxl + 1);
+                            if (or0 > 1e-6 || or1 > 1e-6) Col(r1, r1, r1 + or0, r1 + or1);
                         }
                     }
 
@@ -201,12 +209,13 @@ namespace Wort.Generation
                     for (int a = 0; a < d; a++)
                         for (int k = 0; k < w; k++) used[(lz + a) * size + lx + k] = true;
                     int h = key / 256, set = key % 256;
-                    // 四边各外扩 2mm：大矩形的边上挨着一格一块的小方块，顶点不共用（T 形接缝）会裂出细缝；同一平面、同一着色，重叠看不出来
-                    const double E = 0.002;
-                    Quad(m, m.Group(set, ProcCliffMesh.Part.Top),
-                        lx - E, h, lz - E, lx - E, h, lz + d + E, lx + w + E, h, lz + d + E, lx + w + E, h, lz - E,
-                        0, 1, 0, 1, 0, 0, -1,
-                        1, 0, h, 0, ox + lx, oz + lz);
+                    // 边上每 1m 一个顶点（中心扇形），和旁边一格一块的顶点对上，没有 T 形接缝（之前外扩 2mm 会和旁边的格重叠闪烁）
+                    var ring = new List<(double, double)>();
+                    for (int a = 0; a < d; a++) ring.Add((lx, lz + a));
+                    for (int a = 0; a < w; a++) ring.Add((lx + a, lz + d));
+                    for (int a = d; a > 0; a--) ring.Add((lx + w, lz + a));
+                    for (int a = w; a > 0; a--) ring.Add((lx + a, lz));
+                    TopFan(m, m.Group(set, ProcCliffMesh.Part.Top), ring, lx + w * 0.5, lz + d * 0.5, h, 0, ox + lx, oz + lz);
                 }
         }
 
@@ -277,7 +286,6 @@ namespace Wort.Generation
                 double nx = Grid.DX4[d], nz = Grid.DZ4[d];
                 double e0 = d == 2 ? oz + lz : d == 1 ? ox + lx + 1 : d == 3 ? ox + lx : 0;
                 double e1 = d == 2 ? x : z - 10, e2 = d == 2 ? x + 1 : 0, e3 = d == 2 ? NoCorner : 0;   // 坡道墙不做竖直转角平滑
-                int bi = m.VertexCount;
                 void V(double px, double py, double pz, double yt)
                 {
                     Vert(m, px, py, pz);
@@ -286,9 +294,17 @@ namespace Wort.Generation
                     m.Data1.Add((float)k); m.Data1.Add((float)sgn); m.Data1.Add((float)yt); m.Data1.Add(hb);
                     m.Data2.Add((float)e0); m.Data2.Add((float)e1); m.Data2.Add((float)e2); m.Data2.Add((float)e3);
                 }
-                V(ax, b0, az, t0); V(ax, t0, az, t0); V(bx, t1, bz, t1); V(bx, b1, bz, t1);
-                grp.Add(bi); grp.Add(bi + 1); grp.Add(bi + 2);
-                grp.Add(bi); grp.Add(bi + 2); grp.Add(bi + 3);
+                // 按 0.25m 一行竖向细分（和旁边普通墙的行对上，没有 T 形接缝）
+                int rowsS = Math.Max(1, (int)Math.Ceiling((Math.Max(t0, t1) - hb) / Row - 1e-6));
+                for (int r = 0; r < rowsS; r++)
+                {
+                    double f0 = (double)r / rowsS, f1 = (double)(r + 1) / rowsS;
+                    double ya0 = b0 + (t0 - b0) * f0, ya1 = b0 + (t0 - b0) * f1, yb0 = b1 + (t1 - b1) * f0, yb1 = b1 + (t1 - b1) * f1;
+                    int vi = m.VertexCount;
+                    V(ax, ya0, az, t0); V(ax, ya1, az, t0); V(bx, yb1, bz, t1); V(bx, yb0, bz, t1);
+                    grp.Add(vi); grp.Add(vi + 1); grp.Add(vi + 2);
+                    grp.Add(vi); grp.Add(vi + 2); grp.Add(vi + 3);
+                }
             }
         }
 
@@ -346,6 +362,24 @@ namespace Wort.Generation
             double v00 = Hash.Unit(Hash.Of(i, j, seed)), v10 = Hash.Unit(Hash.Of(i + 1, j, seed));
             double v01 = Hash.Unit(Hash.Of(i, j + 1, seed)), v11 = Hash.Unit(Hash.Of(i + 1, j + 1, seed));
             return (v00 * (1 - fa) + v10 * fa) * (1 - fb) + (v01 * (1 - fa) + v11 * fa) * fb;
+        }
+
+        /// <summary>顶面多边形：中心 + 一圈边界顶点（从上往下看顺时针），扇形三角化；所有顶点同一组数据。</summary>
+        static void TopFan(ProcCliffMesh m, List<int> idx, List<(double x, double z)> ring, double cx, double cz, double h, int mask, double cellX, double cellZ)
+        {
+            int b = m.VertexCount;
+            void V(double vx, double vz)
+            {
+                Vert(m, vx, h, vz);
+                m.Normals.Add(0); m.Normals.Add(1); m.Normals.Add(0);
+                m.Tangents.Add(1); m.Tangents.Add(0); m.Tangents.Add(0); m.Tangents.Add(-1);
+                m.Data1.Add(1); m.Data1.Add(mask); m.Data1.Add((float)h); m.Data1.Add(0);
+                m.Data2.Add((float)cellX); m.Data2.Add((float)cellZ); m.Data2.Add(0); m.Data2.Add(0);
+            }
+            V(cx, cz);
+            foreach (var (vx, vz) in ring) V(vx, vz);
+            int n = ring.Count;
+            for (int i = 0; i < n; i++) { idx.Add(b); idx.Add(b + 1 + i); idx.Add(b + 1 + (i + 1) % n); }
         }
 
         /// <summary>加一个四边形（a→b→c→d 为正面顺时针），法线 / 切线给定，四个顶点同一组数据。</summary>

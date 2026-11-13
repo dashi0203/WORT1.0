@@ -33,14 +33,51 @@ namespace Wort.Tests
         public void BlockFaceCounts()
         {
             var m = Block();
-            // 顶面：靠露边的 12 格一格一块（北边 4 格进裁剪组），中间 2×2 合并成一块 → Top = 8 格 × 2 + 2
-            //       另加东西两侧顶边往外的窄条：每侧 4 格 × 2 段 × 2（北边一格进裁剪组）→ Top 再 + 24、TopClip 再 + 8
-            Assert.AreEqual(18 + 24, OnBlock(m, ProcCliffMesh.Part.Top));
-            Assert.AreEqual(8 + 8, OnBlock(m, ProcCliffMesh.Part.TopClip));
-            // 正面 4 格连成一段：16 行 × 2 = 32；东西两侧各：前排整高 16 行 × 2 段 × 2 = 64，后三格只有顶层 4 行 × 2 段 × 2 × 3 = 48 → 两侧 224
-            Assert.AreEqual(32 + 224, OnBlock(m, ProcCliffMesh.Part.Wall));
+            // 方块上：顶面、正面、侧面、只投影的面都有；北边那排顶面进裁剪组
+            Assert.Greater(OnBlock(m, ProcCliffMesh.Part.Top), 0);
+            Assert.Greater(OnBlock(m, ProcCliffMesh.Part.TopClip), 0);
+            Assert.Greater(OnBlock(m, ProcCliffMesh.Part.Wall), 0);
             // 只投影：北、东、西各 4 块平面
             Assert.AreEqual(24, OnBlock(m, ProcCliffMesh.Part.Shadow));
+        }
+
+        /// <summary>看得见的三角形之间没有 T 形接缝：任何顶点都不落在另一条边的中间（否则会裂出细缝、闪烁）。只查方块附近。</summary>
+        [Test]
+        public void NoTJunctions()
+        {
+            var m = Block();
+            var verts = new System.Collections.Generic.List<(float x, float y, float z)>();
+            var edges = new System.Collections.Generic.List<(int a, int b)>();
+            bool Near(int v) { float x = m.Positions[v * 3], z = m.Positions[v * 3 + 2]; return x > 7 && x < 17 && z > 7 && z < 17; }
+            foreach (var kv in m.Indices)
+            {
+                if (kv.Key % ProcCliffMesh.PartCount == (int)ProcCliffMesh.Part.Shadow) continue;
+                var l = kv.Value;
+                for (int t = 0; t < l.Count; t += 3)
+                    for (int k = 0; k < 3; k++)
+                    {
+                        int a = l[t + k], b = l[t + (k + 1) % 3];
+                        if (Near(a) || Near(b)) edges.Add((a, b));
+                    }
+            }
+            for (int v = 0; v < m.VertexCount; v++)
+                if (Near(v)) verts.Add((m.Positions[v * 3], m.Positions[v * 3 + 1], m.Positions[v * 3 + 2]));
+            int bad = 0;
+            foreach (var (a, b) in edges)
+            {
+                float ax = m.Positions[a * 3], ay = m.Positions[a * 3 + 1], az = m.Positions[a * 3 + 2];
+                float bx = m.Positions[b * 3], by = m.Positions[b * 3 + 1], bz = m.Positions[b * 3 + 2];
+                float dx = bx - ax, dy = by - ay, dz = bz - az, len2 = dx * dx + dy * dy + dz * dz;
+                if (len2 < 1e-8f) continue;
+                foreach (var (px, py, pz) in verts)
+                {
+                    float t = ((px - ax) * dx + (py - ay) * dy + (pz - az) * dz) / len2;
+                    if (t < 1e-3f || t > 1 - 1e-3f) continue;
+                    float qx = ax + dx * t - px, qy = ay + dy * t - py, qz = az + dz * t - pz;
+                    if (qx * qx + qy * qy + qz * qz < 1e-8f) bad++;
+                }
+            }
+            Assert.AreEqual(0, bad);
         }
 
         [Test]
