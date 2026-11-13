@@ -20,13 +20,13 @@ namespace Wort.Rendering
     [AddComponentMenu("Wort/Spatial View")]
     public sealed class SpatialView : MonoBehaviour
     {
-        [Header("主角")]
+        // —— 主角 ——
         [Tooltip("不填就自动找 WortPigPlayer")]
         public Transform player;
         [Tooltip("主角模型大致高度（米，检测遮挡、定虚化圆的中心用）")]
         public float bodyHeight = 1.2f;
 
-        [Header("黑色空处与最低层压暗")]
+        // —— 黑色空处与最低层压暗 ——
         [Tooltip("相机背景改纯黑")]
         public bool blackVoid = true;
         public bool darkenBottom = true;
@@ -38,7 +38,7 @@ namespace Wort.Rendering
         public bool overrideBottom = false;
         public float bottomHeight = 0f;
 
-        [Header("遮挡虚化")]
+        // —— 遮挡虚化 ——
         public bool occlusionCutout = true;
         [Tooltip("圆的半径（米，屏幕平面里）")]
         [Range(0.5f, 6f)] public float holeRadius = 2.2f;
@@ -57,7 +57,7 @@ namespace Wort.Rendering
         [Tooltip("调试：不管有没有被挡住，一直显示虚化圆")]
         public bool debugForceHole;
 
-        [Header("鹰眼视觉（GDD【暂定】）")]
+        // —— 鹰眼视觉（GDD【暂定】） ——
         public bool eagleVision;
         [Tooltip("切换键（默认 T）")]
         public Key eagleKey = Key.T;
@@ -85,7 +85,7 @@ namespace Wort.Rendering
         [Tooltip("横切面比格线往外扩多少（米，盖住侧墙鼓包，同时是边缘溶解带）")]
         [Range(0.02f, 0.6f)] public float capDilate = 0.32f;
 
-        [Header("主角脚下薄雾")]
+        // —— 主角脚下薄雾 ——
         public bool fog = true;
         [Tooltip("比主角脚下低多少开始起雾（米）")]
         [Range(0f, 6f)] public float fogOffset = 2.5f;
