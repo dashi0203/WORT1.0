@@ -13,6 +13,9 @@ public sealed class WortShearCamera : MonoBehaviour
 
     private Camera targetCamera;
 
+    /// <summary>纵向错切量：世界高度 y 在画面上相当于往北（+z）移 y × Shear。</summary>
+    public float Shear => shear;
+
     private Camera TargetCamera
     {
         get
