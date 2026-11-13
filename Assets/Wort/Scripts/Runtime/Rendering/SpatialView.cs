@@ -59,16 +59,29 @@ namespace Wort.Rendering
 
         [Header("鹰眼视觉（GDD【暂定】）")]
         public bool eagleVision;
-        [Tooltip("切换键")]
-        public Key toggleKey = Key.Tab;
+        [Tooltip("切换键（默认 T）")]
+        public Key eagleKey = Key.T;
         [Tooltip("剔除主角脚下多高以上的东西（格）")]
         [Range(0.5f, 4f)] public float cutAbove = 1.5f;
         [Tooltip("进出过渡用时（秒）：裁切面从上往下扫")]
         [Range(0.05f, 1.5f)] public float sweepTime = 0.35f;
         [Tooltip("饱和度降多少")]
         [Range(0f, 1f)] public float desaturate = 0.8f;
-        [Tooltip("横切面边缘的起伏幅度（米）")]
-        [Range(0f, 0.2f)] public float cutJitter = 0.04f;
+        [Tooltip("范围：以主角脚下为圆心的水平圆的半径（米）。0 = 不限范围（整个画面都裁）")]
+        [Range(0f, 20f)] public float eagleRadius = 3f;
+        [Tooltip("圆边波浪幅度（半径的比例，和遮挡虚化同一套）")]
+        [Range(0f, 0.4f)] public float eagleWave = 0.12f;
+        [Tooltip("裁切边缘的溶解带宽（米）：边界外一圈碎碎地留下")]
+        [Range(0f, 1.5f)] public float eagleDissolve = 0.35f;
+        [Tooltip("裁切高度的起伏幅度（米）：墙上的断口高低起伏")]
+        [Range(0f, 0.6f)] public float eagleCutJitter = 0.18f;
+        [Tooltip("蓝色外扩边")]
+        public bool rimEnabled = true;
+        [Tooltip("外扩边颜色（HDR，可以调亮发光）")]
+        [ColorUsage(false, true)] public Color rimColor = new Color(0.25f, 0.65f, 1.6f);
+        [Tooltip("外扩边宽度范围（像素），沿边随噪声在两者之间浮动")]
+        [Range(0f, 12f)] public float rimMinPixels = 3f;
+        [Range(0f, 12f)] public float rimMaxPixels = 5f;
         [Tooltip("横切面比格线往外扩多少（米，盖住侧墙鼓包，同时是边缘溶解带）")]
         [Range(0.02f, 0.6f)] public float capDilate = 0.32f;
 
@@ -96,6 +109,9 @@ namespace Wort.Rendering
         private static readonly int IdHoleParams = Shader.PropertyToID("_WortHoleParams");
         private static readonly int IdCutParams = Shader.PropertyToID("_WortCutParams");
         private static readonly int IdCutOn = Shader.PropertyToID("_WortCutOn");
+        private static readonly int IdCutCircle = Shader.PropertyToID("_WortCutCircle");
+        private static readonly int IdCutStyle = Shader.PropertyToID("_WortCutStyle");
+        private static readonly int IdCutRim = Shader.PropertyToID("_WortCutRimColor");
         private static readonly int IdBottom = Shader.PropertyToID("_WortBottomParams");
         private static readonly int IdFog = Shader.PropertyToID("_WortFogParams");
         private static readonly int IdFogColor = Shader.PropertyToID("_WortFogColor");
@@ -169,15 +185,20 @@ namespace Wort.Rendering
             else if (grounded) feetY = Mathf.SmoothDamp(feetY, footNow, ref feetVel, 0.25f, Mathf.Infinity, dt);
 
             // —— 鹰眼视觉 ——
-            if (Application.isPlaying && Keyboard.current != null && Keyboard.current[toggleKey].wasPressedThisFrame)
+            if (Application.isPlaying && Keyboard.current != null && Keyboard.current[eagleKey].wasPressedThisFrame)
                 eagleVision = !eagleVision;
             float target = eagleVision ? 1f : 0f;
             EagleBlend = dt > 0f ? Mathf.MoveTowards(EagleBlend, target, dt / Mathf.Max(0.01f, sweepTime)) : target;
             float e = EagleBlend * EagleBlend * (3f - 2f * EagleBlend);
             bool cutOn = EagleBlend > 1e-3f && WorldAOField.HasField;
-            float cutY = feetY + cutAbove + (1f - e) * 14f;   // 从上往下扫
+            float cutY = feetY + cutAbove + (1f - e) * 6f;   // 裁切面从上往下落，同时圆从脚下展开
+            Vector3 fp = player != null ? player.position : Vector3.zero;
             Shader.SetGlobalFloat(IdCutOn, cutOn ? 1f : 0f);
-            Shader.SetGlobalVector(IdCutParams, new Vector4(cutY, cutJitter, time, capDilate));
+            Shader.SetGlobalVector(IdCutParams, new Vector4(cutY, eagleCutJitter, time, capDilate));
+            Shader.SetGlobalVector(IdCutCircle, new Vector4(fp.x, fp.z, eagleRadius > 0f ? Mathf.Max(0.05f, eagleRadius * e) : 0f, eagleWave));
+            Shader.SetGlobalVector(IdCutStyle, new Vector4(eagleDissolve, rimMinPixels, Mathf.Max(rimMinPixels, rimMaxPixels), rimEnabled ? 1 : 0));
+            Color rl = rimColor.linear;
+            Shader.SetGlobalVector(IdCutRim, new Vector4(rl.r, rl.g, rl.b, 1));
             UpdateCap(cutOn, cam);
             UpdateDesaturation(e);
 

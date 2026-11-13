@@ -1,4 +1,4 @@
-// 高度裁切的横切面（鹰眼视觉 / 以后的室内地下裁切）：裁切高度处一块水平面，按地形高度场判断“这里是不是实心的”，
+// 高度裁切的横切面（鹰眼视觉 / 以后的室内地下裁切；鹰眼视觉时只在圆形范围内）：裁切高度处一块水平面，按地形高度场判断“这里是不是实心的”，
 // 实心处画黑色，其余丢掉。边缘：比格线往外扩 _WortCutParams.w（盖住侧墙鼓包）并按噪声溶解；裁切高度的起伏和地形裁切用同一个函数，截面和断口对上。
 // 地形网格是空心的（背面 / 北面不全），不能用“画背面”的做法，所以用高度场。由 Wort.Rendering.SpatialView 生成平面并开关。
 Shader "Wort/CutCap"
@@ -40,6 +40,13 @@ Shader "Wort/CutCap"
             }
             float n = WortNoise2(P.xz * 6 + _WortCutParams.z * 0.4) * 0.7 + WortNoise2(P.xz * 17) * 0.3;
             clip(s - n * 0.9 - 0.05);
+            // 鹰眼视觉的圆形范围：和地形裁切同一个圆（波浪边 + 溶解），圆外不画截面
+            if (_WortCutCircle.z > 0)
+            {
+                float2 d = P.xz - _WortCutCircle.xy;
+                float r = _WortCutCircle.z * WortWave(atan2(d.y, d.x), _WortCutParams.z, _WortCutCircle.w);
+                clip(r - length(d) - max(_WortCutStyle.x, 1e-3) * WortDissolveNoise(P.xz, _WortCutParams.z) * 0.5);
+            }
         }
         ENDHLSL
         Pass
