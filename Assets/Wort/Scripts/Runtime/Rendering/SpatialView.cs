@@ -239,18 +239,28 @@ namespace Wort.Rendering
             Shader.SetGlobalVector(IdFogColor, new Vector4(fc.r, fc.g, fc.b, time));
         }
 
-        /// <summary>主角身上 9 个点（3 个高度 × 相机左右 3 个位置）往相机方向打射线，被挡住的比例。</summary>
+        /// <summary>
+        /// 主角身上 9 个点（3 个高度 × 相机左右 3 个位置）沿视线往相机方向打射线，被挡住的比例。
+        /// 错切相机（WortShearCamera）的视线不是相机的朝向（竖直向下），而是“往上、往南”斜着的：
+        /// 投影矩阵里 y 加了 shear × 深度，屏幕上同一个点对应的是一条斜线。这里直接用 投影 × 视图 矩阵的逆，
+        /// 把这个点所在的屏幕位置在近、远裁剪面上各反算一个世界点，两点连线就是真实视线，不依赖 shear 的具体写法。
+        /// </summary>
         private float MeasureOcclusion(Camera cam)
         {
+            Matrix4x4 vp = cam.projectionMatrix * cam.worldToCameraMatrix;
+            Matrix4x4 inv = vp.inverse;
             Vector3 right = cam.transform.right;
             int blocked = 0, total = 0;
             for (int iy = 0; iy < 3; iy++)
             for (int ix = -1; ix <= 1; ix++)
             {
                 Vector3 p = player.position + Vector3.up * (bodyHeight * (0.15f + 0.35f * iy)) + right * (0.22f * ix);
-                Ray r = cam.ScreenPointToRay(cam.WorldToScreenPoint(p));   // 错切投影下的真实视线方向
-                Vector3 dir = -r.direction;
-                int n = Physics.RaycastNonAlloc(p + dir * 0.05f, dir, hits, 80f, ~0, QueryTriggerInteraction.Ignore);
+                Vector3 ndc = vp.MultiplyPoint(p);
+                Vector3 near = inv.MultiplyPoint(new Vector3(ndc.x, ndc.y, -1f));
+                Vector3 far = inv.MultiplyPoint(new Vector3(ndc.x, ndc.y, 1f));
+                Vector3 dir = (near - far).normalized;   // 朝相机
+                float maxDist = Vector3.Distance(p, near);
+                int n = Physics.RaycastNonAlloc(p + dir * 0.05f, dir, hits, maxDist, ~0, QueryTriggerInteraction.Ignore);
                 bool hit = false;
                 for (int k = 0; k < n && !hit; k++)
                     if (!hits[k].collider.transform.IsChildOf(player)) hit = true;
