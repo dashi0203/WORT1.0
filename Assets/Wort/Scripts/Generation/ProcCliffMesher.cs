@@ -183,8 +183,10 @@ namespace Wort.Generation
                     for (int a = 0; a < d; a++)
                         for (int k = 0; k < w; k++) used[(lz + a) * size + lx + k] = true;
                     int h = key / 256, set = key % 256;
+                    // 四边各外扩 2mm：大矩形的边上挨着一格一块的小方块，顶点不共用（T 形接缝）会裂出细缝；同一平面、同一着色，重叠看不出来
+                    const double E = 0.002;
                     Quad(m, m.Group(set, ProcCliffMesh.Part.Top),
-                        lx, h, lz, lx, h, lz + d, lx + w, h, lz + d, lx + w, h, lz,
+                        lx - E, h, lz - E, lx - E, h, lz + d + E, lx + w + E, h, lz + d + E, lx + w + E, h, lz - E,
                         0, 1, 0, 1, 0, 0, -1,
                         1, 0, h, 0, ox + lx, oz + lz);
                 }
