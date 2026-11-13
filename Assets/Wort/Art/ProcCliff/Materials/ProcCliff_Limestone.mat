@@ -66,6 +66,10 @@ Material:
     - _EdgeFx: 1
     - _WallTopFx: 1
     - _ShadowEdge: 1
+    - _BiomePatch: 0.8
+    - _BiomeSharp: 0.025
+    - _ArrSize: 512
+    - _SetCount: 1
     - _ShadowNotch0: 0.06
     - _ShadowNotch1: 0.2
     m_Colors: []

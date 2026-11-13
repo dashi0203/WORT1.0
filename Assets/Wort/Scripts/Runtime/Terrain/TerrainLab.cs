@@ -62,6 +62,15 @@ namespace Wort.Terrain
         [SerializeField, Tooltip("程序化崖壁的材质套（编号 = 数组下标，和瓦片套件编号一致）。Inspector 里可以一键填入。")]
         private ProcCliffSet[] procCliffSets;
 
+        [SerializeField, Tooltip("程序化崖壁的 Biome 融合：权重按格模糊的半径（格）。测试地小，默认 4；正式世界按 GDD 是 32–64m 的过渡带。0 = 不融合（硬交界）。")]
+        private int biomeBlendRadius = 4;
+
+        // 程序化崖壁运行时资源：各套贴图打包成的数组、合并材质、Biome 权重图（都不存盘）
+        private Texture2DArray procColArr, procNrmArr;
+        private Material procMat, procClipMat;
+        private Texture2D biomeMap;
+        private ProcCliffSet[] procBuiltFor;
+
         private Material[] materials;
         private RegionVoxels lastVoxels;
         private RandomRegionResult lastRandom;
@@ -282,10 +291,12 @@ namespace Wort.Terrain
             {
                 int set = kv.Key / ProcCliffMesh.PartCount;
                 var part = (ProcCliffMesh.Part)(kv.Key % ProcCliffMesh.PartCount);
-                var ps = set < procCliffSets.Length && procCliffSets[set] != null ? procCliffSets[set] : procCliffSets[0];
-                if (part == ProcCliffMesh.Part.Shadow) { shadowIdx.AddRange(kv.Value); if (shadowMat == null) shadowMat = ps.main; continue; }
-                visGroups.Add(kv.Value);
-                visMats.Add(part == ProcCliffMesh.Part.TopClip && ps.clip != null ? ps.clip : ps.main);
+                // 所有套件共用一个合并材质（贴图在数组里，按 Biome 权重图逐像素选套件）；同一部分的组合并成一个子网格
+                if (part == ProcCliffMesh.Part.Shadow) { shadowIdx.AddRange(kv.Value); shadowMat = procMat; continue; }
+                var mat = part == ProcCliffMesh.Part.TopClip ? procClipMat : procMat;
+                int at = visMats.IndexOf(mat);
+                if (at < 0) { visGroups.Add(new List<int>(kv.Value)); visMats.Add(mat); }
+                else visGroups[at].AddRange(kv.Value);
             }
             long tris = 0;
             var mesh = NewMesh($"{chunk.name} ProcCliff");
@@ -313,6 +324,108 @@ namespace Wort.Terrain
                 sr.shadowCastingMode = ShadowCastingMode.ShadowsOnly;
             }
             return (int)tris;
+        }
+
+        /// <summary>
+        /// 程序化崖壁的运行时资源：
+        /// 1) 把各套材质的贴图（崖壁 / 泥土 / 顶岩，颜色和法线）在显卡里复制进两个 Texture2DArray，每套 3 层；
+        ///    要求同类贴图尺寸、格式、mip 数一致（导入设置已统一）；没有顶岩的套用泥土填那一层。
+        /// 2) 合并材质：第 0 套 main 的参数 + 数组 + 每套参数（有无顶岩、周期）；clip 版打开北边裁剪。
+        /// 3) Biome 权重图：每格一个像素，RGBA = 套件 0–3 的 one-hot，按 biomeBlendRadius 模糊两遍（≈ 高斯），设为全局贴图。
+        /// </summary>
+        private void PrepareProcCliff(RegionMap map)
+        {
+            int n = Mathf.Min(procCliffSets.Length, 4);
+            if (procColArr == null || procMat == null || procBuiltFor != procCliffSets)
+            {
+                DestroySafe(procColArr); DestroySafe(procNrmArr); DestroySafe(procMat); DestroySafe(procClipMat);
+                var main0 = procCliffSets[0].main;
+                var cols = new List<Texture>(); var nrms = new List<Texture>();
+                var setP = new Vector4[4];
+                for (int i = 0; i < n; i++)
+                {
+                    var m = procCliffSets[i] != null && procCliffSets[i].main != null ? procCliffSets[i].main : main0;
+                    bool rock = m.GetFloat("_UseTopRock") > 0.5f && m.GetTexture("_TopRockMap") != null;
+                    cols.Add(m.GetTexture("_CliffMap")); cols.Add(m.GetTexture("_EarthMap")); cols.Add(rock ? m.GetTexture("_TopRockMap") : m.GetTexture("_EarthMap"));
+                    nrms.Add(m.GetTexture("_CliffNormal")); nrms.Add(m.GetTexture("_EarthNormal")); nrms.Add(rock ? m.GetTexture("_TopRockNormal") : m.GetTexture("_EarthNormal"));
+                    setP[i] = new Vector4(rock ? 1 : 0, m.GetFloat("_TopRockPeriod"), m.GetFloat("_EarthPeriod"), 0);
+                }
+                procColArr = BuildArray(cols, false, "ProcCliff Color");
+                procNrmArr = BuildArray(nrms, true, "ProcCliff Normal");
+                procMat = new Material(main0) { name = "ProcCliff (runtime)", hideFlags = HideFlags.DontSave };
+                procMat.SetTexture("_ColArr", procColArr); procMat.SetTexture("_NrmArr", procNrmArr);
+                for (int i = 0; i < 4; i++) procMat.SetVector("_SetP" + i, setP[Mathf.Min(i, n - 1)]);
+                procMat.SetFloat("_SetCount", n);
+                procMat.SetFloat("_ArrSize", procColArr != null ? procColArr.width : 512);
+                procMat.SetFloat("_ClipNorth", 0);
+                procClipMat = new Material(procMat) { name = "ProcCliff Clip (runtime)", hideFlags = HideFlags.DontSave };
+                procClipMat.SetFloat("_ClipNorth", 1);
+                procBuiltFor = procCliffSets;
+            }
+
+            // Biome 权重图（每次重建：体素笔刷会改套件）
+            int W = map.W, Hh = map.H;
+            var sets = testGround != null ? testGround.Sets : null;
+            bool ok = sets != null && sets.Length == W * Hh;
+            var w = new float[W * Hh * 4];
+            for (int i = 0; i < W * Hh; i++) w[i * 4 + Mathf.Clamp(ok ? sets[i] : 0, 0, n - 1)] = 1;
+            if (biomeBlendRadius > 0)
+                for (int pass = 0; pass < 2; pass++) { BoxBlur(w, W, Hh, biomeBlendRadius, true); BoxBlur(w, W, Hh, biomeBlendRadius, false); }
+            if (biomeMap == null || biomeMap.width != W || biomeMap.height != Hh)
+            {
+                DestroySafe(biomeMap);
+                biomeMap = new Texture2D(W, Hh, TextureFormat.RGBA32, false, true)
+                    { name = "Biome Weights", hideFlags = HideFlags.DontSave, filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
+            }
+            var px = new Color32[W * Hh];
+            for (int i = 0; i < px.Length; i++)
+                px[i] = new Color32((byte)Mathf.RoundToInt(w[i * 4] * 255), (byte)Mathf.RoundToInt(w[i * 4 + 1] * 255),
+                                    (byte)Mathf.RoundToInt(w[i * 4 + 2] * 255), (byte)Mathf.RoundToInt(w[i * 4 + 3] * 255));
+            biomeMap.SetPixels32(px);   // 行优先 z * W + x，正好是贴图的 (x, y)
+            biomeMap.Apply(false);
+            Shader.SetGlobalTexture("_WortBiomeMap", biomeMap);
+            Shader.SetGlobalVector("_WortBiomeRect", new Vector4(0, 0, W, Hh));
+            Shader.SetGlobalFloat("_WortBiomeOn", 1);
+        }
+
+        /// <summary>把同尺寸、同格式的贴图在显卡里逐层逐 mip 复制进数组；有一张不一致就报错并用第一张代替。</summary>
+        private Texture2DArray BuildArray(List<Texture> list, bool linear, string name)
+        {
+            var first = list[0] as Texture2D;
+            if (first == null) { Debug.LogError($"[TerrainLab] {name}：第 0 套缺贴图", this); return null; }
+            var arr = new Texture2DArray(first.width, first.height, list.Count, first.format, first.mipmapCount > 1, linear)
+                { name = name, hideFlags = HideFlags.DontSave, wrapMode = TextureWrapMode.Repeat, filterMode = FilterMode.Trilinear, anisoLevel = 4 };
+            for (int i = 0; i < list.Count; i++)
+            {
+                var t = list[i] as Texture2D;
+                if (t == null || t.width != first.width || t.height != first.height || t.format != first.format || t.mipmapCount != first.mipmapCount)
+                {
+                    Debug.LogError($"[TerrainLab] {name} 第 {i} 层（{(t != null ? t.name : "空")}）尺寸 / 格式和第一张（{first.name} {first.width}×{first.height} {first.format}）不一致，先用第一张代替。请统一导入设置。", this);
+                    t = first;
+                }
+                for (int mip = 0; mip < first.mipmapCount; mip++) Graphics.CopyTexture(t, 0, mip, arr, i, mip);
+            }
+            return arr;
+        }
+
+        /// <summary>RGBA 权重图的一维方框模糊（边缘按边上的值延伸）。</summary>
+        private static void BoxBlur(float[] w, int W, int H, int r, bool alongX)
+        {
+            int len = alongX ? W : H, lines = alongX ? H : W;
+            var line = new float[len * 4]; var acc = new float[4];
+            for (int l = 0; l < lines; l++)
+            {
+                for (int i = 0; i < len; i++) { int idx = (alongX ? l * W + i : i * W + l) * 4; for (int c = 0; c < 4; c++) line[i * 4 + c] = w[idx + c]; }
+                for (int c = 0; c < 4; c++) acc[c] = 0;
+                for (int k = -r; k <= r; k++) { int j = Mathf.Clamp(k, 0, len - 1); for (int c = 0; c < 4; c++) acc[c] += line[j * 4 + c]; }
+                for (int i = 0; i < len; i++)
+                {
+                    int idx = (alongX ? l * W + i : i * W + l) * 4;
+                    for (int c = 0; c < 4; c++) w[idx + c] = acc[c] / (2 * r + 1);
+                    int add = Mathf.Clamp(i + r + 1, 0, len - 1), sub = Mathf.Clamp(i - r, 0, len - 1);
+                    for (int c = 0; c < 4; c++) acc[c] += line[add * 4 + c] - line[sub * 4 + c];
+                }
+            }
         }
 
         /// <summary>
@@ -395,6 +508,7 @@ namespace Wort.Terrain
             }
             var sw = Stopwatch.StartNew();
             // 共用的缓存先在主线程算好，避免多个线程同时去算
+            if (UseProcCliff) PrepareProcCliff(map);
             if (voxels.RoadMask == null) voxels.RoadMask = RoadSurface.BuildMask(map);
             if (voxels.RoadMouths == null) voxels.RoadMouths = RoadSurface.BuildMouths(map);
             var builds = new ChunkBuild[list.Count];

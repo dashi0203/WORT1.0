@@ -9,6 +9,8 @@
 // - _ClipNorth = 1（TopClip 材质，只用在北面露边的格）：北边是真正的轮廓线，按噪声透明裁剪 0–_NorthClip，轮廓不再笔直。
 // - 暗部提亮 _BlackLift（同 TileSurface）；崖壁提亮 / 加饱和 _WallGain、_WallSat。
 // - 平滑法线（负责人 2026-11-13）：顶沿、竖直转角（正面 ↔ 侧面）、崖脚内凹圆角（墙底 ↔ 墙根前地面）都在折线两侧各转 45°，两边同一个宽度函数，折线处对齐。
+// - Biome 融合：贴图在数组 _ColArr / _NrmArr 里（TerrainLab 运行时打包），每像素按权重图取候选套件，各自算 Surface 再按分数合成（斑块式过渡）。
+//   上面 _CliffMap 等属性只是每套材质存贴图用的，渲染时不直接读。
 // - 性能开关：_EdgeFx = 0 关掉倒角和法线弯折，_WallTopFx = 0 关掉墙顶融合（对比开销用）。
 Shader "Wort/ProcCliff"
 {
@@ -36,6 +38,8 @@ Shader "Wort/ProcCliff"
         _WallSat ("Wall Saturation", Range(0, 2)) = 1.12
         [Toggle] _EdgeFx ("Edge Effects (bevel / bend)", Float) = 1
         [Toggle] _WallTopFx ("Wall Top Blend", Float) = 1
+        _BiomePatch ("Biome Patch Strength", Float) = 0.8
+        _BiomeSharp ("Biome Edge Softness", Float) = 0.025
         [Toggle] _ShadowEdge ("Jagged Shadow Edges", Float) = 1
         _ShadowNotch0 ("Shadow Notch Min (m)", Float) = 0.06
         _ShadowNotch1 ("Shadow Notch Max (m)", Float) = 0.2
@@ -45,14 +49,17 @@ Shader "Wort/ProcCliff"
         Tags { "RenderType" = "Opaque" "RenderPipeline" = "UniversalPipeline" "Queue" = "Geometry" }
         HLSLINCLUDE
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
-        TEXTURE2D(_CliffMap); SAMPLER(sampler_CliffMap);
-        TEXTURE2D(_CliffNormal); SAMPLER(sampler_CliffNormal);
-        TEXTURE2D(_EarthMap); SAMPLER(sampler_EarthMap);
-        TEXTURE2D(_EarthNormal); SAMPLER(sampler_EarthNormal);
-        TEXTURE2D(_TopRockMap); SAMPLER(sampler_TopRockMap);
-        TEXTURE2D(_TopRockNormal); SAMPLER(sampler_TopRockNormal);
+        // 运行时由 TerrainLab 把各套材质的贴图打包成两个数组（颜色 / 法线），每套 3 层：崖壁、泥土、顶岩（没有顶岩的套放泥土）
+        TEXTURE2D_ARRAY(_ColArr); SAMPLER(sampler_ColArr);
+        TEXTURE2D_ARRAY(_NrmArr); SAMPLER(sampler_NrmArr);
+        // Biome 权重图（全局）：一格一个像素，RGBA = 套件 0–3 的权重（已模糊），_WortBiomeRect = (x0, z0, 宽, 深)
+        TEXTURE2D(_WortBiomeMap); SAMPLER(sampler_WortBiomeMap);
+        float4 _WortBiomeRect;
+        float _WortBiomeOn;
+        static float _FW;
         CBUFFER_START(UnityPerMaterial)
-            float4 _CliffMap_ST;
+            float4 _SetP0, _SetP1, _SetP2, _SetP3;   // 每套：(有顶岩, 顶岩周期, 泥土周期, 0)
+            float _SetCount, _ArrSize, _BiomePatch, _BiomeSharp;
             float _EarthPeriod, _UseTopRock, _TopRockPeriod;
             float _Inset0, _Inset1, _BevelR0, _BevelR1, _TopBlend, _FootBlend;
             float _ClipNorth, _NorthClip, _BlackLift, _WallGain, _WallSat, _EdgeFx, _WallTopFx;
@@ -78,6 +85,11 @@ Shader "Wort/ProcCliff"
         float lum(half3 c) { return dot(c, half3(0.299, 0.587, 0.114)); }
         float smooth01(float x) { x = saturate(x); return x * x * (3 - 2 * x); }
         float bevelR(float along, float seed) { return _BevelR0 + (_BevelR1 - _BevelR0) * vnoise(along, 100 + seed, 0.7); }
+
+        float4 setP(float s) { return s < 0.5 ? _SetP0 : s < 1.5 ? _SetP1 : s < 2.5 ? _SetP2 : _SetP3; }
+        float lodFor(float per) { return max(0, log2(max(_FW * _ArrSize / per, 1e-6))); }
+        half4 ColA(float slice, float2 uv, float per) { return SAMPLE_TEXTURE2D_ARRAY_LOD(_ColArr, sampler_ColArr, uv, slice, lodFor(per)); }
+        half4 NrmA(float slice, float2 uv, float per) { return SAMPLE_TEXTURE2D_ARRAY_LOD(_NrmArr, sampler_NrmArr, uv, slice, lodFor(per)); }
 
         // 绕轴 k（单位向量）旋转 ang 弧度
         float3 rotateAxis(float3 v, float3 k, float ang)
@@ -167,24 +179,25 @@ Shader "Wort/ProcCliff"
                 return o;
             }
 
-            half4 frag(Varyings i) : SV_Target
+            // 一套 Biome 的颜色和法线（s = 套件编号；贴图都在两个数组里：第 s*3 层崖壁、s*3+1 层泥土、s*3+2 层顶岩）
+            void Surface(float s, float3 P, float3 ng, float4 d1, float4 d2, out half3 albedo, out float3 N)
             {
-                float3 P = i.positionWS;
-                float3 ng = normalize(i.normalWS);
+                float4 sp = setP(s);
+                float useTR = sp.x, trPer = sp.y, ePer = sp.z;
+                albedo = 0; N = float3(0, 1, 0);
                 const float3 up = float3(0, 1, 0);
-                float kind = i.d1.x;
-                float2 ue = P.xz / _EarthPeriod;
-                half3 earthC = SAMPLE_TEXTURE2D(_EarthMap, sampler_EarthMap, ue).rgb;
-                float3 N; half3 albedo; bool isWall = kind > 1.5;
+                float kind = d1.x;
+                float2 ue = P.xz / ePer;
+                half3 earthC = ColA(s * 3 + 1, ue, ePer).rgb;
+                bool isWall = kind > 1.5;
 
                 if (!isWall)
                 {
                     // ---------- 顶面 ----------
-                    float mask = i.d1.y; float2 cell = i.d2.xy;
+                    float mask = d1.y; float2 cell = d2.xy;
                     float fx = P.x - cell.x, fz = P.z - cell.y;
                     bool bN = fmod(mask, 2) >= 1, bE = fmod(floor(mask / 2), 2) >= 1, bS = fmod(floor(mask / 4), 2) >= 1, bW = fmod(floor(mask / 8), 2) >= 1;
                     float dN = bN ? 1 - fz : 9, dE = bE ? 1 - fx : 9, dS = bS ? fz : 9, dW = bW ? fx : 9;
-                    NorthClip(P, i.d1, i.d2);
                     float dm = min(min(dN, dE), min(dS, dW));
                     // 内拐角（只有斜对角更低）：按到角点的距离算顶岩边和泥土内收，两边的顶岩边在拐角处接上
                     float cm = floor(mask / 16);
@@ -194,7 +207,7 @@ Shader "Wort/ProcCliff"
                     if (fmod(floor(cm / 4), 2) >= 1) dc = min(dc, length(float2(1 - fx, fz)));
                     if (fmod(floor(cm / 8), 2) >= 1) dc = min(dc, length(float2(fx, fz)));
                     float dr = min(dm, dc);   // 顶岩边 / 泥土内收用；倒角只看真正的露边 dm
-                    float3 earthN = topFrame(UnpackNormal(SAMPLE_TEXTURE2D(_EarthNormal, sampler_EarthNormal, ue)));
+                    float3 earthN = topFrame(UnpackNormal(NrmA(s * 3 + 1, ue, ePer)));
                     // 崖脚（内凹圆角）的地面一侧：哪边邻居更高，墙根前 r 内法线往外倾到 45°（墙底同样往上翻 45°，交界线对齐）
                     float hm = floor(mask / 256);
                     float dHN = fmod(hm, 2) >= 1 ? 1 - fz : 9, dHE = fmod(floor(hm / 2), 2) >= 1 ? 1 - fx : 9;
@@ -231,16 +244,16 @@ Shader "Wort/ProcCliff"
                         outd += float3(-1, 0, 0) * saturate(1 - dW / 0.5);
                         outd = normalize(outd + float3(0, 0, -1e-4));
                         // 顶岩（沼泽 / 森林即泥土）
-                        float2 ur = P.xz / _TopRockPeriod;
-                        half3 rk = _UseTopRock > 0.5 ? SAMPLE_TEXTURE2D(_TopRockMap, sampler_TopRockMap, ur).rgb : earthC;
-                        float3 rockN = _UseTopRock > 0.5 ? topFrame(UnpackNormal(SAMPLE_TEXTURE2D(_TopRockNormal, sampler_TopRockNormal, ur))) : earthN;
+                        float2 ur = P.xz / trPer;
+                        half3 rk = useTR > 0.5 ? ColA(s * 3 + 2, ur, trPer).rgb : earthC;
+                        float3 rockN = useTR > 0.5 ? topFrame(UnpackNormal(NrmA(s * 3 + 2, ur, trPer))) : earthN;
                         // 泥土内收
                         if (dc < dm) along = P.x + P.z;
                         float wi = _Inset0 + (_Inset1 - _Inset0) * (0.6 * vnoise(along, 81, 0.5) + 0.4 * vnoise(along, 82, 0.12));
                         wi += 0.15 * saturate((vnoise(along, 83, 0.9) - 0.75) / 0.25);
                         float se = dr - wi + (lum(earthC) - lum(rk)) * 0.12 + (vnoise2(P.xz, 85, 0.06) - 0.5) * 0.06;
-                        float qe = _UseTopRock > 0.5 ? smoothstep(-0.015, 0.015, se) : 1;
-                        float ao = 1 - 0.35 * saturate(1 + se / 0.05) * (1 - qe) * _UseTopRock;
+                        float qe = useTR > 0.5 ? smoothstep(-0.015, 0.015, se) : 1;
+                        float ao = 1 - 0.35 * saturate(1 + se / 0.05) * (1 - qe) * useTR;
                         albedo = lerp(rk * ao, earthC, qe);
                         float3 base = normalize(lerp(rockN, earthN, qe));
                         // 平滑倒角：细节跟着表面一起绕边缘倒到 45°
@@ -253,18 +266,18 @@ Shader "Wort/ProcCliff"
                 {
                     // ---------- 墙面（正面 kind 2 / 侧面 kind 4）----------
                     bool side = kind > 3;
-                    float sgn = side ? i.d1.y : 0;
-                    float yt = i.d1.z, yb = i.d1.w, edge = i.d2.x;
+                    float sgn = side ? d1.y : 0;
+                    float yt = d1.z, yb = d1.w, edge = d2.x;
                     float3 outd = side ? float3(sgn, 0, 0) : float3(0, 0, -1);
                     // 崖壁贴图：正面 u = x；侧面从这一列正面转角接着铺
-                    float cu = side ? edge + sgn * (P.z - i.d2.y) : P.x;
-                    float2 uc = float2(cu, P.y) * _CliffMap_ST.xy + _CliffMap_ST.zw;
-                    half3 tc = SAMPLE_TEXTURE2D(_CliffMap, sampler_CliffMap, uc).rgb;
-                    float3 ct = UnpackNormal(SAMPLE_TEXTURE2D(_CliffNormal, sampler_CliffNormal, uc));
+                    float cu = side ? edge + sgn * (P.z - d2.y) : P.x;
+                    float2 uc = float2(cu, P.y);
+                    half3 tc = ColA(s * 3, uc, 1).rgb;
+                    float3 ct = UnpackNormal(NrmA(s * 3, uc, 1));
                     float3 T = normalize(cross(ng, up)), B = normalize(cross(T, ng));
                     float3 Wv = normalize(T * ct.x + B * ct.y + ng * ct.z);
                     // 崖脚融合泥土
-                    half3 ew = SAMPLE_TEXTURE2D(_EarthMap, sampler_EarthMap, float2(cu, P.y) / _EarthPeriod).rgb;
+                    half3 ew = ColA(s * 3 + 1, float2(cu, P.y) / ePer, ePer).rgb;
                     float lc = lum(tc);
                     float qf = smooth01((_FootBlend - (P.y - yb)) / _FootBlend + (lum(ew) - lc) * 1.2);
                     qf = max(qf, smooth01(1 - (P.y - yb) / 0.06));   // 贴地那一点一定是泥土，和地面同色
@@ -279,10 +292,10 @@ Shader "Wort/ProcCliff"
                         // 墙顶融合顶岩：按“顶面越过折线的延续”展开取样
                         float su = side ? edge + sgn * (yt - P.y) : P.x;
                         float sv = side ? P.z : edge - (yt - P.y);
-                        float per = _UseTopRock > 0.5 ? _TopRockPeriod : _EarthPeriod;
+                        float per = useTR > 0.5 ? trPer : ePer;
                         float2 us = float2(su, sv) / per;
-                        half3 trw = _UseTopRock > 0.5 ? SAMPLE_TEXTURE2D(_TopRockMap, sampler_TopRockMap, us).rgb : SAMPLE_TEXTURE2D(_EarthMap, sampler_EarthMap, us).rgb;
-                        float3 trn = _UseTopRock > 0.5 ? UnpackNormal(SAMPLE_TEXTURE2D(_TopRockNormal, sampler_TopRockNormal, us)) : UnpackNormal(SAMPLE_TEXTURE2D(_EarthNormal, sampler_EarthNormal, us));
+                        half3 trw = useTR > 0.5 ? ColA(s * 3 + 2, us, trPer).rgb : ColA(s * 3 + 1, us, ePer).rgb;
+                        float3 trn = useTR > 0.5 ? UnpackNormal(NrmA(s * 3 + 2, us, trPer)) : UnpackNormal(NrmA(s * 3 + 1, us, ePer));
                         float qt = smooth01((_TopBlend - (yt - P.y)) / _TopBlend + (lum(trw) - lc) * 1.2 - 0.15 + (vnoise2(float2(cu, P.y), 91, 0.08) - 0.5) * 0.5);
                         albedo = lerp(albedo, trw, qt);
                         float3 rockW = rotateAxis(topFrame(trn), k, radians(90));      // 顶面坐标 → 墙面
@@ -291,7 +304,7 @@ Shader "Wort/ProcCliff"
                     // 崖脚融合区：法线细节跟着颜色换成泥土的（顶面坐标 → 墙面）
                     if (qf > 0)
                     {
-                        float3 en = topFrame(UnpackNormal(SAMPLE_TEXTURE2D(_EarthNormal, sampler_EarthNormal, float2(cu, P.y) / _EarthPeriod)));
+                        float3 en = topFrame(UnpackNormal(NrmA(s * 3 + 1, float2(cu, P.y) / ePer, ePer)));
                         Wv = normalize(lerp(Wv, rotateAxis(en, k, radians(90)), qf));
                     }
                     N = Wv;
@@ -307,25 +320,56 @@ Shader "Wort/ProcCliff"
                         // 竖直转角：正面在段的东西两头（那一侧更低时）转向侧面，侧面在正面转角附近转向正面，各 45°，转角处对齐
                         if (!side)
                         {
-                            float packed = i.d2.w, hwS = floor(packed / 1024), heE = packed - hwS * 1024;
+                            float packed = d2.w, hwS = floor(packed / 1024), heE = packed - hwS * 1024;
                             if (P.y > heE + 0.01)
                             {
-                                float sv = saturate(1 - max(i.d2.z - P.x, 0) / bevelR(P.y + i.d2.z, 40));
+                                float sv = saturate(1 - max(d2.z - P.x, 0) / bevelR(P.y + d2.z, 40));
                                 if (sv > 0) N = normalize(rotateAxis(N, up, -radians(45) * sv));
                             }
                             if (P.y > hwS + 0.01)
                             {
-                                float sv = saturate(1 - max(P.x - i.d2.y, 0) / bevelR(P.y + i.d2.y, 40));
+                                float sv = saturate(1 - max(P.x - d2.y, 0) / bevelR(P.y + d2.y, 40));
                                 if (sv > 0) N = normalize(rotateAxis(N, up, radians(45) * sv));
                             }
                         }
                         else
                         {
-                            float sv = saturate(1 - max(P.z - i.d2.y, 0) / bevelR(P.y + edge, 40));
+                            float sv = saturate(1 - max(P.z - d2.y, 0) / bevelR(P.y + edge, 40));
                             if (sv > 0) N = normalize(rotateAxis(N, up, sgn * radians(45) * sv));
                         }
                     }
                 }
+
+            }
+
+            half4 frag(Varyings i) : SV_Target
+            {
+                float3 P = i.positionWS;
+                float3 ng = normalize(i.normalWS);
+                NorthClip(P, i.d1, i.d2);
+                _FW = max(length(ddx(P)), length(ddy(P)));   // 一个像素在世界里多大：所有贴图的 mip 都按它算（分支 / 循环里不用硬件求导）
+                // Biome 融合（负责人 2026-11-13，斑块式过渡；预览 proc_cliff.py BIOME=1）：
+                // 每套算一个分数 = 权重 + 各自的斑块噪声 + 各自颜色的明暗，分数最高的胜出，接近处很窄的软过渡；权重几乎为 0 的套不算（大部分像素只算一套）
+                float4 w = _WortBiomeOn > 0.5 ? SAMPLE_TEXTURE2D_LOD(_WortBiomeMap, sampler_WortBiomeMap, (P.xz - _WortBiomeRect.xy) / _WortBiomeRect.zw, 0) : float4(1, 0, 0, 0);
+                half3 albs[4]; float3 ns[4]; float sc[4]; float best = -9;
+                [unroll] for (int k = 0; k < 4; k++)
+                {
+                    albs[k] = 0; ns[k] = float3(0, 1, 0); sc[k] = -9;
+                    if (w[k] > 0.02 && k < _SetCount)
+                    {
+                        Surface(k, P, ng, i.d1, i.d2, albs[k], ns[k]);
+                        float nz = 0.65 * vnoise2(P.xz, 77 + 13 * k, 2.5) + 0.35 * vnoise2(P.xz, 78 + 13 * k, 2.5 / 3.5);
+                        sc[k] = w[k] + (nz - 0.5) * _BiomePatch + (lum(albs[k]) - 0.5) * 0.45;
+                        best = max(best, sc[k]);
+                    }
+                }
+                half3 albedo = 0; float3 N = 0; float tot = 0;
+                [unroll] for (int j = 0; j < 4; j++)
+                {
+                    float e = sc[j] > -8 ? exp((sc[j] - best) / max(_BiomeSharp, 1e-3)) : 0;
+                    albedo += albs[j] * e; N += ns[j] * e; tot += e;
+                }
+                albedo /= max(tot, 1e-5); N = normalize(N + float3(0, 1e-5, 0));
 
                 // 暗部提亮（sRGB 里把曲线最低点往上拉）
                 half3 srgb = FastLinearToSRGB(albedo);
