@@ -36,6 +36,9 @@ Forward+ 修复后本地确认：瓦片受光、有影子（负责人截图）�
 - Unity 实机验收（负责人，菜单 `Wort/Debug/Cliff Normal Preview`）：看不出接缝，固定视角下可接受。
 - 已接入正式套件（颜色 + 法线一起换，覆盖原文件、GUID 不变）：`Limestone` ← 9485（人类区），`OliveStrata` Cliff_A/B ← 9471（沼泽），`RustCrag` Cliff_A/B ← 9473（森林）；
   崖壁材质（`CharcoalCliff`、`CharcoalCliffCrown`、两套的 `Cliff_A/B`）`_DetailNormal` 0.35 → 1。`Limestone` 的唇边接缝也读 `Cliff_BaseColor`，随之更新。
+- 负责人反馈沼泽 / 森林每列墙最上一层没换：这两套的 Crown 是单网格、用自己整张贴图（唇边画在顶部）。
+  → `TileSurface` 的 `_SeamOn` 加 2 = 单网格模式：整块用崖壁贴图，唇边以上（`_LipY` 0.88）直接取原 Crown 贴图（`_SeamLip`），交界照原公式融合。
+  两套 `Crown_A/B` 改为 `_BaseMap`/`_BumpMap` = 对应 `Cliff_A/B`，`_SeamLip` = 原 Crown 颜色，法线权重 1。`_LipY` 待本地看交界位置再调。
 
 等负责人 / Codex：
 1. 本地按上一次给的一次性步骤拉新（先把本地未跟踪的 `Assets/Wort/Art/Tilesets` 挪到项目外备份），在 Unity 里试体素笔刷，发 Console 和截图。

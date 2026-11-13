@@ -11,6 +11,7 @@
 //   墙件 UV 纵向 = 件内高度，唇边下沿在 _LipY。交界两侧 _SeamWidth 内，两个材质用同一个公式逐像素决定显示“浅色唇边”还是“深色崖壁”：
 //   P = 0.5 + 到交界的距离 / 宽度 + (崖壁贴图明暗 − 0.3) × _SeamNoise —— 深色石缝往上咬进唇边、亮的石面往下变浅，交界跟着石块轮廓走；
 //   两侧算出的交界线连续。浅色一侧取唇边贴图在交界上方的镜像（不用唇边贴图下部的竖条纹）。交界下方 _ShadowDepth 内加淡暗影（_LipShadow）。
+//   _SeamOn = 2（单网格墙件，OliveStrata / RustCrag 的 Crown）：整块用崖壁贴图（_BaseMap / _BumpMap），唇边以上直接取 _SeamLip（原 Crown 贴图），交界照上面的公式融合。
 Shader "Wort/TileSurface"
 {
     Properties
@@ -24,7 +25,7 @@ Shader "Wort/TileSurface"
         _WorldTile ("World Tile Size (m)", Float) = 1
         [Toggle] _RoadOn ("Road Overlay", Float) = 0
         _RoadTex ("Road (RGB, A = height)", 2D) = "gray" {}
-        [Toggle] _SeamOn ("Lip Seam Blend (Crown walls)", Float) = 0
+        [Enum(Off, 0, TwoSubmesh, 1, SingleMesh, 2)] _SeamOn ("Lip Seam Blend (Crown walls)", Float) = 0
         _SeamCliff ("Seam: Cliff Map", 2D) = "gray" {}
         _SeamLip ("Seam: Lip Map", 2D) = "white" {}
         _LipY ("Lip Bottom (UV v)", Float) = 0.88
@@ -137,6 +138,8 @@ Shader "Wort/TileSurface"
                         albedo = lerp(cc, lc, P);
                         lipShade = 1 - _LipShadow * (1 - P) * (1 - smoothstep(0, _ShadowDepth, max(-d, 0)));
                     }
+                    else if (_SeamOn > 1.5 && d > 0)
+                        albedo = SAMPLE_TEXTURE2D(_SeamLip, sampler_SeamLip, i.uv).rgb * _BaseColor.rgb; // 单网格墙件：唇边以上直接用唇边贴图
                 }
                 if (_RoadOn > 0.5 && _WortGroundMaskOn > 0.5 && ng.y > 0.6)
                 {
