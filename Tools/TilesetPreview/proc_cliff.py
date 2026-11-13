@@ -358,23 +358,21 @@ def blend_render(hard=False):
     surf = [render(*a, surface=True) for a in SETS]
     x, y, z = surf[0]['x'], surf[0]['y'], surf[0]['z']
     W_ = sample_w(blur_weights(biome_map(), len(SETS)), x, z)
-    order = np.argsort(-W_, axis=1)
-    a_, b_ = np.minimum(order[:, 0], order[:, 1]), np.maximum(order[:, 0], order[:, 1])   # 按编号排，交界两侧顺序一致
-    idx = np.arange(len(x))
-    wa, wb = W_[idx, a_], W_[idx, b_]
-    g = wb / np.maximum(wa + wb, 1e-6)
+    # 每一套各算一个分数：权重 + 各自的斑块噪声 + 各自贴图的明暗；分数最高的胜出，接近处留一条很窄的软过渡（softmax）。
+    # 不再“取前两名比较”：三套交汇时不会因为第二名换人而出现直线。
     A = np.stack([s_['alb'] for s_ in surf]); NN = np.stack([s_['N'] for s_ in surf])
-    albA, albB = A[a_, idx], A[b_, idx]; NA, NB = NN[a_, idx], NN[b_, idx]
     lum = lambda c: c @ [0.299, 0.587, 0.114]
+    k = len(SETS)
     if hard:
-        q = (g > 0.5).astype(float)
+        P_ = np.eye(k)[np.argmax(W_, axis=1)]
     else:
-        band = 1 - np.abs(2 * g - 1)
-        nz = 0.65 * vnoise2(x, z, 77, PATCH) + 0.35 * vnoise2(x, z, 78, PATCH / 3.5)   # 大斑块 + 碎边
-        t = g + ((nz - 0.5) * 1.6 + (lum(albB) - lum(albA)) * 0.9) * band
-        q = np.clip((t - 0.5 + SHARP) / (2 * SHARP), 0, 1); q = q * q * (3 - 2 * q)
-    alb = albA * (1 - q[:, None]) + albB * q[:, None]
-    N = NA * (1 - q[:, None]) + NB * q[:, None]; N /= np.linalg.norm(N, axis=1, keepdims=True)
+        sc = np.stack([W_[:, i] + ((0.65 * vnoise2(x, z, 77 + 13 * i, PATCH) + 0.35 * vnoise2(x, z, 78 + 13 * i, PATCH / 3.5)) - 0.5) * 0.8
+                       + (lum(A[i]) - 0.5) * 0.45 for i in range(k)], 1)
+        sc = np.where(W_ > 0.02, sc, -9)               # 权重几乎为 0 的套不参与（Unity 里也就不采样）
+        e = np.exp((sc - sc.max(1, keepdims=True)) / 0.025)   # 温度越小交界越硬
+        P_ = e / e.sum(1, keepdims=True)
+    alb = np.einsum('ni,inc->nc', P_, A)
+    N = np.einsum('ni,inc->nc', P_, NN); N /= np.linalg.norm(N, axis=1, keepdims=True)
     return light(alb, N, x, y, z, surf[0]['shape'])
 
 import os
