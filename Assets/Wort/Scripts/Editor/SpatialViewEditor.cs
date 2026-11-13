@@ -41,7 +41,8 @@ namespace Wort.Editor
                 P("closeThreshold", "降到多少时收回");
                 P("holeTime", "展开 / 收回用时（秒）");
                 P("holeWave", "圆边波浪幅度");
-                P("holeDissolve", "边缘溶解带宽");
+                P("holeFade", "边缘渐变带宽");
+                P("holeEdgeBite", "黑边扰动（米）");
                 P("frontMargin", "算作遮挡的高度余量（米）");
                 P("debugForceHole", "调试：一直显示虚化圆");
             }

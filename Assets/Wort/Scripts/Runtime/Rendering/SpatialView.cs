@@ -50,8 +50,10 @@ namespace Wort.Rendering
         [Range(0.05f, 1f)] public float holeTime = 0.25f;
         [Tooltip("边缘波浪幅度（半径的比例）")]
         [Range(0f, 0.3f)] public float holeWave = 0.08f;
-        [Tooltip("边缘溶解带宽（半径的比例）")]
-        [Range(0.02f, 0.6f)] public float holeDissolve = 0.25f;
+        [Tooltip("边缘不透明度渐变带宽（半径的比例）：圆边不透明，往里渐变到全透")]
+        [Range(0.02f, 1f)] public float holeFade = 0.45f;
+        [Tooltip("洞里黑色区域（被挖开的崖体内部）的边缘往地面啃进去多少（米），把体素直角边打碎，和鹰眼视觉同款扰动。0 = 关")]
+        [Range(0f, 1f)] public float holeEdgeBite = 0.35f;
         [Tooltip("比主角身体中心高出多少才算挡在前面（米）")]
         [Range(0f, 1f)] public float frontMargin = 0.25f;
         [Tooltip("调试：不管有没有被挡住，一直显示虚化圆")]
@@ -107,6 +109,7 @@ namespace Wort.Rendering
 
         private static readonly int IdHoleCenter = Shader.PropertyToID("_WortHoleCenter");
         private static readonly int IdHoleParams = Shader.PropertyToID("_WortHoleParams");
+        private static readonly int IdHoleEdge = Shader.PropertyToID("_WortHoleEdge");
         private static readonly int IdCutParams = Shader.PropertyToID("_WortCutParams");
         private static readonly int IdCutOn = Shader.PropertyToID("_WortCutOn");
         private static readonly int IdCutCircle = Shader.PropertyToID("_WortCutCircle");
@@ -218,7 +221,8 @@ namespace Wort.Rendering
             HoleRadiusNow = dt > 0f ? Mathf.SmoothDamp(HoleRadiusNow, targetR, ref holeVel, holeTime * 0.5f, Mathf.Infinity, dt) : targetR;
             Vector3 c = player != null ? player.position + Vector3.up * (bodyHeight * 0.5f) : Vector3.zero;
             Shader.SetGlobalVector(IdHoleCenter, new Vector4(c.x, c.y, c.z, HoleRadiusNow > 0.02f ? HoleRadiusNow : 0f));
-            Shader.SetGlobalVector(IdHoleParams, new Vector4(time, holeWave, holeDissolve, frontMargin));
+            Shader.SetGlobalVector(IdHoleParams, new Vector4(time, holeWave, holeFade, frontMargin));
+            Shader.SetGlobalVector(IdHoleEdge, new Vector4(holeEdgeBite, holeEdgeBite > 0f ? 1 : 0, 0, 0));
 
             // —— 最低一层压暗 ——
             float bottom = overrideBottom || !WorldAOField.HasField ? bottomHeight : WorldAOField.MinHeight;
