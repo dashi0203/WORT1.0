@@ -6,7 +6,7 @@
 // - 平滑倒角：离露边 r（18–32cm，沿边缓慢变化）内，顶面法线连续往外倒到 45°，墙面法线往上翻到 45°，两边同一个 r，折线处角度和贴图都连续；
 //   石头的法线细节放在顶面坐标里，跟着表面一起绕边缘旋转（不淡出），所以折线看不出来。
 // - 墙面：崖壁颜色 + 法线；顶部 _TopBlend 内融合顶岩（按“顶面越过折线的延续”展开取样，石块从顶面绕到墙上），崖脚 _FootBlend 内融合泥土。
-// - 暗部提亮 _BlackLift（同 TileSurface）；崖壁提亮 / 加饱和 _WallGain、_WallSat。
+// - 暗部提亮 _BlackLift（sRGB 里把曲线最低点往上拉）；崖壁提亮 / 加饱和 _WallGain、_WallSat。
 // - 平滑法线（负责人 2026-11-13）：顶沿、竖直转角（正面 ↔ 侧面）、崖脚内凹圆角（墙底 ↔ 墙根前地面）都在折线两侧各转 45°，两边同一个宽度函数，折线处对齐。
 // - Biome 融合：贴图在数组 _ColArr / _NrmArr 里（TerrainLab 运行时打包），每像素按权重图取候选套件，各自算 Surface 再按分数合成（斑块式过渡）。
 //   上面 _CliffMap 等属性只是每套材质存贴图用的，渲染时不直接读。
@@ -141,7 +141,7 @@ Shader "Wort/ProcCliff"
             #pragma fragment frag
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
             #pragma multi_compile_fragment _ _SHADOWS_SOFT _SHADOWS_SOFT_LOW _SHADOWS_SOFT_MEDIUM _SHADOWS_SOFT_HIGH
-            // Forward+：见 TileSurface.shader 的说明（不声明时主光源被乘成 0）
+            // Forward+（PC 渲染器用的就是它）：不声明这两个关键字时，URP 的 GetMainLight 从逐物体灯光数据取衰减，Forward+ 不填 → 主光源被乘成 0。Unity 6 叫 _CLUSTER_LIGHT_LOOP，旧版叫 _FORWARD_PLUS
             #pragma multi_compile _ _CLUSTER_LIGHT_LOOP
             #pragma multi_compile _ _FORWARD_PLUS
             #pragma multi_compile_fog

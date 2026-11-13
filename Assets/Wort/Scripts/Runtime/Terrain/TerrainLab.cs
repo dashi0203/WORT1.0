@@ -53,10 +53,7 @@ namespace Wort.Terrain
         [SerializeField, Tooltip("空白测试地的数据（每格高度、套件编号）。体素笔刷打开时自动创建 Assets/Wort/Data/TestGround.asset。")]
         private TestGroundAsset testGround;
 
-        [SerializeField, Tooltip("TestGround 用的模块化瓦片套件（编号 = 数组下标，0 是默认）。为空时用原来的崖面外观。Inspector 里可以一键填入项目里的全部套件。")]
-        private TilesetAsset[] tilesets;
-
-        [SerializeField, Tooltip("TestGround 用程序化崖壁（ProcCliffMesher + Wort/ProcCliff）代替模块化瓦片。关掉就回到瓦片，两种路线可以对比（负责人 2026-11-13）。")]
+        [SerializeField, Tooltip("TestGround / Terrace5x5 用程序化崖壁（ProcCliffMesher + Wort/ProcCliff）。关掉就用旧的崖面外观（CliffMesher）。模块化瓦片路线已删除（负责人 2026-11-13）。")]
         private bool procCliff;
 
         [SerializeField, Tooltip("程序化崖壁的材质套（编号 = 数组下标，和瓦片套件编号一致）。Inspector 里可以一键填入。")]
@@ -176,12 +173,8 @@ namespace Wort.Terrain
             public MeshData Visual;
             public List<ColliderBoxes.Box> Boxes;
             public MeshData Slopes;
-            public List<TilePlacement> Tiles; // 用模块化瓦片时：这个 chunk 的瓦片清单（Visual 为空）
             public ProcCliffMesh Proc;        // 用程序化崖壁时：这个 chunk 的网格（Visual 为空）
         }
-
-        /// <summary>TestGround 且指定了瓦片套件时，用模块化瓦片画地形。</summary>
-        public bool UseTiles => !UseProcCliff && generator == GeneratorKind.TestGround && tilesets != null && tilesets.Length > 0 && tilesets[0] != null;
 
         /// <summary>TestGround 且打开了程序化崖壁、指定了材质套时，用程序化崖壁画地形。</summary>
         public bool UseProcCliff => (generator == GeneratorKind.TestGround || generator == GeneratorKind.Terrace5x5) &&
@@ -196,15 +189,9 @@ namespace Wort.Terrain
                 b.Proc = ProcCliffMesher.Build(map, generator == GeneratorKind.TestGround && testGround != null ? testGround.Sets : null, cx, cz);
                 b.Visual = generator == GeneratorKind.TestGround ? new MeshData() : ChunkMesher.Build(voxels, cx, cz);   // 只用它的水面
             }
-            else if (UseTiles)
-            {
-                b.Tiles = new List<TilePlacement>();
-                TilePlacer.Chunk(map, testGround != null ? testGround.Sets : null, cx, cz, b.Tiles);
-                b.Visual = new MeshData();
-            }
             else
                 b.Visual = cliffDressing ? CliffMesher.Build(voxels, cx, cz, useed) : ChunkMesher.Build(voxels, cx, cz);
-            if (addColliders && (cliffDressing || b.Tiles != null || b.Proc != null))
+            if (addColliders && (cliffDressing || b.Proc != null))
             {
                 b.Boxes = ColliderBoxes.Build(map, cx, cz);
                 b.Slopes = CliffMesher.SlopesOnly(voxels, cx, cz);
@@ -226,46 +213,15 @@ namespace Wort.Terrain
                 triangles = AddProcCliff(chunk, b.Proc);
                 AddPart(chunk, "Water", b.Visual, true, false);
             }
-            else if (b.Tiles != null)
-                triangles = AddTiles(chunk, b);
             else
             {
                 AddPart(chunk, "Ground", b.Visual, false, addColliders && !cliffDressing);
                 AddPart(chunk, "Water", b.Visual, true, false);
                 triangles = b.Visual.TriangleCount;
             }
-            if (addColliders && (cliffDressing || b.Tiles != null || b.Proc != null))
+            if (addColliders && (cliffDressing || b.Proc != null))
                 AddBoxColliders(chunk, map, b); // 碰撞仍按 1m 格：同高矩形合并成碰撞盒 + 斜坡小网格
             return triangles;
-        }
-
-        /// <summary>
-        /// 贴地墙件的底边加一点噪声（负责人 2026-11-12：底部边缘做点小噪声，别凸出来太多）：
-        /// 复制一份网格，底边（本地 y ≈ 0）中间的顶点按世界坐标哈希往正面（本地 −Z）推 0.5–4cm；两端不动，和相邻墙件、拐角对得上。
-        /// </summary>
-        private static Mesh FootNoise(Mesh src, TilePlacement p)
-        {
-            var copy = Object.Instantiate(src);
-            copy.hideFlags = HideFlags.DontSave;
-            var v = copy.vertices;
-            var rot = Quaternion.Euler(0f, p.Rot * 90f, 0f);
-            for (int i = 0; i < v.Length; i++)
-            {
-                if (v[i].y > 0.01f || v[i].x < 0.02f || v[i].x > 0.98f) continue;
-                var w = rot * v[i] + new Vector3(p.X, p.Y, p.Z);
-                uint h = Hash.Of(Mathf.RoundToInt(w.x * 16f), Mathf.RoundToInt(w.z * 16f), (uint)(p.Y * 977 + 5));
-                v[i].z -= 0.005f + 0.035f * ((h & 0xFFFF) / 65535f);
-            }
-            copy.vertices = v;
-            copy.RecalculateBounds();
-            return copy;
-        }
-
-        private TilesetAsset TilesetFor(byte set)
-        {
-            if (tilesets == null || tilesets.Length == 0) return null;
-            var t = set < tilesets.Length ? tilesets[set] : null;
-            return t != null ? t : tilesets[0];
         }
 
         /// <summary>
@@ -487,69 +443,6 @@ namespace Wort.Terrain
                     for (int c = 0; c < 4; c++) acc[c] += line[add * 4 + c] - line[sub * 4 + c];
                 }
             }
-        }
-
-        /// <summary>
-        /// 模块化瓦片：按材质分组，每组用 CombineMeshes 合成一个子网格，整个 chunk 一个网格（运行时没有逐块开销）。
-        /// 瓦片网格要可读（Read/Write，Tileset 的网格资源默认就是）。返回三角形数。
-        /// </summary>
-        private int AddTiles(GameObject chunk, ChunkBuild b)
-        {
-            var groups = new Dictionary<Material, List<CombineInstance>>();
-            var order = new List<Material>();
-            var origin = chunk.transform.localPosition;
-            int missing = 0; string firstMissing = null;
-            var temps = new List<Mesh>(); // 底边加了噪声的墙件副本，合并完删掉
-            foreach (var p in b.Tiles)
-            {
-                var set = TilesetFor(p.Set);
-                if (set == null || !set.TryGet(p.Name, out var mesh, out var mats))
-                {
-                    missing++; if (firstMissing == null) firstMissing = p.Name;
-                    continue;
-                }
-                var m = Matrix4x4.TRS(new Vector3(p.X, p.Y, p.Z) - origin, Quaternion.Euler(0f, p.Rot * 90f, 0f), Vector3.one);
-                if (p.Foot)
-                {
-                    mesh = FootNoise(mesh, p);
-                    temps.Add(mesh);
-                }
-                for (int s = 0; s < mesh.subMeshCount && s < mats.Length; s++)
-                {
-                    if (mats[s] == null) continue;
-                    if (!groups.TryGetValue(mats[s], out var list))
-                    {
-                        groups[mats[s]] = list = new List<CombineInstance>();
-                        order.Add(mats[s]);
-                    }
-                    list.Add(new CombineInstance { mesh = mesh, subMeshIndex = s, transform = m });
-                }
-            }
-            if (missing > 0)
-                Debug.LogWarning($"[TerrainLab] {chunk.name}：{missing} 块瓦片在套件里找不到（如 {firstMissing}），没有画。", this);
-            if (order.Count == 0)
-                return 0;
-            var parts = new CombineInstance[order.Count];
-            for (int k = 0; k < order.Count; k++)
-            {
-                var part = new Mesh { indexFormat = IndexFormat.UInt32, hideFlags = HideFlags.DontSave };
-                part.CombineMeshes(groups[order[k]].ToArray(), true, true);
-                parts[k] = new CombineInstance { mesh = part, transform = Matrix4x4.identity };
-            }
-            var combined = new Mesh { indexFormat = IndexFormat.UInt32, hideFlags = HideFlags.DontSave, name = $"{chunk.name} Tiles" };
-            combined.CombineMeshes(parts, false, false);
-            foreach (var part in parts) DestroySafe(part.mesh);
-            foreach (var t in temps) DestroySafe(t);
-            var go = new GameObject("Tiles") { hideFlags = HideFlags.DontSave };
-            go.transform.SetParent(chunk.transform, false);
-            go.isStatic = true;
-            go.AddComponent<MeshFilter>().sharedMesh = combined;
-            var renderer = go.AddComponent<MeshRenderer>();
-            renderer.sharedMaterials = order.ToArray();
-            renderer.shadowCastingMode = ShadowCastingMode.On;
-            long tris = 0;
-            for (int k = 0; k < combined.subMeshCount; k++) tris += combined.GetIndexCount(k) / 3;
-            return (int)tris;
         }
 
         /// <summary>
@@ -909,7 +802,6 @@ namespace Wort.Terrain
 
         // ---- 空白测试地与体素笔刷（Minecraft 式） ----
         public TestGroundAsset TestGroundData { get => testGround; set => testGround = value; }
-        public TilesetAsset[] Tilesets { get => tilesets; set => tilesets = value; }
         public ProcCliffSet[] ProcCliffSets { get => procCliffSets; set => procCliffSets = value; }
         public bool ProcCliff { get => procCliff; set => procCliff = value; }
         public bool IsTestGround => generator == GeneratorKind.TestGround;

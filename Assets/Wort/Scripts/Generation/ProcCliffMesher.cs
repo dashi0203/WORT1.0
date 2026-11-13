@@ -441,7 +441,7 @@ namespace Wort.Generation
             return (Bul0 + (Bul1 - Bul0) * ValueNoise2(y, z, side > 0 ? SeedE : SeedW, 0.4)) * (TopOut + (1 - TopOut) * t);
         }
 
-        /// <summary>地图外当作和边上那格同高（不画边界墙，和 TilePlacer 一致）。</summary>
+        /// <summary>地图外当作和边上那格同高（不画边界墙）。</summary>
         static int HeightAt(RegionMap map, int x, int z)
         {
             x = x < 0 ? 0 : x >= map.W ? map.W - 1 : x;
