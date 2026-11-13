@@ -27,6 +27,7 @@ SETS = [('OliveStrata', 'IMG_9471_BaseColor.png', 'IMG_9471_Normal_Periodic512.p
 TR_PERIOD = 2.7    # 顶岩平铺周期（m），不取整数，和崖壁 1m 错开
 NCLIP = 0.12       # 顶面北边透明裁剪最大深度（m）
 WALL_GAIN, WALL_SAT = 1.12, 1.12   # 崖壁提亮 / 加饱和（Unity 材质参数，预览模拟）
+EARTH_P = 2.0      # 泥土平铺周期（m）
 TOPB = 0.55        # 崖壁顶部融合顶岩的高度（m）
 INSET0, INSET1 = 0.15, 0.35   # 泥土离露边内收（m）
 SUB = 4                    # 每格顶面细分
@@ -184,9 +185,9 @@ def render(biome, cpath, npath, trpath, trnpath):
     x, y, z = hx.ravel(), hy.ravel(), hz.ravel(); kd = kind.ravel(); yb_ = eb.ravel(); yt_ = et.ravel()
     n = len(x)
     uu = hu.ravel()
-    tc = samp(cliff, uu, y); te = samp(earth, x, z); nt = samp(nmap, uu, y)
+    tc = samp(cliff, uu, y); te = samp(earth, x / EARTH_P, z / EARTH_P); nt = samp(nmap, uu, y)
     if enm is not None:
-        ne = samp(enm, x, z); Ne = np.c_[ne[:, 0], ne[:, 2], ne[:, 1]]; Ne /= np.linalg.norm(Ne, axis=1, keepdims=True)
+        ne = samp(enm, x / EARTH_P, z / EARTH_P); Ne = np.c_[ne[:, 0], ne[:, 2], ne[:, 1]]; Ne /= np.linalg.norm(Ne, axis=1, keepdims=True)
     else:
         Ne = np.tile([0.0, 1.0, 0.0], (n, 1))
     N = Ne.copy(); alb = te.copy()
@@ -250,10 +251,17 @@ def render(biome, cpath, npath, trpath, trnpath):
     tw = np.clip(1 - (yt_ - y) / wS - (lc - 0.35) * 0.8, 0, 1); tw = tw * tw * (3 - 2 * tw)
     Nf = Nw + tw[:, None] * np.array([0, 1.0, 0]); Nf /= np.linalg.norm(Nf, axis=1, keepdims=True)
     # 崖壁顶部融合顶岩（沼泽 / 森林即泥土）：顶面倒角是顶岩颜色，墙顶也渐变成顶岩，石头接石头，不夹泥土
-    trw = samp(toprock if toprock is not None else earth, uu / (TR_PERIOD if toprock is not None else 1), y / (TR_PERIOD if toprock is not None else 1))
+    tsrc, tnsrc, tper = (toprock, trn, TR_PERIOD) if toprock is not None else (earth, enm, EARTH_P)
+    trw = samp(tsrc, uu / tper, y / tper)
+    # 墙顶融合区也换成顶岩（沼泽 / 森林即泥土）的法线：贴在竖面上，切线 +x、副切线 +y
+    if tnsrc is not None:
+        tnw = samp(tnsrc, uu / tper, y / tper); Ntw = np.c_[tnw[:, 0], tnw[:, 1], -tnw[:, 2]]
+    else:
+        Ntw = np.tile([0.0, 0.0, -1.0], (n, 1))
     lt = trw @ [0.299, 0.587, 0.114]
     qtop = np.clip((TOPB - (yt_ - y)) / TOPB + (lt - lc) * 1.2 - 0.15 + (vnoise2(uu, y, 91, 0.08) - 0.5) * 0.5, 0, 1); qtop = qtop * qtop * (3 - 2 * qtop)
-    m = kd == 2; N[m] = Nf[m]; alb[m] = ((tc * (1 - q[:, None]) + te * q[:, None]) * (1 - qtop[:, None]) + trw * qtop[:, None])[m]
+    Nf2 = Nf * (1 - qtop[:, None]) + Ntw * qtop[:, None]; Nf2 /= np.linalg.norm(Nf2, axis=1, keepdims=True)
+    m = kd == 2; N[m] = Nf2[m]; alb[m] = ((tc * (1 - q[:, None]) + te * q[:, None]) * (1 - qtop[:, None]) + trw * qtop[:, None])[m]
     # 侧面：崖壁贴图按 (z, y)，几何法线
     m = kd == 4
     ts = tc; ls = lc
@@ -262,7 +270,9 @@ def render(biome, cpath, npath, trpath, trnpath):
     # 侧面也叠法线贴图（切线沿轮廓方向，简化：在几何法线上加法线贴图的 xy 扰动）
     Ns = Ng + np.c_[np.zeros(n), nt[:, 1], np.zeros(n)] * 0.6 + np.c_[np.zeros(n), np.zeros(n), -nt[:, 0]] * 0.6 * np.sign(Ng[:, 0:1]).ravel()[:, None]
     Ns /= np.linalg.norm(Ns, axis=1, keepdims=True) + 1e-9
-    N[m] = Ns[m]; alb[m] = ((ts * (1 - qs[:, None]) + te * qs[:, None]) * (1 - qtop[:, None]) + trw * qtop[:, None])[m]
+    Ntside = Ng + np.c_[np.zeros(n), Ntw[:, 1], np.zeros(n)] * 0.8; Ntside /= np.linalg.norm(Ntside, axis=1, keepdims=True)
+    Ns2 = Ns * (1 - qtop[:, None]) + Ntside * qtop[:, None]; Ns2 /= np.linalg.norm(Ns2, axis=1, keepdims=True)
+    N[m] = Ns2[m]; alb[m] = ((ts * (1 - qs[:, None]) + te * qs[:, None]) * (1 - qtop[:, None]) + trw * qtop[:, None])[m]
     # 崖壁 / 侧面：预览里模拟 Unity 材质上的提亮与加饱和（不改贴图）
     mw = (kd == 2) | (kd == 4)
     lw = alb[mw] @ [0.2126, 0.7152, 0.0722]
