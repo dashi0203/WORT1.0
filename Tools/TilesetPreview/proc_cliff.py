@@ -51,7 +51,7 @@ def vnoise(t, seed, per=0.45):
 #   顶面、正面这两张平面本身不变形；顶面露边用着色器假倒角。被挡住的体素侧面不生成（Unity 里另做只投影的平面）。
 # 贴图沿轮廓连续：正面 u = x；东侧 u = 东边 x + (z − 正面 z)，西侧 u = 西边 x − (z − 正面 z)，转角处接上；v = y。
 BUL0, BUL1 = 0.06, 0.30     # 侧面鼓出量（m）
-BEV0, BEV1 = 0.05, 0.15     # 顶面假倒角宽度（m，着色器）
+BEV0, BEV1 = 0.08, 0.24     # 顶面假倒角宽度（m，着色器）
 
 def vnoise2(a, b, seed, per=0.4):
     a = np.asarray(a, float) / per + seed * 7.1; b = np.asarray(b, float) / per - seed * 3.7
@@ -172,21 +172,37 @@ def render(biome, stem):
     qf = np.clip((FOOT - (y - yb_)) / FOOT + (le - lc) * 1.2, 0, 1); qf = qf * qf * (3 - 2 * qf)
     qt = np.clip((TOP - (yt_ - y)) / TOP + (le - lc) * 1.2 - 0.25, 0, 1); qt = qt * qt * (3 - 2 * qt)
     q = np.maximum(qf, qt)
-    # 顶面假倒角：露边内侧一窄条（宽 BEV0–BEV1，随噪声变）法线往外倾，最多 45°
+    # 顶面假倒角（着色器）：露边内侧一条“露出来的石头边”。
+    #   宽度 = 两层噪声（长起伏 + 碎边）+ 偶尔的深缺口；边界再按崖壁贴图明暗推进 / 退缩（跟着石块走）；
+    #   凸角用到两条边的距离合成圆角；倒角里法线往外倾，颜色从泥土渐变到崖壁石头。
     m = kd == 1
-    cx = np.floor(x - 1e-6).astype(int); cz = np.floor(z - 1e-6).astype(int); fx = x - cx; fz = z - cz
-    hh = np.vectorize(hc)
-    ok = m & (cx >= -1) & (cx <= NX) & (cz >= -1) & (cz <= NZ)
-    idx = np.where(ok)[0]
-    h0 = hh(cx[idx], cz[idx])
-    tilt = np.zeros((len(idx), 3))
-    for dx_, dz_, dist, along, seed in ((0, -1, fz[idx], x[idx], 1), (0, 1, 1 - fz[idx], x[idx], 2), (1, 0, 1 - fx[idx], z[idx], 3), (-1, 0, fx[idx], z[idx], 4)):
-        exposed = hh(cx[idx] + dx_, cz[idx] + dz_) < h0
-        w = BEV0 + (BEV1 - BEV0) * vnoise(along, seed + 20)
-        t = np.clip(1 - dist / w, 0, 1) * exposed
-        tilt += np.c_[np.full(len(idx), dx_), np.zeros(len(idx)), np.full(len(idx), dz_)] * t[:, None]
-    nb = np.c_[tilt[:, 0], np.ones(len(idx)), tilt[:, 2]]; nb /= np.linalg.norm(nb, axis=1, keepdims=True)
+    idx = np.where(m)[0]
+    cx = np.floor(x[idx] - 1e-6).astype(int); cz = np.floor(z[idx] - 1e-6).astype(int)
+    fx = x[idx] - cx; fz = z[idx] - cz
+    hh = np.vectorize(hc); h0 = hh(cx, cz)
+    k_ = len(idx)
+    edges = []
+    for dx_, dz_, dist, along, seed in ((0, -1, fz, x[idx], 1), (0, 1, 1 - fz, x[idx], 2), (1, 0, 1 - fx, z[idx], 3), (-1, 0, fx, z[idx], 4)):
+        ex = hh(cx + dx_, cz + dz_) < h0
+        w = BEV0 + (BEV1 - BEV0) * (0.65 * vnoise(along, seed + 20, 0.55) + 0.35 * vnoise(along, seed + 40, 0.13))
+        notch = np.clip((vnoise(along, seed + 60, 0.8) - 0.72) / 0.28, 0, 1)        # 偶尔的深缺口
+        edges.append((ex, dist / (w + 0.30 * notch), dx_, dz_, along))
+    D = np.full(k_, 9.0); alongs = np.zeros(k_)
+    for ex, dn, dx_, dz_, along in edges:
+        dn = np.where(ex, dn, 9.0); better = dn < D
+        D = np.where(better, dn, D); alongs = np.where(better, along, alongs)
+    acc = np.zeros(k_); dirx = np.zeros(k_); dirz = np.zeros(k_)
+    for ex, dn, dx_, dz_, along in edges:
+        q_ = np.where(ex, np.clip(1 - dn, 0, 1), 0)
+        acc += q_ * q_; dirx += dx_ * q_; dirz += dz_ * q_
+    D = np.minimum(D, 1 - np.sqrt(np.clip(acc, 0, 1)))                                # 凸角圆角
+    rock = samp(cliff, alongs, h0 - np.clip(D, 0, 1) * 0.3); lr = rock @ [0.299, 0.587, 0.114]
+    D2 = D - (lr - 0.35) * 1.4 + (vnoise2(x[idx], z[idx], 9, 0.07) - 0.5) * 0.6   # 跟着石块明暗 + 碎边
+    t = np.clip(1 - D2, 0, 1); t = t * t * (3 - 2 * t)
+    dl = np.sqrt(dirx ** 2 + dirz ** 2) + 1e-9
+    nb = np.c_[dirx / dl * 1.2 * t, np.ones(k_), dirz / dl * 1.2 * t]; nb /= np.linalg.norm(nb, axis=1, keepdims=True)
     N[idx] = nb
+    alb[idx] = te[idx] * (1 - t[:, None] * 0.85) + rock * (t[:, None] * 0.85)
     m = kd == 2; N[m] = Nw[m]; alb[m] = (tc * (1 - q[:, None]) + te * q[:, None])[m]
     # 侧面：崖壁贴图按 (z, y)，几何法线
     m = kd == 4
