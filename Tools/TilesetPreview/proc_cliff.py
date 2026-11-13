@@ -73,6 +73,14 @@ def bulge(side, y, z, h):  # 东(1) / 西(-1) 侧面在 (y, z) 处往外鼓多�
     t = np.clip((h - y) / 0.35, 0, 1); t = t * (2 - t)          # 顶上线性起步（约 45° 朝上），往下变缓
     return (BUL0 + (BUL1 - BUL0) * vnoise2(y, z, 3 if side > 0 else 4)) * t
 
+def bend(v, out, ang):
+    """把“顶面坐标系”里的法线 v 绕边缘轴（up × out）转 ang 弧度：0 = 顶面，45° = 折线，90° = 竖面。"""
+    up = np.array([0, 1.0, 0])
+    k = np.cross(np.broadcast_to(up, out.shape), out); k /= np.linalg.norm(k, axis=1, keepdims=True) + 1e-12
+    c, s_ = np.cos(ang)[:, None], np.sin(ang)[:, None]
+    r = v * c + np.cross(k, v) * s_ + k * (k * v).sum(1, keepdims=True) * (1 - c)
+    return r / (np.linalg.norm(r, axis=1, keepdims=True) + 1e-12)
+
 def smooth_r(along, seed):   # 平滑倒角宽度（m）：18–32cm，沿边缓慢变化；顶面与墙面用同一个，折线两侧对上
     return 0.18 + 0.14 * vnoise(along, 100 + seed, 0.7)
 
@@ -250,7 +258,7 @@ def render(biome, cpath, npath, trpath, trnpath):
     sm = np.clip(1 - dm / rr, 0, 1)
     th = np.radians(45) * sm
     outd = np.c_[dirx / dl, np.zeros(k_), dirz / dl]
-    nb = np.array([0, 1.0, 0]) * np.cos(th)[:, None] + outd * np.sin(th)[:, None] + (base - np.array([0, 1.0, 0])) * (1 - sm)[:, None]
+    nb = np.where((sm > 0)[:, None], bend(base, np.where((sm > 0)[:, None], outd, [0, 0, -1.0]), th), base)   # 细节跟着一起弯过去，不淡出
     nb /= np.linalg.norm(nb, axis=1, keepdims=True)
     N[idx] = nb
     alb[idx] = rk * (1 - qe[:, None]) * ao[:, None] + te[idx] * qe[:, None]
@@ -277,8 +285,8 @@ def render(biome, cpath, npath, trpath, trnpath):
     # 先混合崖壁 / 顶岩法线，最后再加“往上倾”的假倒角（否则倒角被顶岩法线盖掉，折线处亮度一下跳变）
     Nf2 = Nw * (1 - qtop[:, None]) + Ntw * qtop[:, None]; Nf2 /= np.linalg.norm(Nf2, axis=1, keepdims=True)
     rw = smooth_r(x, np.ones(n)); sw = np.clip(1 - (yt_ - y) / rw, 0, 1); thw = np.radians(45) * sw
-    Nf2 = np.array([0, 0, -1.0]) * np.cos(thw)[:, None] + np.array([0, 1.0, 0]) * np.sin(thw)[:, None] + (Nf2 - np.array([0, 0, -1.0])) * (1 - sw)[:, None]
-    Nf2 /= np.linalg.norm(Nf2, axis=1, keepdims=True)
+    vtop = np.c_[Nf2[:, 0], -Nf2[:, 2], Nf2[:, 1]]                                   # 墙面坐标 → 展开到顶面坐标
+    Nf2 = bend(vtop, np.tile([0, 0, -1.0], (n, 1)), np.radians(90) - thw)
     m = kd == 2; N[m] = Nf2[m]; alb[m] = ((tc * (1 - q[:, None]) + te * q[:, None]) * (1 - qtop[:, None]) + trw * qtop[:, None])[m]
     # 侧面：崖壁贴图按 (z, y)，几何法线
     m = kd == 4
@@ -293,8 +301,10 @@ def render(biome, cpath, npath, trpath, trnpath):
     # 侧面顶部同样平滑翻上去：外侧法线 → 往上 45°
     rs = smooth_r(z, np.where(sgn > 0, 3, 4)); ss = np.clip(1 - (yt_ - y) / rs, 0, 1); ths = np.radians(45) * ss
     outs = np.c_[sgn, np.zeros(n), np.zeros(n)]
-    Ns2 = outs * np.cos(ths)[:, None] + np.array([0, 1.0, 0]) * np.sin(ths)[:, None] + (Ns2 - outs) * (1 - ss)[:, None]
-    Ns2 /= np.linalg.norm(Ns2, axis=1, keepdims=True)
+    outs_ = np.where((np.abs(sgn) > 0)[:, None], outs, [1.0, 0, 0])
+    vts = np.c_[tnw[:, 0], tnw[:, 2], tnw[:, 1]] if tnsrc is not None else np.tile([0, 1.0, 0], (n, 1))   # 顶岩细节（顶面坐标）
+    bent = bend(vts, outs_, np.radians(90) - ths)
+    Ns2 = Ns2 * (1 - ss[:, None]) + bent * ss[:, None]; Ns2 /= np.linalg.norm(Ns2, axis=1, keepdims=True)
     N[m] = Ns2[m]; alb[m] = ((ts * (1 - qs[:, None]) + te * qs[:, None]) * (1 - qtop[:, None]) + trw * qtop[:, None])[m]
     # 崖壁 / 侧面：预览里模拟 Unity 材质上的提亮与加饱和（不改贴图）
     mw = (kd == 2) | (kd == 4)
