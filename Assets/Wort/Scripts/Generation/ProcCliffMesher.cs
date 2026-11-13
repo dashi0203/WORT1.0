@@ -327,6 +327,13 @@ namespace Wort.Generation
         {
             if (y <= hb || hb >= h) return 0;
             int sideEdge = side > 0 ? 3 : 1;
+            // 南端那条线上、低于前一格顶面的部分，和前一格（更矮、同一侧也露出）的侧面是同一条线：用前一格的鼓出量，两边对上（不留三角缝）
+            int hS = EdgeH(map, x, z - 1, 0);
+            if (Math.Abs(wz - z) < 1e-9 && hS < h && hS > hb && y <= hS + 1e-9 && SlopeAt(map, x, z - 1) < 0)
+            {
+                int hbS = EdgeH(map, x + side, z - 1, sideEdge);
+                if (hbS < hS) return SideOut(map, x, z - 1, side, y, wz, hS, hbS);
+            }
             // 对角邻格在这层封住转角时，侧面在折点回到格线；正面端点也用同一个偏移。
             bool southClosed = EdgeH(map, x + side, z - 1, sideEdge) >= y;
             bool northClosed = EdgeH(map, x + side, z + 1, sideEdge) >= y;

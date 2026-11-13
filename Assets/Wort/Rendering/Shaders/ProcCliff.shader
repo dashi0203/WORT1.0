@@ -39,6 +39,7 @@ Shader "Wort/ProcCliff"
         [Toggle] _EdgeFx ("Edge Effects (bevel / bend)", Float) = 1
         [Toggle] _WallTopFx ("Wall Top Blend", Float) = 1
         _FootAO ("Cliff Foot Darkening", Range(0.5, 1)) = 0.8
+        _CasterPush ("Shadow Caster Push (m)", Range(0, 0.3)) = 0.08
         [Toggle] _VarOn ("Cliff Variants", Float) = 1
         _P22 ("Variant 2x2 Chance (per 2x2 block)", Range(0, 1)) = 0.15
         _PRow ("Variant Row Pattern Chance", Range(0, 1)) = 0.2
@@ -73,7 +74,7 @@ Shader "Wort/ProcCliff"
         CBUFFER_START(UnityPerMaterial)
             float4 _SetP0, _SetP1, _SetP2, _SetP3;   // 每套：(有顶岩, 顶岩周期, 泥土周期, 0)
             float _SetCount, _ArrSize, _BiomePatch, _BiomeSharp;
-            float _VarOn, _P22, _PRow, _PCol, _FootAO;
+            float _VarOn, _P22, _PRow, _PCol, _FootAO, _CasterPush;
             float _EarthPeriod, _UseTopRock, _TopRockPeriod;
             float _Inset0, _Inset1, _BevelR0, _BevelR1, _TopBlend, _FootBlend;
             float _ClipNorth, _NorthClip, _BlackLift, _WallGain, _WallSat, _EdgeFx, _WallTopFx;
@@ -468,7 +469,8 @@ Shader "Wort/ProcCliff"
             #else
                 float3 ld = _LightDirection;
             #endif
-                float4 cs = TransformWorldToHClip(ApplyShadowBias(w, n, ld));
+                // 只画背光面时，投影面在“出口”一侧；再往远离光的方向推 _CasterPush，墙脚 / 只投影的面贴着地面的地方不会和地面抢深度（崖底横纹 / 闪烁）
+                float4 cs = TransformWorldToHClip(ApplyShadowBias(w, n, ld) - ld * _CasterPush);
             #if UNITY_REVERSED_Z
                 cs.z = min(cs.z, UNITY_NEAR_CLIP_VALUE);
             #else
