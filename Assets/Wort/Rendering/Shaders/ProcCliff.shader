@@ -345,7 +345,8 @@ Shader "Wort/ProcCliff"
             // 自带投影 Pass：北边透明裁剪也进阴影（影子边缘跟着轮廓变碎）
             Name "ShadowCaster"
             Tags { "LightMode" = "ShadowCaster" }
-            ZWrite On ZTest LEqual ColorMask 0
+            // 双面投影：网格是空心的，边缘咬碎 / 北边裁剪开的缝里进来的光要被内侧的面挡住，否则影子会缺大块
+            ZWrite On ZTest LEqual ColorMask 0 Cull Off
             HLSLPROGRAM
             #pragma vertex svert
             #pragma fragment sfrag
