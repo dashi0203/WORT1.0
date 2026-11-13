@@ -1,6 +1,6 @@
 """崖壁法线（无缝版）：周期域上的贪心插点三角化 + 面法线直接光栅化。
 
-替代 Blender Collapse 减面 + 烘焙那一步，其余与 TilesetExperiment/WORKFLOW.md 相同：
+替代 Blender Collapse 减面 + 烘焙那一步（原 dot 的流程，文档已删除，见 git 历史），高度部分相同：
 原色图 → 高度（Contrast 0.26、Blur/Sharp -32）→ 向下 64px 最大包络 67% → 置换幅度 0.5。
 三角化在环面（左右、上下周期）上做，所以贴图天然无缝，边界上没有固定折线。
 每次插入误差最大的像素（Garland–Heckbert 贪心插点），环面上 三角面 = 2 × 顶点，
