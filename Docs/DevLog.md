@@ -33,6 +33,9 @@ Forward+ 修复后本地确认：瓦片受光、有影子（负责人截图）�
 - 现用 `Tools/TilesetBake/periodic_facet_normal.py`（纯 Python，云端可跑）：在环面上贪心插点三角化（256 顶点 = 512 面），正交俯视直接光栅化面法线，天然无缝。
   对边差 0.4–1.2（与图内一致），折边强度与 Blender 版相当，与 Blender 版法线相关 0.86–0.90。输出 `TilesetExperiment/IMG_*_Normal_Periodic512.png`。
 - 另：原色图本身也不无缝（红褐 9473 上下接缝最明显），要另行处理。
+- Unity 实机验收（负责人，菜单 `Wort/Debug/Cliff Normal Preview`）：看不出接缝，固定视角下可接受。
+- 已接入正式套件（颜色 + 法线一起换，覆盖原文件、GUID 不变）：`Limestone` ← 9485（人类区），`OliveStrata` Cliff_A/B ← 9471（沼泽），`RustCrag` Cliff_A/B ← 9473（森林）；
+  崖壁材质（`CharcoalCliff`、`CharcoalCliffCrown`、两套的 `Cliff_A/B`）`_DetailNormal` 0.35 → 1。`Limestone` 的唇边接缝也读 `Cliff_BaseColor`，随之更新。
 
 等负责人 / Codex：
 1. 本地按上一次给的一次性步骤拉新（先把本地未跟踪的 `Assets/Wort/Art/Tilesets` 挪到项目外备份），在 Unity 里试体素笔刷，发 Console 和截图。

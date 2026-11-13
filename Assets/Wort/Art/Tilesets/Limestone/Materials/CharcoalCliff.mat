@@ -97,7 +97,7 @@ Material:
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
-    - _DetailNormal: 0.35
+    - _DetailNormal: 1
     - _Projection: 0
     - _RoadOn: 0
     - _WorldTile: 1

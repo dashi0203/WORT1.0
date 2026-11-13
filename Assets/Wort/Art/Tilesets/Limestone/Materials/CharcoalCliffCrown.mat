@@ -111,7 +111,7 @@ Material:
     - _SeamOn: 1
     - _SeamWidth: 0.07
     - _ShadowDepth: 0.14
-    - _DetailNormal: 0.35
+    - _DetailNormal: 1
     - _Projection: 0
     - _RoadOn: 0
     - _WorldTile: 1
