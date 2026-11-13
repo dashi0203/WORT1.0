@@ -157,8 +157,16 @@ Shader "Wort/ProcCliff"
                     float dN = bN ? 1 - fz : 9, dE = bE ? 1 - fx : 9, dS = bS ? fz : 9, dW = bW ? fx : 9;
                     NorthClip(P, i.d1, i.d2);
                     float dm = min(min(dN, dE), min(dS, dW));
+                    // 内拐角（只有斜对角更低）：按到角点的距离算顶岩边和泥土内收，两边的顶岩边在拐角处接上
+                    float cm = floor(mask / 16);
+                    float dc = 9;
+                    if (fmod(cm, 2) >= 1) dc = min(dc, length(float2(1 - fx, 1 - fz)));
+                    if (fmod(floor(cm / 2), 2) >= 1) dc = min(dc, length(float2(fx, 1 - fz)));
+                    if (fmod(floor(cm / 4), 2) >= 1) dc = min(dc, length(float2(1 - fx, fz)));
+                    if (fmod(floor(cm / 8), 2) >= 1) dc = min(dc, length(float2(fx, fz)));
+                    float dr = min(dm, dc);   // 顶岩边 / 泥土内收用；倒角只看真正的露边 dm
                     float3 earthN = topFrame(UnpackNormal(SAMPLE_TEXTURE2D(_EarthNormal, sampler_EarthNormal, ue)));
-                    if (dm > 0.6 || _EdgeFx < 0.5)
+                    if (dr > 0.6 || _EdgeFx < 0.5)
                     {
                         // 离露边远：只有泥土（大部分像素走这里，和普通材质一样便宜）
                         albedo = earthC; N = earthN;
@@ -182,15 +190,16 @@ Shader "Wort/ProcCliff"
                         half3 rk = _UseTopRock > 0.5 ? SAMPLE_TEXTURE2D(_TopRockMap, sampler_TopRockMap, ur).rgb : earthC;
                         float3 rockN = _UseTopRock > 0.5 ? topFrame(UnpackNormal(SAMPLE_TEXTURE2D(_TopRockNormal, sampler_TopRockNormal, ur))) : earthN;
                         // 泥土内收
+                        if (dc < dm) along = P.x + P.z;
                         float wi = _Inset0 + (_Inset1 - _Inset0) * (0.6 * vnoise(along, 81, 0.5) + 0.4 * vnoise(along, 82, 0.12));
                         wi += 0.15 * saturate((vnoise(along, 83, 0.9) - 0.75) / 0.25);
-                        float se = dm - wi + (lum(earthC) - lum(rk)) * 0.12 + (vnoise2(P.xz, 85, 0.06) - 0.5) * 0.06;
+                        float se = dr - wi + (lum(earthC) - lum(rk)) * 0.12 + (vnoise2(P.xz, 85, 0.06) - 0.5) * 0.06;
                         float qe = _UseTopRock > 0.5 ? smoothstep(-0.015, 0.015, se) : 1;
                         float ao = 1 - 0.35 * saturate(1 + se / 0.05) * (1 - qe) * _UseTopRock;
                         albedo = lerp(rk * ao, earthC, qe);
                         float3 base = normalize(lerp(rockN, earthN, qe));
                         // 平滑倒角：细节跟着表面一起绕边缘倒到 45°
-                        float sm = saturate(1 - dm / bevelR(along, seed));
+                        float sm = dm < 8 ? saturate(1 - dm / bevelR(along, seed)) : 0;
                         float3 k = normalize(cross(up, outd));
                         N = sm > 0 ? normalize(rotateAxis(base, k, radians(45) * sm)) : base;
                     }

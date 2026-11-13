@@ -61,6 +61,11 @@ namespace Wort.Generation
                     int set = sets != null && sets.Length == map.W * map.H ? sets[z * map.W + x] : 0;
                     int hn = HeightAt(map, x, z + 1), he = HeightAt(map, x + 1, z), hs = HeightAt(map, x, z - 1), hw = HeightAt(map, x - 1, z);
                     int mask = (hn < h ? 1 : 0) | (he < h ? 2 : 0) | (hs < h ? 4 : 0) | (hw < h ? 8 : 0);
+                    // 内拐角：四邻都不低、只有斜对角更低（东北 16、西北 32、东南 64、西南 128）。着色器按到角点的距离把顶岩边绕过去
+                    if (hn >= h && he >= h && HeightAt(map, x + 1, z + 1) < h) mask |= 16;
+                    if (hn >= h && hw >= h && HeightAt(map, x - 1, z + 1) < h) mask |= 32;
+                    if (hs >= h && he >= h && HeightAt(map, x + 1, z - 1) < h) mask |= 64;
+                    if (hs >= h && hw >= h && HeightAt(map, x - 1, z - 1) < h) mask |= 128;
 
                     // 顶面：靠露边的格一格一块（着色器按这一格的掩码算倒角、泥土内收）；四周同高的格留给后面合并成大矩形
                     if (mask != 0)
@@ -108,8 +113,10 @@ namespace Wort.Generation
                             {
                                 double z0 = lz + (double)c / Sub, z1 = lz + (double)(c + 1) / Sub;
                                 double wz0 = oz + z0, wz1 = oz + z1;
-                                double a0 = edge + side * Bulge(side, y0, wz0, h), a1 = edge + side * Bulge(side, y1, wz0, h);
-                                double b0 = edge + side * Bulge(side, y0, wz1, h), b1 = edge + side * Bulge(side, y1, wz1, h);
+                                // 北边露边（顶面北边会被透明裁剪往里收）：鼓起在这一列的北头最后 0.35m 收为 0，免得侧面伸出裁剪后的轮廓
+                                double ta = hn < h ? NorthTaper(z + 1 - wz0) : 1, tb = hn < h ? NorthTaper(z + 1 - wz1) : 1;
+                                double a0 = edge + side * Bulge(side, y0, wz0, h) * ta, a1 = edge + side * Bulge(side, y1, wz0, h) * ta;
+                                double b0 = edge + side * Bulge(side, y0, wz1, h) * tb, b1 = edge + side * Bulge(side, y1, wz1, h) * tb;
                                 // 朝外看：东面右手边是 +z，西面右手边是 −z（Unity 顺时针为正面）
                                 if (side > 0)
                                     QuadAuto(m, wall, a0, y0, z0, a1, y1, z0, b1, y1, z1, b0, y0, z1, side, 4, side, h, hb, ox + edge, fz);
@@ -192,6 +199,13 @@ namespace Wort.Generation
         }
 
         /// <summary>侧面鼓出量（m）：世界坐标值噪声，相邻面自动连续；崖顶 h 处为 0，往下线性起步（顶上约 45° 朝上）再变缓。</summary>
+        static double NorthTaper(double distToNorthEdge)
+        {
+            double t = distToNorthEdge / 0.35;
+            if (t < 0) t = 0; else if (t > 1) t = 1;
+            return t * t * (3 - 2 * t);
+        }
+
         public static double Bulge(int side, double y, double z, int h)
         {
             double t = (h - y) / 0.35;
