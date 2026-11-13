@@ -25,7 +25,6 @@ SETS = [('OliveStrata', 'IMG_9471_BaseColor.png', 'IMG_9471_Normal_Periodic512.p
         ('RustCrag', 'Redo/Forest_Cliff_BaseColor.png', 'Redo/Forest_Cliff_Normal_Periodic512.png', None, None),
         ('Limestone', 'IMG_9485_BaseColor.png', 'IMG_9485_Normal_Periodic512.png', 'Redo/Human_TopRock_BaseColor.png', 'Redo/Human_TopRock_Normal_Periodic512.png')]
 TR_PERIOD = 2.7    # 顶岩平铺周期（m），不取整数，和崖壁 1m 错开
-NCLIP = 0.12       # 顶面北边透明裁剪最大深度（m）
 WALL_GAIN, WALL_SAT = 1.12, 1.12   # 崖壁提亮 / 加饱和（Unity 材质参数，预览模拟）
 EARTH_P = 2.0      # 泥土平铺周期（m）
 TOPB = 0.35        # 崖壁顶部融合顶岩的高度（m）
@@ -181,13 +180,6 @@ def render(biome, cpath, npath, trpath, trnpath, surface=False):
         Px = sum(wp[i] * P[i, 0] for i in range(3)); Py = sum(wp[i] * P[i, 1] for i in range(3)); Pz = sum(wp[i] * P[i, 2] for i in range(3))
         dep = Py - Pz + (0.002 if k == 3 else 0)
         sl = (slice(ya, yb + 1), slice(xa, xb + 1))
-        if k == 1:
-            # 顶面北边是真正的轮廓线（后面是更低的地面）：着色器透明裁剪，按噪声把边咬掉 0–NCLIP，轮廓不再笔直
-            cix, ciz, ch_ = int(round(P[:, 0].min())), int(round(P[:, 2].min())), P[0, 1]
-            if hc(cix, ciz + 1) < ch_:
-                cw = NCLIP * (0.55 * vnoise(Px, 31, 0.35) + 0.45 * vnoise(Px, 32, 0.09))
-                cw = cw + 0.10 * np.clip((vnoise(Px, 33, 0.8) - 0.7) / 0.3, 0, 1)
-                ins = ins & ((ciz + 1 - Pz) > cw)
         ok = ins & (dep > depth[sl])
         if not ok.any(): continue
         depth[sl][ok] = dep[ok]; kind[sl][ok] = k

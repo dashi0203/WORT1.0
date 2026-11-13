@@ -6,13 +6,13 @@ namespace Wort.Generation
     /// <summary>程序化崖壁的网格数据（chunk 局部坐标，米）。子网格按（套件, 部分）分组。</summary>
     public sealed class ProcCliffMesh
     {
-        public enum Part { Top = 0, TopClip = 1, Wall = 2, Shadow = 3 }
-        public const int PartCount = 4;
+        public enum Part { Top = 0, Wall = 1, Shadow = 2 }
+        public const int PartCount = 3;
 
         public readonly List<float> Positions = new List<float>();
         public readonly List<float> Normals = new List<float>();
         public readonly List<float> Tangents = new List<float>();   // xyzw
-        /// <summary>每顶点 4 个数：种类（1 顶面 / 2 正面 / 4 侧面 / 0 投影面）、顶面掩码（1–8 露边、16–128 内拐角、256–2048 更高的邻居、4096–8192 北沿东／西内角收边）或侧面朝向、崖顶高、崖脚高。</summary>
+        /// <summary>每顶点 4 个数：种类（1 顶面 / 2 正面 / 4 侧面 / 0 投影面）、顶面掩码（1–8 露边、16–128 内拐角、256–2048 更高的邻居）或侧面朝向、崖顶高、崖脚高。</summary>
         public readonly List<float> Data1 = new List<float>();
         /// <summary>每顶点 4 个数：顶面 = 格的世界 x、z；正面 = 折线的世界 z、这一段西头 x、东头 x、西邻高 × 1024 + 东邻高；侧面 = 折线的世界 x、这一列正面的世界 z、崖脚那格的露边掩码。正面的崖脚格露边掩码放在 Data1.y。</summary>
         public readonly List<float> Data2 = new List<float>();
@@ -35,7 +35,7 @@ namespace Wort.Generation
     /// - 只生成镜头看得见的面：顶面（每格平的 1m 方块，不变形）和朝南的正面（平面）；
     /// - 只鼓“看得见的体素层”的东西侧面：这一列最上面那块（顶层）和南面露出的那块（前排）；鼓起在崖顶处收为 0，往下鼓出（人脚下方）；
     /// - 看不见的北 / 东 / 西竖面各生成一块平的“只投影”面（Part.Shadow），保证阴影正确；
-    /// - 顶面都放 Top；北边露边往外伸一条窄条（TopClip 和着色器北边裁剪已停用，代码暂留）；
+    /// - 北边露边往外伸一条同高窄条，和东西两侧窄条用四分之一椭圆补角；
     /// - 外观（顶岩 / 泥土内收、平滑倒角、墙顶融合、崖脚融合）全在着色器 Wort/ProcCliff 里，网格只提供位置和每顶点数据。
     /// 只影响外观，不改玩法和 checksum；碰撞照旧按体素格。纯 C#，噪声只用整数哈希和加减乘。
     /// </summary>
@@ -72,15 +72,12 @@ namespace Wort.Generation
                     // 哪边邻居更高（北 256、东 512、南 1024、西 2048）：崖脚前面的地面往外倾（内凹圆角的地面一侧）
                     mask |= (hn > h ? 256 : 0) | (he > h ? 512 : 0) | (hs > h ? 1024 : 0) | (hw > h ? 2048 : 0);
 
-                    // 北沿只在接回未裁剪的内拐角处收边，连续的北沿共用同一条噪声。
-                    if (hn < h && he >= h && EdgeH(map, x + 1, z + 1, 2) >= h) mask |= 4096;
-                    if (hn < h && hw >= h && EdgeH(map, x - 1, z + 1, 2) >= h) mask |= 8192;
 
                     // 顶面：靠露边的格一格一块（着色器按这一格的掩码算倒角、泥土内收）；四周同高的格留给后面合并成大矩形
                     bool nearSlope = SlopeAt(map, x - 1, z) >= 0 || SlopeAt(map, x + 1, z) >= 0 || SlopeAt(map, x, z - 1) >= 0 || SlopeAt(map, x, z + 1) >= 0;
                     if (mask != 0 || nearSlope)   // 挨着坡道的格也单独画（边上要和坡道侧墙的半格顶点对上）
                     {
-                        var top = m.Group(set, ProcCliffMesh.Part.Top);   // 北边不再裁剪（改成往外伸），TopClip 不再使用
+                        var top = m.Group(set, ProcCliffMesh.Part.Top);
                         // 东西边和邻格有高低差时（那边有侧面 / 顶面窄条，顶点在半格），这条边加中点，避免 T 形接缝
                         // 旁边是坡道、且坡道沿这条边在中点分段（坡向和这条边垂直）时，这条边也加中点
                         bool SlopeMid(int dx, int dz) { int su = SlopeAt(map, x + dx, z + dz); return su >= 0 && (dx != 0 ? (su == 0 || su == 2) : (su == 1 || su == 3)); }

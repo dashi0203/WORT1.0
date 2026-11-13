@@ -82,6 +82,7 @@ Forward+ 修复后本地确认：瓦片受光、有影子（负责人截图）�
   挨着坡道的地面格单独画、对应边加中点。测试场景 T 形接缝 0；5×5 抽样剩下的是高台侧墙鼓包和坡面相交的线（相交，不是裂缝）。
   坡道第二轮（负责人截图）：坡顶接台地处出现不该有的顶岩小块 → 内拐角判断里斜对角是坡道时按最高边（高度 + 1）算；
   坡道两侧悬崖的侧墙没贴上坡面 → 旁边是南北向坡道时墙脚顺着坡面走、鼓包在坡面处收为 0。
+  清理第二轮（负责人：停用的都不要了）：删除北边透明裁剪（生成核心 `TopClip` 分组和北沿收边掩码 4096 / 8192、着色器 `NorthClip` 及前向 / 深度 / 投影里的调用、`_ClipNorth`、`_NorthClip`）、三个 `ProcCliff_*_Clip.mat`、`ProcCliffSet.clip`、运行时 clip 材质、影子边缘咬碎（`ShadowEdgeClip`、`_ShadowEdge`、`_ShadowNotch0/1`）、预览脚本里的北边裁剪。子网格分组改为 Top / Wall / Shadow 三类。测试 7 个通过，T 形接缝不变。
   清理（负责人）：删除 dot 的 Blender 流程残留（`WORKFLOW.md`、`bake_seamless.py`、旧版 `Normal_Baked` / `Normal_67_Flat` 法线）、旧法线对比菜单 `CliffNormalPreviewMenu`、变体模板和 `processed/` 中间结果；`TilesetExperiment/README.md` 说明现行云端流程。
   坡道旁缺面（负责人 Scene 视图截图）：后排格的侧墙只生成顶层 1m，挨着坡道时下半截看得见 → 挨着坡道的侧墙一直补到坡面。森林崖壁负责人确认目前够用。
   北边拐角：补角从矩形改成四分之一椭圆（半径 = 两条窄条宽），轮廓在角上是圆弧。

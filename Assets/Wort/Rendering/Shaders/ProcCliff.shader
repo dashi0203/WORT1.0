@@ -6,7 +6,6 @@
 // - 平滑倒角：离露边 r（18–32cm，沿边缓慢变化）内，顶面法线连续往外倒到 45°，墙面法线往上翻到 45°，两边同一个 r，折线处角度和贴图都连续；
 //   石头的法线细节放在顶面坐标里，跟着表面一起绕边缘旋转（不淡出），所以折线看不出来。
 // - 墙面：崖壁颜色 + 法线；顶部 _TopBlend 内融合顶岩（按“顶面越过折线的延续”展开取样，石块从顶面绕到墙上），崖脚 _FootBlend 内融合泥土。
-// - _ClipNorth = 1（TopClip 材质，只用在北面露边的格）：北边是真正的轮廓线，按噪声透明裁剪 0–_NorthClip，轮廓不再笔直。
 // - 暗部提亮 _BlackLift（同 TileSurface）；崖壁提亮 / 加饱和 _WallGain、_WallSat。
 // - 平滑法线（负责人 2026-11-13）：顶沿、竖直转角（正面 ↔ 侧面）、崖脚内凹圆角（墙底 ↔ 墙根前地面）都在折线两侧各转 45°，两边同一个宽度函数，折线处对齐。
 // - Biome 融合：贴图在数组 _ColArr / _NrmArr 里（TerrainLab 运行时打包），每像素按权重图取候选套件，各自算 Surface 再按分数合成（斑块式过渡）。
@@ -31,8 +30,6 @@ Shader "Wort/ProcCliff"
         _BevelR1 ("Smooth Bevel Max (m)", Float) = 0.32
         _TopBlend ("Wall Top Blend (m)", Float) = 0.35
         _FootBlend ("Wall Foot Blend (m)", Float) = 0.35
-        [Toggle] _ClipNorth ("Clip North Edge", Float) = 0
-        _NorthClip ("North Clip Depth (m)", Float) = 0.12
         _BlackLift ("Black Lift (sRGB)", Range(0, 0.3)) = 0.08
         _WallGain ("Wall Gain", Range(0.5, 2)) = 1.12
         _WallSat ("Wall Saturation", Range(0, 2)) = 1.12
@@ -54,9 +51,6 @@ Shader "Wort/ProcCliff"
         [HideInInspector] _ArrSize ("", Float) = 512
         _BiomePatch ("Biome Patch Strength", Float) = 0.8
         _BiomeSharp ("Biome Edge Softness", Float) = 0.025
-        [Toggle] _ShadowEdge ("Jagged Shadow Edges", Float) = 0
-        _ShadowNotch0 ("Shadow Notch Min (m)", Float) = 0.06
-        _ShadowNotch1 ("Shadow Notch Max (m)", Float) = 0.2
     }
     SubShader
     {
@@ -77,8 +71,7 @@ Shader "Wort/ProcCliff"
             float _VarOn, _P22, _PRow, _PCol, _FootAO, _CasterPush;
             float _EarthPeriod, _UseTopRock, _TopRockPeriod;
             float _Inset0, _Inset1, _BevelR0, _BevelR1, _TopBlend, _FootBlend;
-            float _ClipNorth, _NorthClip, _BlackLift, _WallGain, _WallSat, _EdgeFx, _WallTopFx;
-            float _ShadowEdge, _ShadowNotch0, _ShadowNotch1;
+            float _BlackLift, _WallGain, _WallSat, _EdgeFx, _WallTopFx;
         CBUFFER_END
 
         // ---- 噪声（只在 GPU 上用，不需要和 C# 一致）----
@@ -136,44 +129,6 @@ Shader "Wort/ProcCliff"
         // 顶面坐标系（切线 +x、副切线 +z、法线 +y）里的切线空间法线 → 世界
         float3 topFrame(float3 tn) { return normalize(float3(tn.x, tn.z, tn.y)); }
 
-        // 北边透明裁剪（TopClip 材质）：前向、深度、深度法线三个 Pass 用同一个函数，避免深度预渲染在裁掉的地方留空洞
-        void NorthClip(float3 P, float4 d1, float4 d2)
-        {
-            if (_ClipNorth < 0.5 || d1.x > 1.5) return;
-            if (fmod(d1.y, 2) < 1) return;
-            float dN = 1 - (P.z - d2.y);
-            float cw = _NorthClip * (0.55 * vnoise(P.x, 31, 0.35) + 0.45 * vnoise(P.x, 32, 0.09));
-            cw += 0.10 * saturate((vnoise(P.x, 33, 0.8) - 0.7) / 0.3);
-            // 北边在内拐角接回同高或更高的邻格，裁剪在格角收为零。
-            float fx = P.x - d2.x;
-            if (fmod(floor(d1.y / 4096), 2) >= 1) cw *= smooth01((1 - fx) / 0.35);
-            if (fmod(floor(d1.y / 8192), 2) >= 1) cw *= smooth01(fx / 0.35);
-            clip(dN - cw);
-        }
-        // 阴影专用的边缘裁剪（负责人 2026-11-13：影子横平竖直）：只在 ShadowCaster 里用，画面不变。
-        // 顶面在露边内侧、墙面（正面 / 侧面 / 只投影的面）在墙顶以下，按同一个沿边噪声咬掉 _ShadowNotch0–_ShadowNotch1，投到地上的影子轮廓变得参差。
-        float shadowNotch(float along) { return _ShadowNotch0 + (_ShadowNotch1 - _ShadowNotch0) * (0.6 * vnoise(along, 51, 0.4) + 0.4 * vnoise(along, 52, 0.1)); }
-        void ShadowEdgeClip(float3 P, float4 d1, float4 d2, float3 nWS)
-        {
-            if (_ShadowEdge < 0.5) return;
-            if (d1.x < 1.5 && d1.x > 0.5)
-            {
-                // 顶面：到各露边的距离
-                float mask = d1.y; float fx = P.x - d2.x, fz = P.z - d2.y;
-                float c = 1;
-                if (fmod(mask, 2) >= 1) c = min(c, (1 - fz) - shadowNotch(P.x));
-                if (fmod(floor(mask / 2), 2) >= 1) c = min(c, (1 - fx) - shadowNotch(P.z));
-                if (fmod(floor(mask / 4), 2) >= 1) c = min(c, fz - shadowNotch(P.x));
-                if (fmod(floor(mask / 8), 2) >= 1) c = min(c, fx - shadowNotch(P.z));
-                clip(c);
-            }
-            else
-            {
-                // 墙面 / 只投影的面：离墙顶的深度；沿边坐标按朝向取 x 或 z（与顶面同一条边对上）
-                float along = abs(nWS.x) > abs(nWS.z) ? P.z : P.x;
-                clip((d1.z - P.y) - shadowNotch(along));
-            }
-        }
         ENDHLSL
 
 
@@ -411,7 +366,6 @@ Shader "Wort/ProcCliff"
             {
                 float3 P = i.positionWS;
                 float3 ng = normalize(i.normalWS);
-                NorthClip(P, i.d1, i.d2);
                 _FW = max(length(ddx(P)), length(ddy(P)));   // 一个像素在世界里多大：所有贴图的 mip 都按它算（分支 / 循环里不用硬件求导）
                 // Biome 融合（负责人 2026-11-13，斑块式过渡；预览 proc_cliff.py BIOME=1）：
                 // 每套算一个分数 = 权重 + 各自的斑块噪声 + 各自颜色的明暗，分数最高的胜出，接近处很窄的软过渡；权重几乎为 0 的套不算（大部分像素只算一套）
@@ -454,7 +408,7 @@ Shader "Wort/ProcCliff"
             // 自带投影 Pass：北边透明裁剪也进阴影（影子边缘跟着轮廓变碎）
             Name "ShadowCaster"
             Tags { "LightMode" = "ShadowCaster" }
-            // 标准做法（Cull Back）：迎光面投影，URP 的偏移处理自阴影。之前的 Cull Front + 外推会让影子和崖壁错开（漏光缝）；影子边缘咬碎默认关闭（开了会在空心外壳上漏光）
+            // 标准做法（Cull Back）：迎光面投影，URP 的偏移处理自阴影（之前的 Cull Front + 外推会让影子和崖壁错开）
             ZWrite On ZTest LEqual ColorMask 0 Cull Back
             HLSLPROGRAM
             #pragma vertex svert
@@ -485,7 +439,7 @@ Shader "Wort/ProcCliff"
                 o.positionCS = cs; o.positionWS = w; o.d1 = v.d1; o.d2 = v.d2; o.normalWS = n;
                 return o;
             }
-            half4 sfrag(SV i) : SV_Target { NorthClip(i.positionWS, i.d1, i.d2); ShadowEdgeClip(i.positionWS, i.d1, i.d2, i.normalWS); return 0; }
+            half4 sfrag(SV i) : SV_Target { return 0; }
             ENDHLSL
         }
         Pass
@@ -499,7 +453,7 @@ Shader "Wort/ProcCliff"
             struct DA { float4 positionOS : POSITION; float4 d1 : TEXCOORD1; float4 d2 : TEXCOORD2; };
             struct DV { float4 positionCS : SV_POSITION; float3 positionWS : TEXCOORD0; float4 d1 : TEXCOORD1; float4 d2 : TEXCOORD2; };
             DV dvert(DA v) { DV o; float3 w = TransformObjectToWorld(v.positionOS.xyz); o.positionWS = w; o.positionCS = TransformWorldToHClip(w); o.d1 = v.d1; o.d2 = v.d2; return o; }
-            half dfrag(DV i) : SV_Target { NorthClip(i.positionWS, i.d1, i.d2); return i.positionCS.z; }
+            half dfrag(DV i) : SV_Target { return i.positionCS.z; }
             ENDHLSL
         }
         Pass
@@ -513,7 +467,7 @@ Shader "Wort/ProcCliff"
             struct NA { float4 positionOS : POSITION; float3 normalOS : NORMAL; float4 d1 : TEXCOORD1; float4 d2 : TEXCOORD2; };
             struct NV { float4 positionCS : SV_POSITION; float3 positionWS : TEXCOORD0; float3 normalWS : TEXCOORD1; float4 d1 : TEXCOORD2; float4 d2 : TEXCOORD3; };
             NV nvert(NA v) { NV o; float3 w = TransformObjectToWorld(v.positionOS.xyz); o.positionWS = w; o.positionCS = TransformWorldToHClip(w); o.normalWS = TransformObjectToWorldNormal(v.normalOS); o.d1 = v.d1; o.d2 = v.d2; return o; }
-            half4 nfrag(NV i) : SV_Target { NorthClip(i.positionWS, i.d1, i.d2); return half4(normalize(i.normalWS), 0); }
+            half4 nfrag(NV i) : SV_Target { return half4(normalize(i.normalWS), 0); }
             ENDHLSL
         }
     }

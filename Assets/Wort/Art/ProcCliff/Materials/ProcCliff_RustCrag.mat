@@ -58,14 +58,11 @@ Material:
     - _BevelR1: 0.32
     - _TopBlend: 0.35
     - _FootBlend: 0.35
-    - _ClipNorth: 0
-    - _NorthClip: 0.12
     - _BlackLift: 0.08
     - _WallGain: 1.12
     - _WallSat: 1.12
     - _EdgeFx: 1
     - _WallTopFx: 1
-    - _ShadowEdge: 0
     - _VarOn: 1
     - _FootAO: 0.8
     - _CasterPush: 0
@@ -76,8 +73,6 @@ Material:
     - _BiomeSharp: 0.025
     - _ArrSize: 512
     - _SetCount: 1
-    - _ShadowNotch0: 0.06
-    - _ShadowNotch1: 0.2
     m_Colors: []
   m_BuildTextureStacks: []
   m_AllowLocking: 1

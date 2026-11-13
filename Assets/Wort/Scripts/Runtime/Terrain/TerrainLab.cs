@@ -70,7 +70,7 @@ namespace Wort.Terrain
 
         // 程序化崖壁运行时资源：各套贴图打包成的数组、合并材质、Biome 权重图（都不存盘）
         private Texture2DArray procColArr, procNrmArr;
-        private Material procMat, procClipMat;
+        private Material procMat;
         private Texture2D biomeMap;
         private ProcCliffSet[] procBuiltFor;
 
@@ -300,7 +300,7 @@ namespace Wort.Terrain
                 var part = (ProcCliffMesh.Part)(kv.Key % ProcCliffMesh.PartCount);
                 // 所有套件共用一个合并材质（贴图在数组里，按 Biome 权重图逐像素选套件）；同一部分的组合并成一个子网格
                 if (part == ProcCliffMesh.Part.Shadow) { shadowIdx.AddRange(kv.Value); shadowMat = procMat; continue; }
-                var mat = part == ProcCliffMesh.Part.TopClip ? procClipMat : procMat;
+                var mat = procMat;
                 int at = visMats.IndexOf(mat);
                 if (at < 0) { visGroups.Add(new List<int>(kv.Value)); visMats.Add(mat); }
                 else visGroups[at].AddRange(kv.Value);
@@ -337,7 +337,7 @@ namespace Wort.Terrain
         /// 程序化崖壁的运行时资源：
         /// 1) 把各套贴图在显卡里复制进两个 Texture2DArray（颜色 / 法线）。每套 SetStride 层：0 崖壁、1 泥土、2 顶岩（没有顶岩放泥土）、
         ///    3–18 崖壁变体按格切开（2x2 v1/v2 各 4 格、2x1 v1/v2 各 2 格、1x2 v1/v2 各 2 格；没有变体用崖壁填）。同类贴图尺寸、格式必须一致（导入设置已统一）。
-        /// 2) 合并材质：第 0 套 main 的参数 + 数组 + 每套参数（有无顶岩、周期、有无变体）；clip 版打开北边裁剪。
+        /// 2) 合并材质：第 0 套 main 的参数 + 数组 + 每套参数（有无顶岩、周期、有无变体）。
         /// 3) Biome 权重图：每格一个像素，RGBA = 套件 0–3 的权重。测试地 = 每格套件编号 one-hot 再按 biomeBlendRadius 模糊；
         ///    5×5 等正式生成器 = 地图自带的 Biome 渐变权重（GDD：32–64m 过渡带）按各套认领的 Biome 加起来。设为全局贴图。
         /// </summary>
@@ -347,7 +347,7 @@ namespace Wort.Terrain
             int n = Mathf.Min(procCliffSets.Length, 4);
             if (procColArr == null || procMat == null || procBuiltFor != procCliffSets)
             {
-                DestroySafe(procColArr); DestroySafe(procNrmArr); DestroySafe(procMat); DestroySafe(procClipMat);
+                DestroySafe(procColArr); DestroySafe(procNrmArr); DestroySafe(procMat);
                 var main0 = procCliffSets[0].main;
                 var cols = new List<(Texture tex, int cx, int cy)>(); var nrms = new List<(Texture tex, int cx, int cy)>();
                 var setP = new Vector4[4];
@@ -381,14 +381,6 @@ namespace Wort.Terrain
                 for (int i = 0; i < 4; i++) procMat.SetVector("_SetP" + i, setP[Mathf.Min(i, n - 1)]);
                 procMat.SetFloat("_SetCount", n);
                 procMat.SetFloat("_ArrSize", procColArr != null ? procColArr.width : 512);
-                procMat.SetFloat("_ClipNorth", 0);
-                procClipMat = new Material(procMat) { name = "ProcCliff Clip (runtime)", hideFlags = HideFlags.DontSave };
-                // 数组和每套参数显式再设一遍（不依赖材质复制）
-                procClipMat.SetTexture("_ColArr", procColArr); procClipMat.SetTexture("_NrmArr", procNrmArr);
-                for (int i = 0; i < 4; i++) procClipMat.SetVector("_SetP" + i, setP[Mathf.Min(i, n - 1)]);
-                procClipMat.SetFloat("_SetCount", n);
-                procClipMat.SetFloat("_ArrSize", procColArr != null ? procColArr.width : 512);
-                procClipMat.SetFloat("_ClipNorth", 1);
                 procBuiltFor = procCliffSets;
             }
 

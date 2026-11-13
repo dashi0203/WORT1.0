@@ -13,7 +13,6 @@ MonoBehaviour:
   m_Name: OliveStrata_ProcCliffSet
   m_EditorClassIdentifier: 
   main: {fileID: 2100000, guid: b1c9f114b67c4c23945c053e504f86a0, type: 2}
-  clip: {fileID: 2100000, guid: 8d75da2b259d4e49aa5e6441b6912329, type: 2}
   biomeIds:
   - 3
   - 5

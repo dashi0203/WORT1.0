@@ -13,7 +13,6 @@ MonoBehaviour:
   m_Name: Limestone_ProcCliffSet
   m_EditorClassIdentifier: 
   main: {fileID: 2100000, guid: 6464fcd3f0624cabbe25ebe8ea64166d, type: 2}
-  clip: {fileID: 2100000, guid: 591a45df5c9c43fd9bdce4bb49b2f2d9, type: 2}
   biomeIds:
   - 0
   - 4

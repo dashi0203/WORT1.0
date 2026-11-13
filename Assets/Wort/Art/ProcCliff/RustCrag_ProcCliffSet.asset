@@ -13,7 +13,6 @@ MonoBehaviour:
   m_Name: RustCrag_ProcCliffSet
   m_EditorClassIdentifier: 
   main: {fileID: 2100000, guid: 4961afd02fd84564a33a5078331831df, type: 2}
-  clip: {fileID: 2100000, guid: 167ef44053184498b9a07f1aabbe8019, type: 2}
   biomeIds:
   - 1
   - 2
