@@ -366,6 +366,9 @@ Shader "Wort/ProcCliff"
                         float3 en = topFrame(UnpackNormal(NrmA(s * 19 + 1, footUv, ePer)));
                         if (footRock > 0) en = normalize(lerp(en, topFrame(UnpackNormal(NrmA(s * 19 + 2, footUvR, trPer))), footRock));
                         Wv = normalize(lerp(Wv, rotateAxis(en, k, radians(90)), qf));
+                        // 贴地那一截（0.15m）法线直接转成地面的法线（朝上 + 同一块泥土细节）：墙根和地面受光完全一样，接缝处没有亮暗分界线
+                        float sFoot = smooth01(1 - (P.y - yb) / 0.15);
+                        if (sFoot > 0) Wv = normalize(lerp(Wv, en, sFoot));
                     }
                     N = Wv;
                     albedo *= lerp(_FootAO, 1, smooth01((P.y - yb) / 0.35));
