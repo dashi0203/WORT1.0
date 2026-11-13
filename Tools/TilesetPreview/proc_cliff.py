@@ -24,7 +24,8 @@ PPM = int(sys.argv[3]) if len(sys.argv) > 3 else 48
 SETS = [('OliveStrata', 'IMG_9471_BaseColor.png', 'IMG_9471_Normal_Periodic512.png', None, None),
         ('RustCrag', 'Redo/Forest_Cliff_BaseColor.png', 'Redo/Forest_Cliff_Normal_Periodic512.png', None, None),
         ('Limestone', 'IMG_9485_BaseColor.png', 'IMG_9485_Normal_Periodic512.png', 'Redo/Human_TopRock_BaseColor.png', 'Redo/Human_TopRock_Normal_Periodic512.png')]
-TR_PERIOD = 1.37   # 顶岩平铺周期（m），不取整数，和崖壁 1m 错开
+TR_PERIOD = 2.7    # 顶岩平铺周期（m），不取整数，和崖壁 1m 错开
+TOPB = 0.55        # 崖壁顶部融合顶岩的高度（m）
 INSET0, INSET1 = 0.15, 0.35   # 泥土离露边内收（m）
 SUB = 4                    # 每格顶面细分
 FOOT, TOP = 0.35, 0.22
@@ -233,7 +234,11 @@ def render(biome, cpath, npath, trpath, trnpath):
     wS = (wS + 0.30 * np.clip((vnoise(x, 61, 0.8) - 0.72) / 0.28, 0, 1)) * 0.6
     tw = np.clip(1 - (yt_ - y) / wS - (lc - 0.35) * 0.8, 0, 1); tw = tw * tw * (3 - 2 * tw)
     Nf = Nw + tw[:, None] * np.array([0, 1.0, 0]); Nf /= np.linalg.norm(Nf, axis=1, keepdims=True)
-    m = kd == 2; N[m] = Nf[m]; alb[m] = (tc * (1 - q[:, None]) + te * q[:, None])[m]
+    # 崖壁顶部融合顶岩（沼泽 / 森林即泥土）：顶面倒角是顶岩颜色，墙顶也渐变成顶岩，石头接石头，不夹泥土
+    trw = samp(toprock if toprock is not None else earth, uu / (TR_PERIOD if toprock is not None else 1), y / (TR_PERIOD if toprock is not None else 1))
+    lt = trw @ [0.299, 0.587, 0.114]
+    qtop = np.clip((TOPB - (yt_ - y)) / TOPB + (lt - lc) * 1.2 - 0.15 + (vnoise2(uu, y, 91, 0.08) - 0.5) * 0.5, 0, 1); qtop = qtop * qtop * (3 - 2 * qtop)
+    m = kd == 2; N[m] = Nf[m]; alb[m] = ((tc * (1 - q[:, None]) + te * q[:, None]) * (1 - qtop[:, None]) + trw * qtop[:, None])[m]
     # 侧面：崖壁贴图按 (z, y)，几何法线
     m = kd == 4
     ts = tc; ls = lc
@@ -242,7 +247,7 @@ def render(biome, cpath, npath, trpath, trnpath):
     # 侧面也叠法线贴图（切线沿轮廓方向，简化：在几何法线上加法线贴图的 xy 扰动）
     Ns = Ng + np.c_[np.zeros(n), nt[:, 1], np.zeros(n)] * 0.6 + np.c_[np.zeros(n), np.zeros(n), -nt[:, 0]] * 0.6 * np.sign(Ng[:, 0:1]).ravel()[:, None]
     Ns /= np.linalg.norm(Ns, axis=1, keepdims=True) + 1e-9
-    N[m] = Ns[m]; alb[m] = (ts * (1 - qs[:, None]) + te * qs[:, None])[m]
+    N[m] = Ns[m]; alb[m] = ((ts * (1 - qs[:, None]) + te * qs[:, None]) * (1 - qtop[:, None]) + trw * qtop[:, None])[m]
     alb = LIFT + alb * (1 - LIFT)
     sh = shadow(np.c_[x, y, z])
     lam = np.clip(N @ L, 0, 1) * sh
