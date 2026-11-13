@@ -20,7 +20,12 @@ REPO = Path(__file__).resolve().parents[2]
 X = REPO / 'TilesetExperiment'
 GROUND = Path(sys.argv[1]); OUT = sys.argv[2]
 PPM = int(sys.argv[3]) if len(sys.argv) > 3 else 48
-SETS = [('OliveStrata', 'IMG_9471'), ('RustCrag', 'IMG_9473'), ('Limestone', 'IMG_9485')]
+# (Biome, 崖壁颜色, 崖壁法线, 顶岩颜色, 顶岩法线)；顶岩为 None = 直接用泥土（沼泽、森林，负责人 2026-11-13）
+SETS = [('OliveStrata', 'IMG_9471_BaseColor.png', 'IMG_9471_Normal_Periodic512.png', None, None),
+        ('RustCrag', 'Redo/Forest_Cliff_BaseColor.png', 'Redo/Forest_Cliff_Normal_Periodic512.png', None, None),
+        ('Limestone', 'IMG_9485_BaseColor.png', 'IMG_9485_Normal_Periodic512.png', 'Redo/Human_TopRock_BaseColor.png', 'Redo/Human_TopRock_Normal_Periodic512.png')]
+TR_PERIOD = 1.37   # 顶岩平铺周期（m），不取整数，和崖壁 1m 错开
+INSET0, INSET1 = 0.15, 0.35   # 泥土离露边内收（m）
 SUB = 4                    # 每格顶面细分
 FOOT, TOP = 0.35, 0.22
 LIFT = 0.08
@@ -128,9 +133,11 @@ def shadow(P):
         sh[q[:, 1] < hh - 1e-4] = 0
     return sh
 
-def render(biome, stem):
-    cliff = load(X / f'{stem}_BaseColor.png'); nmap = load(X / f'{stem}_Normal_Periodic512.png') * 2 - 1
+def render(biome, cpath, npath, trpath, trnpath):
+    cliff = load(X / cpath); nmap = load(X / npath) * 2 - 1
     earth = load(GROUND / f'{biome}.png')
+    toprock = load(X / trpath) if trpath else None
+    trn = load(X / trnpath) * 2 - 1 if trnpath else None
     u0, v0 = -1.0, -1.0
     W = int((NX + 2) * PPM); Hh = int((NZ + YMAX + 2) * PPM)
     gx, gy = np.meshgrid(np.arange(W) + 0.5, np.arange(Hh) + 0.5)
@@ -186,28 +193,41 @@ def render(biome, stem):
         ex = hh(cx + dx_, cz + dz_) < h0
         w = BEV0 + (BEV1 - BEV0) * (0.65 * vnoise(along, seed + 20, 0.55) + 0.35 * vnoise(along, seed + 40, 0.13))
         notch = np.clip((vnoise(along, seed + 60, 0.8) - 0.72) / 0.28, 0, 1)        # 偶尔的深缺口
-        edges.append((ex, dist / (w + 0.30 * notch), dx_, dz_, along))
+        edges.append((ex, dist / (w + 0.30 * notch), dx_, dz_, along, dist))
     D = np.full(k_, 9.0); alongs = np.zeros(k_)
-    for ex, dn, dx_, dz_, along in edges:
+    dm = np.full(k_, 9.0)
+    for ex, dn, dx_, dz_, along, dist in edges:
+        dm = np.where(ex, np.minimum(dm, dist), dm)
         dn = np.where(ex, dn, 9.0); better = dn < D
         D = np.where(better, dn, D); alongs = np.where(better, along, alongs)
     acc = np.zeros(k_); dirx = np.zeros(k_); dirz = np.zeros(k_)
-    for ex, dn, dx_, dz_, along in edges:
+    for ex, dn, dx_, dz_, along, dist in edges:
         q_ = np.where(ex, np.clip(1 - dn, 0, 1), 0)
         acc += q_ * q_; dirx += dx_ * q_; dirz += dz_ * q_
     D = np.minimum(D, 1 - np.sqrt(np.clip(acc, 0, 1)))                                # 凸角圆角
-    rock = samp(cliff, alongs, h0 - np.clip(D, 0, 1) * 0.3); lr = rock @ [0.299, 0.587, 0.114]
-    D2 = D - (lr - 0.35) * 1.4 + (vnoise2(x[idx], z[idx], 9, 0.07) - 0.5) * 0.6   # 跟着石块明暗 + 碎边
+    # 顶面分两层：顶岩铺满（世界 xz，周期 TR_PERIOD），泥土离露边内收 INSET0–INSET1（不规则，按两边明暗差推进 / 退缩），
+    # 泥土边在顶岩上投一点暗边；倒角只作用在最外圈。沼泽 / 森林的顶岩就是泥土本身。
+    xi, zi = x[idx], z[idx]
+    if toprock is not None:
+        rk = samp(toprock, xi / TR_PERIOD, zi / TR_PERIOD)
+        rn2 = samp(trn, xi / TR_PERIOD, zi / TR_PERIOD)
+        Nr = np.c_[rn2[:, 0], rn2[:, 2], rn2[:, 1]]; Nr /= np.linalg.norm(Nr, axis=1, keepdims=True)   # 切线 +x、副切线 +z
+    else:
+        rk = te[idx]; Nr = np.tile([0.0, 1.0, 0.0], (k_, 1))
+    lr = rk @ [0.299, 0.587, 0.114]; lE = te[idx] @ [0.299, 0.587, 0.114]
+    wi = INSET0 + (INSET1 - INSET0) * (0.6 * vnoise(alongs, 81, 0.5) + 0.4 * vnoise(alongs, 82, 0.12))
+    wi = wi + 0.15 * np.clip((vnoise(alongs, 83, 0.9) - 0.75) / 0.25, 0, 1)
+    se = dm - wi + (lE - lr) * 0.12 + (vnoise2(xi, zi, 85, 0.06) - 0.5) * 0.06
+    qe = np.clip((se + 0.015) / 0.03, 0, 1); qe = qe * qe * (3 - 2 * qe)                 # 1 = 泥土
+    ao = 1 - 0.35 * np.clip(1 + se / 0.05, 0, 1) * (1 - qe) * (toprock is not None)      # 泥土边在顶岩上的暗边
+    D2 = D - (lr - 0.35) * 1.4 + (vnoise2(xi, zi, 9, 0.07) - 0.5) * 0.6                   # 倒角：跟着顶岩明暗 + 碎边
     t = np.clip(1 - D2, 0, 1); t = t * t * (3 - 2 * t)
     dl = np.sqrt(dirx ** 2 + dirz ** 2) + 1e-9
-    rn = samp(nmap, alongs, h0 - np.clip(D, 0, 1) * 0.3)          # 石头法线细节（切线 = 沿边方向，副切线 = 往里）
-    ux, uz = -dirz / dl, dirx / dl                                  # 沿边方向
-    tl = 1.0 * t
-    nb = np.c_[dirx / dl * tl, np.ones(k_), dirz / dl * tl]
-    nb += t[:, None] * 0.8 * (np.c_[ux, np.zeros(k_), uz] * rn[:, :1] + np.c_[dirx / dl, np.zeros(k_), dirz / dl] * rn[:, 1:2])
+    base = Nr * (1 - qe[:, None]) + np.array([0, 1.0, 0]) * qe[:, None]
+    nb = base + np.c_[dirx / dl, np.zeros(k_), dirz / dl] * t[:, None]
     nb /= np.linalg.norm(nb, axis=1, keepdims=True)
     N[idx] = nb
-    alb[idx] = te[idx] * (1 - t[:, None] * 0.85) + rock * (t[:, None] * 0.85)
+    alb[idx] = rk * (1 - qe[:, None]) * ao[:, None] + te[idx] * qe[:, None]
     # 正面顶部也做假倒角：同一条宽度噪声（与顶面南边一致），法线往上倾，与顶面倒角在折线处都约 45°，折线就看不出来
     wS = BEV0 + (BEV1 - BEV0) * (0.65 * vnoise(x, 21, 0.55) + 0.35 * vnoise(x, 41, 0.13))
     wS = (wS + 0.30 * np.clip((vnoise(x, 61, 0.8) - 0.72) / 0.28, 0, 1)) * 0.6
@@ -230,7 +250,7 @@ def render(biome, stem):
     col = np.clip(alb * k[:, None], 0, 1)
     return (col.reshape(Hh, W, 3) * 255).astype(np.uint8)
 
-imgs = [render(b, s) for b, s in SETS]
+imgs = [render(*a) for a in SETS]
 gap = np.zeros((imgs[0].shape[0], 8, 3), np.uint8)
 Image.fromarray(np.concatenate(sum([[im, gap] for im in imgs], [])[:-1], 1)).save(OUT)
 print('输出', OUT)
