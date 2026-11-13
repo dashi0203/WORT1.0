@@ -33,13 +33,22 @@ namespace Wort.Tests
         public void BlockFaceCounts()
         {
             var m = Block();
-            // 顶面 16 格各 2 个三角形，北边一排进裁剪组
-            Assert.AreEqual(24, OnBlock(m, ProcCliffMesh.Part.Top));
+            // 顶面：靠露边的 12 格一格一块（北边 4 格进裁剪组），中间 2×2 合并成一块 → Top = 8 格 × 2 + 2
+            Assert.AreEqual(18, OnBlock(m, ProcCliffMesh.Part.Top));
             Assert.AreEqual(8, OnBlock(m, ProcCliffMesh.Part.TopClip));
             // 正面 4 格 × 16 行 × 2 = 128；东西两侧各：前排整高 16 行 × 4 段 × 2 = 128，后三格只有顶层 4 行 × 4 段 × 2 × 3 = 96 → 两侧 448
             Assert.AreEqual(128 + 448, OnBlock(m, ProcCliffMesh.Part.Wall));
             // 只投影：北、东、西各 4 块平面
             Assert.AreEqual(24, OnBlock(m, ProcCliffMesh.Part.Shadow));
+        }
+
+        [Test]
+        public void FlatGroundMerges()
+        {
+            // 平地 1 层（64×64）除了地图边一圈都合并：整块 chunk 的 Top 三角形应远少于 2 × 4096
+            var m = Block();
+            int top = m.Indices[(int)ProcCliffMesh.Part.Top].Count / 3;
+            Assert.Less(top, 1500f, "平地应合并成大矩形");
         }
 
         [Test]

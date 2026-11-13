@@ -52,6 +52,7 @@ namespace Wort.Generation
             var m = new ProcCliffMesh();
             int size = map.Settings.ChunkSize;
             int ox = cx * size, oz = cz * size;
+            var interior = new bool[size * size];
             for (int lz = 0; lz < size; lz++)
                 for (int lx = 0; lx < size; lx++)
                 {
@@ -61,12 +62,16 @@ namespace Wort.Generation
                     int hn = HeightAt(map, x, z + 1), he = HeightAt(map, x + 1, z), hs = HeightAt(map, x, z - 1), hw = HeightAt(map, x - 1, z);
                     int mask = (hn < h ? 1 : 0) | (he < h ? 2 : 0) | (hs < h ? 4 : 0) | (hw < h ? 8 : 0);
 
-                    // 顶面：平的方块
-                    var top = m.Group(set, (mask & 1) != 0 ? ProcCliffMesh.Part.TopClip : ProcCliffMesh.Part.Top);
-                    Quad(m, top,
-                        lx, h, lz, lx, h, lz + 1, lx + 1, h, lz + 1, lx + 1, h, lz,
-                        0, 1, 0, 1, 0, 0, -1,
-                        1, mask, h, 0, x, z);
+                    // 顶面：靠露边的格一格一块（着色器按这一格的掩码算倒角、泥土内收）；四周同高的格留给后面合并成大矩形
+                    if (mask != 0)
+                    {
+                        var top = m.Group(set, (mask & 1) != 0 ? ProcCliffMesh.Part.TopClip : ProcCliffMesh.Part.Top);
+                        Quad(m, top,
+                            lx, h, lz, lx, h, lz + 1, lx + 1, h, lz + 1, lx + 1, h, lz,
+                            0, 1, 0, 1, 0, 0, -1,
+                            1, mask, h, 0, x, z);
+                    }
+                    else interior[lz * size + lx] = true;
 
                     bool front = hs < h;
                     if (front)
@@ -120,7 +125,46 @@ namespace Wort.Generation
                     if (he < h) Quad(m, sh, lx + 1, he, lz, lx + 1, h, lz, lx + 1, h, lz + 1, lx + 1, he, lz + 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, h, he, 0, 0);
                     if (hw < h) Quad(m, sh, lx, hw, lz + 1, lx, h, lz + 1, lx, h, lz, lx, hw, lz, -1, 0, 0, 0, 0, -1, 1, 0, 0, h, hw, 0, 0);
                 }
+            MergeInterior(m, map, sets, ox, oz, size, interior);
             return m;
+        }
+
+        /// <summary>
+        /// 四周同高的顶面格（没有露边）按“同高、同套件”贪心合并成尽量大的矩形（先沿 x 延伸，再整行沿 z 延伸）。
+        /// 这些格在着色器里只有泥土（离露边远），合并不影响外观；平地从每格 2 个三角形降到每块矩形 2 个。
+        /// </summary>
+        static void MergeInterior(ProcCliffMesh m, RegionMap map, byte[] sets, int ox, int oz, int size, bool[] interior)
+        {
+            bool setsOk = sets != null && sets.Length == map.W * map.H;
+            int Key(int lx, int lz) => HeightAt(map, ox + lx, oz + lz) * 256 + (setsOk ? sets[(oz + lz) * map.W + ox + lx] : 0);
+            var used = new bool[size * size];
+            for (int lz = 0; lz < size; lz++)
+                for (int lx = 0; lx < size; lx++)
+                {
+                    int i = lz * size + lx;
+                    if (!interior[i] || used[i]) continue;
+                    int key = Key(lx, lz);
+                    int w = 1;
+                    while (lx + w < size && interior[i + w] && !used[i + w] && Key(lx + w, lz) == key) w++;
+                    int d = 1;
+                    for (; lz + d < size; d++)
+                    {
+                        bool ok = true;
+                        for (int k = 0; k < w && ok; k++)
+                        {
+                            int j = (lz + d) * size + lx + k;
+                            ok = interior[j] && !used[j] && Key(lx + k, lz + d) == key;
+                        }
+                        if (!ok) break;
+                    }
+                    for (int a = 0; a < d; a++)
+                        for (int k = 0; k < w; k++) used[(lz + a) * size + lx + k] = true;
+                    int h = key / 256, set = key % 256;
+                    Quad(m, m.Group(set, ProcCliffMesh.Part.Top),
+                        lx, h, lz, lx, h, lz + d, lx + w, h, lz + d, lx + w, h, lz,
+                        0, 1, 0, 1, 0, 0, -1,
+                        1, 0, h, 0, ox + lx, oz + lz);
+                }
         }
 
         /// <summary>从 (x, z) 往南找到这一列不再同高的地方：正面所在的世界 z。</summary>
@@ -131,9 +175,11 @@ namespace Wort.Generation
             return k;
         }
 
+        /// <summary>地图外当作和边上那格同高（不画边界墙，和 TilePlacer 一致）。</summary>
         static int HeightAt(RegionMap map, int x, int z)
         {
-            if (x < 0 || z < 0 || x >= map.W || z >= map.H) return 0;
+            x = x < 0 ? 0 : x >= map.W ? map.W - 1 : x;
+            z = z < 0 ? 0 : z >= map.H ? map.H - 1 : z;
             return map.Height[z * map.W + x];
         }
 
