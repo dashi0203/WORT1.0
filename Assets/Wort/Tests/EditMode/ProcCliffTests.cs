@@ -64,6 +64,42 @@ namespace Wort.Tests
             }
         }
 
+        [TestCase(1)]
+        [TestCase(-1)]
+        public void OffsetFrontAndSideMeetOnVoxelEdge(int side)
+        {
+            const int n = 64, x = 10, z = 10, floor = 1, top = 3;
+            var heights = new byte[n * n];
+            for (int i = 0; i < heights.Length; i++) heights[i] = floor;
+            heights[z * n + x] = top;
+            heights[(z + 1) * n + x] = top;
+            heights[(z + 1) * n + x + side] = top;
+
+            var mesh = ProcCliffMesher.Build(TestGround.Create(1, 1, heights, floor), null, 0, 0);
+            int edge = side > 0 ? x + 1 : x;
+            int frontVertices = 0, sideVertices = 0;
+            for (int v = 0; v < mesh.VertexCount; v++)
+            {
+                int pos = v * 3, data = v * 4;
+                if (mesh.Positions[pos + 2] != z + 1 || mesh.Positions[pos + 1] >= top) continue;
+                if (mesh.Data1[data] == 4 && mesh.Data2[data] == edge && mesh.Data1[data + 1] == side)
+                {
+                    Assert.AreEqual(edge, mesh.Positions[pos], 1e-5f, "侧面回到内角的体素格线");
+                    sideVertices++;
+                }
+                if (mesh.Data1[data] == 2 && mesh.Positions[pos + 1] == floor)
+                {
+                    int end = data + (side > 0 ? 1 : 2);
+                    if (mesh.Data2[end] != edge || System.Math.Abs(mesh.Positions[pos] - edge) >= 0.5f) continue;
+                    Assert.AreEqual(edge, mesh.Positions[pos], 1e-5f, "后退一格的正面底边接上同一格角");
+                    frontVertices++;
+                }
+            }
+
+            Assert.Greater(frontVertices, 0);
+            Assert.Greater(sideVertices, 0);
+        }
+
         [Test]
         public void TopIsFlatAndBulgeZeroAtTop()
         {

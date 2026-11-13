@@ -142,6 +142,10 @@ Shader "Wort/ProcCliff"
             float dN = 1 - (P.z - d2.y);
             float cw = _NorthClip * (0.55 * vnoise(P.x, 31, 0.35) + 0.45 * vnoise(P.x, 32, 0.09));
             cw += 0.10 * saturate((vnoise(P.x, 33, 0.8) - 0.7) / 0.3);
+            // 北边在内拐角接回同高或更高的邻格，裁剪在格角收为零。
+            float fx = P.x - d2.x;
+            if (fmod(floor(d1.y / 4096), 2) >= 1) cw *= smooth01((1 - fx) / 0.35);
+            if (fmod(floor(d1.y / 8192), 2) >= 1) cw *= smooth01(fx / 0.35);
             clip(dN - cw);
         }
         // 阴影专用的边缘裁剪（负责人 2026-11-13：影子横平竖直）：只在 ShadowCaster 里用，画面不变。
@@ -318,10 +322,12 @@ Shader "Wort/ProcCliff"
                     float3 T = normalize(cross(ng, up)), B = normalize(cross(T, ng));
                     float3 Wv = normalize(T * ct.x + B * ct.y + ng * ct.z);
                     // 崖脚融合泥土
-                    half3 ew = ColA(s * 19 + 1, float2(cu, P.y) / ePer, ePer).rgb;
+                    float footContact = smooth01(1 - (P.y - yb) / 0.06);
+                    float2 footUv = lerp(float2(cu, P.y), P.xz, footContact) / ePer;
+                    half3 ew = ColA(s * 19 + 1, footUv, ePer).rgb;
                     float lc = lum(tc);
                     float qf = smooth01((_FootBlend - (P.y - yb)) / _FootBlend + (lum(ew) - lc) * 1.2);
-                    qf = max(qf, smooth01(1 - (P.y - yb) / 0.06));   // 贴地那一点一定是泥土，和地面同色
+                    qf = max(qf, footContact);   // 贴地那一点一定是泥土，和地面同色
                     // 崖壁提亮 / 加饱和只作用在崖壁本身（融合之前），崖脚泥土、墙顶顶岩保持和地面 / 顶面同色
                     float lt0 = lum(tc);
                     half3 tcw = saturate((lt0 + (tc - lt0) * _WallSat) * _WallGain);
@@ -345,7 +351,7 @@ Shader "Wort/ProcCliff"
                     // 崖脚融合区：法线细节跟着颜色换成泥土的（顶面坐标 → 墙面）
                     if (qf > 0)
                     {
-                        float3 en = topFrame(UnpackNormal(NrmA(s * 19 + 1, float2(cu, P.y) / ePer, ePer)));
+                        float3 en = topFrame(UnpackNormal(NrmA(s * 19 + 1, footUv, ePer)));
                         Wv = normalize(lerp(Wv, rotateAxis(en, k, radians(90)), qf));
                     }
                     N = Wv;

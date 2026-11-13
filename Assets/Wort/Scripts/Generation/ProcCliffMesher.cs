@@ -12,7 +12,7 @@ namespace Wort.Generation
         public readonly List<float> Positions = new List<float>();
         public readonly List<float> Normals = new List<float>();
         public readonly List<float> Tangents = new List<float>();   // xyzw
-        /// <summary>每顶点 4 个数：种类（1 顶面 / 2 正面 / 4 侧面 / 0 投影面）、顶面掩码（1–8 露边、16–128 内拐角、256–2048 更高的邻居）或侧面朝向、崖顶高、崖脚高。</summary>
+        /// <summary>每顶点 4 个数：种类（1 顶面 / 2 正面 / 4 侧面 / 0 投影面）、顶面掩码（1–8 露边、16–128 内拐角、256–2048 更高的邻居、4096–8192 北沿东／西内角收边）或侧面朝向、崖顶高、崖脚高。</summary>
         public readonly List<float> Data1 = new List<float>();
         /// <summary>每顶点 4 个数：顶面 = 格的世界 x、z；正面 = 折线的世界 z、这一段西头 x、东头 x、西邻高 × 1024 + 东邻高；侧面 = 折线的世界 x、这一列正面的世界 z。</summary>
         public readonly List<float> Data2 = new List<float>();
@@ -71,6 +71,10 @@ namespace Wort.Generation
                     // 哪边邻居更高（北 256、东 512、南 1024、西 2048）：崖脚前面的地面往外倾（内凹圆角的地面一侧）
                     mask |= (hn > h ? 256 : 0) | (he > h ? 512 : 0) | (hs > h ? 1024 : 0) | (hw > h ? 2048 : 0);
 
+                    // 北沿只在接回未裁剪的内拐角处收边，连续的北沿共用同一条噪声。
+                    if (hn < h && he >= h && EdgeH(map, x + 1, z + 1, 2) >= h) mask |= 4096;
+                    if (hn < h && hw >= h && EdgeH(map, x - 1, z + 1, 2) >= h) mask |= 8192;
+
                     // 顶面：靠露边的格一格一块（着色器按这一格的掩码算倒角、泥土内收）；四周同高的格留给后面合并成大矩形
                     if (mask != 0)
                     {
@@ -84,13 +88,14 @@ namespace Wort.Generation
 
                     bool front = hs < h;
                     // 正面：同高、同崖脚、同套件的一排连成一段（只在段的西头生成），东西两头露边时端点跟着侧面鼓出量走
-                    bool SameRun(int xx) => xx >= ox && xx < ox + size && HeightAt(map, xx, z) == h && HeightAt(map, xx, z - 1) == hs &&
+                    bool SameRun(int xx) => xx >= ox && xx < ox + size && SlopeAt(map, xx, z) < 0 &&
+                                            HeightAt(map, xx, z) == h && EdgeH(map, xx, z - 1, 0) == hs &&
                                             (sets == null || sets.Length != map.W * map.H || sets[z * map.W + xx] == set);
                     if (front && !SameRun(x - 1))
                     {
                         int xe = x;
                         while (SameRun(xe + 1)) xe++;
-                        int hwS = HeightAt(map, x - 1, z), heE = HeightAt(map, xe + 1, z);
+                        int hwS = EdgeH(map, x - 1, z, 1), heE = EdgeH(map, xe + 1, z, 3);
                         var wall = m.Group(set, ProcCliffMesh.Part.Wall);
                         int rows = Math.Max(1, (int)Math.Round((h - hs) / Row));
                         double l0 = lx, r1 = xe - ox + 1;
@@ -124,10 +129,10 @@ namespace Wort.Generation
                             {
                                 double z0 = lz + (double)c / Sub, z1 = lz + (double)(c + 1) / Sub;
                                 double wz0 = oz + z0, wz1 = oz + z1;
-                                // 北边露边（顶面北边会被透明裁剪往里收）：鼓起在这一列的北头最后 0.35m 收为 0，免得侧面伸出裁剪后的轮廓
-                                double ta = hn < h ? NorthTaper(z + 1 - wz0) : 1, tb = hn < h ? NorthTaper(z + 1 - wz1) : 1;
-                                double a0 = edge + side * Bulge(side, y0, wz0, h) * ta, a1 = edge + side * Bulge(side, y1, wz0, h) * ta;
-                                double b0 = edge + side * Bulge(side, y0, wz1, h) * tb, b1 = edge + side * Bulge(side, y1, wz1, h) * tb;
+                                double a0 = edge + side * SideOut(map, x, z, side, y0, wz0, h, hb);
+                                double a1 = edge + side * SideOut(map, x, z, side, y1, wz0, h, hb);
+                                double b0 = edge + side * SideOut(map, x, z, side, y0, wz1, h, hb);
+                                double b1 = edge + side * SideOut(map, x, z, side, y1, wz1, h, hb);
                                 // 朝外看：东面右手边是 +z，西面右手边是 −z（Unity 顺时针为正面）
                                 if (side > 0)
                                     QuadAuto(m, wall, a0, y0, z0, a1, y1, z0, b1, y1, z1, b0, y0, z1, side, 4, side, h, hb, ox + edge, fz);
@@ -269,16 +274,27 @@ namespace Wort.Generation
         /// <summary>正面在东(1) / 西(-1) 头、高度 y 处往外伸多少：旁边这一格在这个高度没有体素时，跟着侧面鼓出量走。</summary>
         static double Out(RegionMap map, int x, int z, int side, double y, int h)
         {
-            int hn = HeightAt(map, x + side, z);
-            if (hn >= y - 1e-6 || hn >= h) return 0;
-            return Bulge(side, y, z, h);
+            int hb = EdgeH(map, x + side, z, side > 0 ? 3 : 1);
+            return SideOut(map, x, z, side, y, z, h, hb);
         }
 
-        /// <summary>侧面鼓出量（m）：世界坐标值噪声，相邻面自动连续；崖顶 h 处为 0，往下线性起步（顶上约 45° 朝上）再变缓。</summary>
-        static double NorthTaper(double distToNorthEdge)
+        static double SideOut(RegionMap map, int x, int z, int side, double y, double wz, int h, int hb)
         {
-            double t = distToNorthEdge / 0.35;
-            if (t < 0) t = 0; else if (t > 1) t = 1;
+            if (y <= hb || hb >= h) return 0;
+            int sideEdge = side > 0 ? 3 : 1;
+            // 对角邻格在这层封住转角时，侧面在折点回到格线；正面端点也用同一个偏移。
+            bool southClosed = EdgeH(map, x + side, z - 1, sideEdge) >= y;
+            bool northClosed = EdgeH(map, x + side, z + 1, sideEdge) >= y;
+            bool northClipped = EdgeH(map, x, z + 1, 2) < h;
+            double taper = EdgeTaper(y - hb);
+            if (southClosed) taper *= EdgeTaper(wz - z);
+            if (northClosed || northClipped) taper *= EdgeTaper(z + 1 - wz);
+            return Bulge(side, y, wz, h) * taper;
+        }
+
+        static double EdgeTaper(double distance)
+        {
+            double t = Math.Min(1, Math.Max(0, distance / 0.35));
             return t * t * (3 - 2 * t);
         }
 
