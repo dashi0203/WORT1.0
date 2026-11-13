@@ -39,6 +39,7 @@ Forward+ 修复后本地确认：瓦片受光、有影子（负责人截图）�
 - 负责人反馈沼泽 / 森林每列墙最上一层没换：这两套的 Crown 是单网格、用自己整张贴图（唇边画在顶部）。
   → `TileSurface` 的 `_SeamOn` 加 2 = 单网格模式：整块用崖壁贴图，唇边以上（`_LipY` 0.88）直接取原 Crown 贴图（`_SeamLip`），交界照原公式融合。
   两套 `Crown_A/B` 改为 `_BaseMap`/`_BumpMap` = 对应 `Cliff_A/B`，`_SeamLip` = 原 Crown 颜色，法线权重 1。`_LipY` 待本地看交界位置再调。
+- 本地确认崖顶件没问题。负责人：贴图偏暗，要像 PS 曲线把最低点往上拉、明暗信息不能丢 → `TileSurface` 加 `_BlackLift`（sRGB 里 out = lift + in × (1 − lift)，默认 0.08），所有地形材质自动生效，可逐材质调。
 
 等负责人 / Codex：
 1. 本地按上一次给的一次性步骤拉新（先把本地未跟踪的 `Assets/Wort/Art/Tilesets` 挪到项目外备份），在 Unity 里试体素笔刷，发 Console 和截图。

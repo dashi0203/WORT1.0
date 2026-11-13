@@ -3,6 +3,7 @@
 // - 光照（负责人 2026-11-12：颜色贴图来自参考图，明暗是画进去的，不能再按法线完整打一遍光）：
 //   漫反射 = lerp(几何法线的 N·L, 法线贴图的 N·L, _DetailNormal)。几何法线只给整块面的明暗（随时间 / 方向变化），
 //   法线贴图只加一层弱细节，石块的体积主要靠颜色贴图本身。环境光用几何法线。
+// - 暗部提亮 _BlackLift（负责人 2026-11-13：贴图偏暗）：sRGB 空间 out = lift + in × (1 − lift)，默认 0.08 ≈ 黑色抬到 20/255。
 // - 投影：_Projection = 0 用网格 UV（崖壁、顶沿，跟着瓦片旋转）；1 = 世界 xz（顶面砂土，跨格连续，没有格间接缝），_WorldTile 米一张。
 // - 路面：全局遮罩 _WortGroundMask（R = 路面权重，由 TerrainLab 按 RoadSurface 烘焙，覆盖 _WortGroundMaskRect = (x0, z0, 宽, 深) 的世界范围），
 //   只在 _RoadOn = 1 的材质（顶面砂土）朝上的面生效；交界公式与 Wort.Generation.TerrainTextures.MixRoad 相同（路面贴图 A = 高度，砂土 A = 高度，没有时取 0.5）。
@@ -21,6 +22,7 @@ Shader "Wort/TileSurface"
         [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
         _BumpScale ("Normal Scale", Float) = 1
         _DetailNormal ("Normal Map Lighting Weight", Range(0, 1)) = 0.35
+        _BlackLift ("Black Lift (curve low point, sRGB)", Range(0, 0.3)) = 0.08
         [Enum(MeshUV, 0, WorldXZ, 1)] _Projection ("Projection", Float) = 0
         _WorldTile ("World Tile Size (m)", Float) = 1
         [Toggle] _RoadOn ("Road Overlay", Float) = 0
@@ -70,6 +72,7 @@ Shader "Wort/TileSurface"
                 half4 _BaseColor;
                 float _BumpScale;
                 float _DetailNormal;
+                float _BlackLift;
                 float _Projection;
                 float _WorldTile;
                 float _RoadOn;
@@ -154,6 +157,10 @@ Shader "Wort/TileSurface"
                         albedo = lerp(albedo, rd.rgb, q);
                     }
                 }
+
+                // 提亮暗部：等于 PS 曲线把最低点往上拉（在 sRGB 里做），亮部几乎不变、暗部细节保留
+                half3 srgb = FastLinearToSRGB(albedo);
+                albedo = FastSRGBToLinear(_BlackLift + srgb * (1 - _BlackLift));
 
                 Light light = GetMainLight(TransformWorldToShadowCoord(i.positionWS));
                 float ndl = lerp(saturate(dot(ng, light.direction)), saturate(dot(nm, light.direction)), _DetailNormal);
