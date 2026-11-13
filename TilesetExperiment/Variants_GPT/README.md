@@ -10,4 +10,4 @@
 | 2x2 | 1536×1536（1:1） | 1024×1024 方（云端放大回 1536） |
 
 交付：`<尺寸>_v<序号>.png` 放回同一目录。云端只取中间区域，边缘一圈换回基础块并渐变、生成无缝法线、按格切开。
-旧的 `TilesetExperiment/Variants/`（4×3 等模板、dot 画的 18 张）作废。
+旧的 `TilesetExperiment/Variants/`（4×3 模板、dot 画的 18 张）和 `TilesetExperiment/TopRock/`（顶岩竖条模板）已删除，需要时从 git 历史找回。
