@@ -14,3 +14,20 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   main: {fileID: 2100000, guid: b1c9f114b67c4c23945c053e504f86a0, type: 2}
   clip: {fileID: 2100000, guid: 8d75da2b259d4e49aa5e6441b6912329, type: 2}
+  biomeIds:
+  - 3
+  - 5
+  variantColors:
+  - {fileID: 2800000, guid: 20cb6c11dcba4f629df580c828c93fd0, type: 3}
+  - {fileID: 2800000, guid: a9cfb1ebadee472bbca9e849d73c167d, type: 3}
+  - {fileID: 2800000, guid: 8f03fd0c8c434ba389b0a3c48486fbd0, type: 3}
+  - {fileID: 2800000, guid: 7135cc6305ca4ec4935ebed75b043b7c, type: 3}
+  - {fileID: 2800000, guid: 0ec4e53ad71d44b6afad0384615384b4, type: 3}
+  - {fileID: 2800000, guid: 947a8fd179a1408197694a95ae67602b, type: 3}
+  variantNormals:
+  - {fileID: 2800000, guid: f91952fb24564fb58c393972a8600fe3, type: 3}
+  - {fileID: 2800000, guid: 887692209ed74e119cd7e308734c40b5, type: 3}
+  - {fileID: 2800000, guid: bddef1bbbd2a49a088ae6af349617b3d, type: 3}
+  - {fileID: 2800000, guid: 2ae2cab6bf38464f8429c069f2a0b6d8, type: 3}
+  - {fileID: 2800000, guid: 90a6584feffa4e71b31680813d8c7a89, type: 3}
+  - {fileID: 2800000, guid: e45a72402e53435a97c510026e93ee4e, type: 3}

@@ -59,7 +59,9 @@ namespace Wort.Generation
                     int x = ox + lx, z = oz + lz;
                     int h = HeightAt(map, x, z);
                     int set = sets != null && sets.Length == map.W * map.H ? sets[z * map.W + x] : 0;
-                    int hn = HeightAt(map, x, z + 1), he = HeightAt(map, x + 1, z), hs = HeightAt(map, x, z - 1), hw = HeightAt(map, x - 1, z);
+                    if (SlopeAt(map, x, z) >= 0) { EmitSlope(m, map, set, x, z, lx, lz, ox, oz); continue; }
+                    // 邻格朝我这一边的高度（坡道：上坡那头算高一层，坡顶的台地看到坡道不生成墙）
+                    int hn = EdgeH(map, x, z + 1, 2), he = EdgeH(map, x + 1, z, 3), hs = EdgeH(map, x, z - 1, 0), hw = EdgeH(map, x - 1, z, 1);
                     int mask = (hn < h ? 1 : 0) | (he < h ? 2 : 0) | (hs < h ? 4 : 0) | (hw < h ? 8 : 0);
                     // 内拐角：四邻都不低、只有斜对角更低（东北 16、西北 32、东南 64、西南 128）。着色器按到角点的距离把顶岩边绕过去
                     if (hn >= h && he >= h && HeightAt(map, x + 1, z + 1) < h) mask |= 16;
@@ -189,6 +191,71 @@ namespace Wort.Generation
             int k = z;
             while (k > 0 && HeightAt(map, x, k - 1) >= h) k--;
             return k;
+        }
+
+        static int SlopeAt(RegionMap map, int x, int z)
+        {
+            if (map.Slope == null || x < 0 || z < 0 || x >= map.W || z >= map.H) return -1;
+            return map.Slope[z * map.W + x];
+        }
+
+        /// <summary>格 (x, z) 朝 dir（0 北 1 东 2 南 3 西）那条边的高度：坡道的上坡那头 = 高度 + 1，其余 = 高度。</summary>
+        static int EdgeH(RegionMap map, int x, int z, int dir)
+        {
+            int h = HeightAt(map, x, z), up = SlopeAt(map, x, z);
+            return up >= 0 && dir == up ? h + 1 : h;
+        }
+
+        /// <summary>
+        /// 坡道格（斜坡体素在 y = 高度，往上坡方向升 1 层）：一块倾斜的坡面（顶面，着色器按几何法线倾斜）；
+        /// 四边里旁边更低的地方补墙（顶边顺着坡斜着走，每顶点带自己的崖顶高）：朝南 = 正面，朝东西 = 侧面，朝北 = 只投影。
+        /// </summary>
+        static void EmitSlope(ProcCliffMesh m, RegionMap map, int set, int x, int z, int lx, int lz, int ox, int oz)
+        {
+            int h = HeightAt(map, x, z), up = SlopeAt(map, x, z);
+            int ux = Grid.DX4[up], uz = Grid.DZ4[up];
+            double Y(double cx, double cz) => h + 0.5 + (cx - 0.5) * ux + (cz - 0.5) * uz;   // 角点 (0/1, 0/1) 的坡面高度
+            double nl = Math.Sqrt(ux * ux + 1 + uz * uz);
+            var top = m.Group(set, ProcCliffMesh.Part.Top);
+            Quad(m, top,
+                lx, Y(0, 0), lz, lx, Y(0, 1), lz + 1, lx + 1, Y(1, 1), lz + 1, lx + 1, Y(1, 0), lz,
+                -ux / nl, 1 / nl, -uz / nl, 1, 0, 0, -1,
+                1, 0, h + 1, 0, x, z);
+            const int NoCorner = 1023 * 1024 + 1023;
+            for (int d = 0; d < 4; d++)
+            {
+                int hb = EdgeH(map, x + Grid.DX4[d], z + Grid.DZ4[d], (d + 2) & 3);
+                // 这条边两个端点（从外面看左、右）的局部角点
+                double c0x, c0z, c1x, c1z;
+                switch (d)
+                {
+                    case 0: c0x = 1; c0z = 1; c1x = 0; c1z = 1; break;   // 北：从北看右手是 −x
+                    case 1: c0x = 1; c0z = 0; c1x = 1; c1z = 1; break;   // 东
+                    case 2: c0x = 0; c0z = 0; c1x = 1; c1z = 0; break;   // 南
+                    default: c0x = 0; c0z = 1; c1x = 0; c1z = 0; break;  // 西
+                }
+                double t0 = Y(c0x, c0z), t1 = Y(c1x, c1z);
+                if (t0 <= hb + 1e-6 && t1 <= hb + 1e-6) continue;
+                double b0 = Math.Min(hb, t0), b1 = Math.Min(hb, t1);
+                double ax = lx + c0x, az = lz + c0z, bx = lx + c1x, bz = lz + c1z;
+                var grp = m.Group(set, d == 0 ? ProcCliffMesh.Part.Shadow : ProcCliffMesh.Part.Wall);
+                double k = d == 2 ? 2 : d == 0 ? 0 : 4, sgn = d == 1 ? 1 : d == 3 ? -1 : 0;
+                double nx = Grid.DX4[d], nz = Grid.DZ4[d];
+                double e0 = d == 2 ? oz + lz : d == 1 ? ox + lx + 1 : d == 3 ? ox + lx : 0;
+                double e1 = d == 2 ? x : z - 10, e2 = d == 2 ? x + 1 : 0, e3 = d == 2 ? NoCorner : 0;   // 坡道墙不做竖直转角平滑
+                int bi = m.VertexCount;
+                void V(double px, double py, double pz, double yt)
+                {
+                    Vert(m, px, py, pz);
+                    m.Normals.Add((float)nx); m.Normals.Add(0); m.Normals.Add((float)nz);
+                    m.Tangents.Add((float)-nz); m.Tangents.Add(0); m.Tangents.Add((float)nx); m.Tangents.Add(1);
+                    m.Data1.Add((float)k); m.Data1.Add((float)sgn); m.Data1.Add((float)yt); m.Data1.Add(hb);
+                    m.Data2.Add((float)e0); m.Data2.Add((float)e1); m.Data2.Add((float)e2); m.Data2.Add((float)e3);
+                }
+                V(ax, b0, az, t0); V(ax, t0, az, t0); V(bx, t1, bz, t1); V(bx, b1, bz, t1);
+                grp.Add(bi); grp.Add(bi + 1); grp.Add(bi + 2);
+                grp.Add(bi); grp.Add(bi + 2); grp.Add(bi + 3);
+            }
         }
 
         /// <summary>地图外当作和边上那格同高（不画边界墙，和 TilePlacer 一致）。</summary>

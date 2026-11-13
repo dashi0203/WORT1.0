@@ -38,6 +38,10 @@ Shader "Wort/ProcCliff"
         _WallSat ("Wall Saturation", Range(0, 2)) = 1.12
         [Toggle] _EdgeFx ("Edge Effects (bevel / bend)", Float) = 1
         [Toggle] _WallTopFx ("Wall Top Blend", Float) = 1
+        [Toggle] _VarOn ("Cliff Variants", Float) = 1
+        _P22 ("Variant 2x2 Chance (per 2x2 block)", Range(0, 1)) = 0.15
+        _PRow ("Variant Row Pattern Chance", Range(0, 1)) = 0.2
+        _PCol ("Variant Column Pattern Chance", Range(0, 1)) = 0.2
         _BiomePatch ("Biome Patch Strength", Float) = 0.8
         _BiomeSharp ("Biome Edge Softness", Float) = 0.025
         [Toggle] _ShadowEdge ("Jagged Shadow Edges", Float) = 1
@@ -60,6 +64,7 @@ Shader "Wort/ProcCliff"
         CBUFFER_START(UnityPerMaterial)
             float4 _SetP0, _SetP1, _SetP2, _SetP3;   // 每套：(有顶岩, 顶岩周期, 泥土周期, 0)
             float _SetCount, _ArrSize, _BiomePatch, _BiomeSharp;
+            float _VarOn, _P22, _PRow, _PCol;
             float _EarthPeriod, _UseTopRock, _TopRockPeriod;
             float _Inset0, _Inset1, _BevelR0, _BevelR1, _TopBlend, _FootBlend;
             float _ClipNorth, _NorthClip, _BlackLift, _WallGain, _WallSat, _EdgeFx, _WallTopFx;
@@ -82,11 +87,32 @@ Shader "Wort/ProcCliff"
             return lerp(lerp(hash2(i, seed), hash2(i + float2(1, 0), seed), f.x),
                     lerp(hash2(i + float2(0, 1), seed), hash2(i + float2(1, 1), seed), f.x), f.y);
         }
+        float4 setP(float s) { return s < 0.5 ? _SetP0 : s < 1.5 ? _SetP1 : s < 2.5 ? _SetP2 : _SetP3; }
+        // 崖壁变体（负责人 2026-11-13）：每 2×2 格一块（对齐偶数格），按哈希定这一块的样式——整块 2×2 变体 / 两行各自 2×1 或基础 / 两列各自 1×2 或基础 / 全是基础。
+        // 块和块不重叠，同一位置每次结果相同。数组里每套 19 层：0 崖壁、1 泥土、2 顶岩、3–10 2x2（v*4 + 行*2 + 列）、11–14 2x1（v*2 + 列）、15–18 1x2（v*2 + 行）。
+        float cliffSlice(float s, float2 uc)
+        {
+            float base = s * 19;
+            if (_VarOn < 0.5 || setP(s).w < 0.5) return base;
+            float2 c = floor(uc), b = floor(c / 2), f = c - b * 2;
+            float hb = hash2(b, 501 + s * 7);
+            if (hb < _P22) return base + 3 + (hash2(b, 502 + s) < 0.5 ? 0 : 4) + f.y * 2 + f.x;
+            if (hb < _P22 + _PRow)
+            {
+                float hr = hash2(float2(b.x, c.y), 503 + s);
+                return hr < 0.6 ? base + 11 + (hr < 0.3 ? 0 : 2) + f.x : base;
+            }
+            if (hb < _P22 + _PRow + _PCol)
+            {
+                float hc = hash2(float2(c.x, b.y), 504 + s);
+                return hc < 0.6 ? base + 15 + (hc < 0.3 ? 0 : 2) + f.y : base;
+            }
+            return base;
+        }
         float lum(half3 c) { return dot(c, half3(0.299, 0.587, 0.114)); }
         float smooth01(float x) { x = saturate(x); return x * x * (3 - 2 * x); }
         float bevelR(float along, float seed) { return _BevelR0 + (_BevelR1 - _BevelR0) * vnoise(along, 100 + seed, 0.7); }
 
-        float4 setP(float s) { return s < 0.5 ? _SetP0 : s < 1.5 ? _SetP1 : s < 2.5 ? _SetP2 : _SetP3; }
         float lodFor(float per) { return max(0, log2(max(_FW * _ArrSize / per, 1e-6))); }
         half4 ColA(float slice, float2 uv, float per) { return SAMPLE_TEXTURE2D_ARRAY_LOD(_ColArr, sampler_ColArr, uv, slice, lodFor(per)); }
         half4 NrmA(float slice, float2 uv, float per) { return SAMPLE_TEXTURE2D_ARRAY_LOD(_NrmArr, sampler_NrmArr, uv, slice, lodFor(per)); }
@@ -188,7 +214,7 @@ Shader "Wort/ProcCliff"
                 const float3 up = float3(0, 1, 0);
                 float kind = d1.x;
                 float2 ue = P.xz / ePer;
-                half3 earthC = ColA(s * 3 + 1, ue, ePer).rgb;
+                half3 earthC = ColA(s * 19 + 1, ue, ePer).rgb;
                 bool isWall = kind > 1.5;
 
                 if (!isWall)
@@ -207,7 +233,7 @@ Shader "Wort/ProcCliff"
                     if (fmod(floor(cm / 4), 2) >= 1) dc = min(dc, length(float2(1 - fx, fz)));
                     if (fmod(floor(cm / 8), 2) >= 1) dc = min(dc, length(float2(fx, fz)));
                     float dr = min(dm, dc);   // 顶岩边 / 泥土内收用；倒角只看真正的露边 dm
-                    float3 earthN = topFrame(UnpackNormal(NrmA(s * 3 + 1, ue, ePer)));
+                    float3 earthN = topFrame(UnpackNormal(NrmA(s * 19 + 1, ue, ePer)));
                     // 崖脚（内凹圆角）的地面一侧：哪边邻居更高，墙根前 r 内法线往外倾到 45°（墙底同样往上翻 45°，交界线对齐）
                     float hm = floor(mask / 256);
                     float dHN = fmod(hm, 2) >= 1 ? 1 - fz : 9, dHE = fmod(floor(hm / 2), 2) >= 1 ? 1 - fx : 9;
@@ -245,8 +271,8 @@ Shader "Wort/ProcCliff"
                         outd = normalize(outd + float3(0, 0, -1e-4));
                         // 顶岩（沼泽 / 森林即泥土）
                         float2 ur = P.xz / trPer;
-                        half3 rk = useTR > 0.5 ? ColA(s * 3 + 2, ur, trPer).rgb : earthC;
-                        float3 rockN = useTR > 0.5 ? topFrame(UnpackNormal(NrmA(s * 3 + 2, ur, trPer))) : earthN;
+                        half3 rk = useTR > 0.5 ? ColA(s * 19 + 2, ur, trPer).rgb : earthC;
+                        float3 rockN = useTR > 0.5 ? topFrame(UnpackNormal(NrmA(s * 19 + 2, ur, trPer))) : earthN;
                         // 泥土内收
                         if (dc < dm) along = P.x + P.z;
                         float wi = _Inset0 + (_Inset1 - _Inset0) * (0.6 * vnoise(along, 81, 0.5) + 0.4 * vnoise(along, 82, 0.12));
@@ -261,6 +287,12 @@ Shader "Wort/ProcCliff"
                         float3 k = normalize(cross(up, outd));
                         N = sm > 0 ? normalize(rotateAxis(base, k, radians(45) * sm)) : base;
                     }
+                    // 坡道顶面：把“朝上”的结果整体转到几何法线
+                    if (ng.y < 0.999)
+                    {
+                        float3 ax = normalize(cross(up, ng));
+                        N = normalize(rotateAxis(N, ax, acos(saturate(ng.y))));
+                    }
                 }
                 else
                 {
@@ -272,12 +304,13 @@ Shader "Wort/ProcCliff"
                     // 崖壁贴图：正面 u = x；侧面从这一列正面转角接着铺
                     float cu = side ? edge + sgn * (P.z - d2.y) : P.x;
                     float2 uc = float2(cu, P.y);
-                    half3 tc = ColA(s * 3, uc, 1).rgb;
-                    float3 ct = UnpackNormal(NrmA(s * 3, uc, 1));
+                    float cs = cliffSlice(s, uc);   // 崖壁这一格用基础块还是哪一块变体
+                    half3 tc = ColA(cs, uc, 1).rgb;
+                    float3 ct = UnpackNormal(NrmA(cs, uc, 1));
                     float3 T = normalize(cross(ng, up)), B = normalize(cross(T, ng));
                     float3 Wv = normalize(T * ct.x + B * ct.y + ng * ct.z);
                     // 崖脚融合泥土
-                    half3 ew = ColA(s * 3 + 1, float2(cu, P.y) / ePer, ePer).rgb;
+                    half3 ew = ColA(s * 19 + 1, float2(cu, P.y) / ePer, ePer).rgb;
                     float lc = lum(tc);
                     float qf = smooth01((_FootBlend - (P.y - yb)) / _FootBlend + (lum(ew) - lc) * 1.2);
                     qf = max(qf, smooth01(1 - (P.y - yb) / 0.06));   // 贴地那一点一定是泥土，和地面同色
@@ -294,8 +327,8 @@ Shader "Wort/ProcCliff"
                         float sv = side ? P.z : edge - (yt - P.y);
                         float per = useTR > 0.5 ? trPer : ePer;
                         float2 us = float2(su, sv) / per;
-                        half3 trw = useTR > 0.5 ? ColA(s * 3 + 2, us, trPer).rgb : ColA(s * 3 + 1, us, ePer).rgb;
-                        float3 trn = useTR > 0.5 ? UnpackNormal(NrmA(s * 3 + 2, us, trPer)) : UnpackNormal(NrmA(s * 3 + 1, us, ePer));
+                        half3 trw = useTR > 0.5 ? ColA(s * 19 + 2, us, trPer).rgb : ColA(s * 19 + 1, us, ePer).rgb;
+                        float3 trn = useTR > 0.5 ? UnpackNormal(NrmA(s * 19 + 2, us, trPer)) : UnpackNormal(NrmA(s * 19 + 1, us, ePer));
                         float qt = smooth01((_TopBlend - (yt - P.y)) / _TopBlend + (lum(trw) - lc) * 1.2 - 0.15 + (vnoise2(float2(cu, P.y), 91, 0.08) - 0.5) * 0.5);
                         albedo = lerp(albedo, trw, qt);
                         float3 rockW = rotateAxis(topFrame(trn), k, radians(90));      // 顶面坐标 → 墙面
@@ -304,7 +337,7 @@ Shader "Wort/ProcCliff"
                     // 崖脚融合区：法线细节跟着颜色换成泥土的（顶面坐标 → 墙面）
                     if (qf > 0)
                     {
-                        float3 en = topFrame(UnpackNormal(NrmA(s * 3 + 1, float2(cu, P.y) / ePer, ePer)));
+                        float3 en = topFrame(UnpackNormal(NrmA(s * 19 + 1, float2(cu, P.y) / ePer, ePer)));
                         Wv = normalize(lerp(Wv, rotateAxis(en, k, radians(90)), qf));
                     }
                     N = Wv;
