@@ -54,8 +54,8 @@ namespace Wort.Rendering
         [Range(0.02f, 1f)] public float holeFade = 0.45f;
         [Tooltip("洞里黑色区域（被挖开的崖体内部）的边缘往地面啃进去多少（米），把体素直角边打碎，和鹰眼视觉同款扰动。0 = 关")]
         [Range(0f, 1f)] public float holeEdgeBite = 0.35f;
-        [Tooltip("比主角身体中心高出多少才算挡在前面（米）")]
-        [Range(0f, 1f)] public float frontMargin = 0.25f;
+        [Tooltip("只裁高于主角脚下多少米的东西（和鹰眼视觉的“剔除脚下多高以上”同一个意思）")]
+        [Range(0f, 3f)] public float holeCutAbove = 0.5f;
         [Tooltip("调试：不管有没有被挡住，一直显示虚化圆")]
         public bool debugForceHole;
 
@@ -64,13 +64,19 @@ namespace Wort.Rendering
         [Tooltip("切换键（默认 T）")]
         public Key eagleKey = Key.T;
         [Tooltip("剔除主角脚下多高以上的东西（格）")]
-        [Range(0.5f, 4f)] public float cutAbove = 1.5f;
+        [Range(0f, 4f)] public float cutAbove = 0.5f;
         [Tooltip("进出过渡用时（秒）：裁切面从上往下扫")]
         [Range(0.05f, 1.5f)] public float sweepTime = 0.35f;
         [Tooltip("饱和度降多少")]
         [Range(0f, 1f)] public float desaturate = 0.8f;
         [Tooltip("范围：以主角脚下为圆心的水平圆的半径（米）。0 = 不限范围（整个画面都裁）")]
         [Range(0f, 20f)] public float eagleRadius = 3f;
+        [Tooltip("反选区压暗：裁切圆再往外多少米以外，整片画面压暗")]
+        [Range(0f, 10f)] public float eagleDimExtra = 1f;
+        [Tooltip("反选区压暗程度（0 = 不压暗）")]
+        [Range(0f, 1f)] public float eagleDim = 0.6f;
+        [Tooltip("反选区边缘软化宽度（米）")]
+        [Range(0.05f, 3f)] public float eagleDimSoft = 0.6f;
         [Tooltip("圆边波浪幅度（半径的比例，和遮挡虚化同一套）")]
         [Range(0f, 0.4f)] public float eagleWave = 0.12f;
         [Tooltip("裁切边缘的溶解带宽（米）：边界外一圈碎碎地留下")]
@@ -115,6 +121,7 @@ namespace Wort.Rendering
         private static readonly int IdCutCircle = Shader.PropertyToID("_WortCutCircle");
         private static readonly int IdCutStyle = Shader.PropertyToID("_WortCutStyle");
         private static readonly int IdCutRim = Shader.PropertyToID("_WortCutRimColor");
+        private static readonly int IdEagleDim = Shader.PropertyToID("_WortEagleDim");
         private static readonly int IdBottom = Shader.PropertyToID("_WortBottomParams");
         private static readonly int IdFog = Shader.PropertyToID("_WortFogParams");
         private static readonly int IdFogColor = Shader.PropertyToID("_WortFogColor");
@@ -202,6 +209,7 @@ namespace Wort.Rendering
             Shader.SetGlobalVector(IdCutStyle, new Vector4(eagleDissolve, rimMinPixels, Mathf.Max(rimMinPixels, rimMaxPixels), rimEnabled ? 1 : 0));
             Color rl = rimColor.linear;
             Shader.SetGlobalVector(IdCutRim, new Vector4(rl.r, rl.g, rl.b, 1));
+            Shader.SetGlobalVector(IdEagleDim, new Vector4(eagleDimExtra, eagleDim, eagleDimSoft, cutOn ? e : 0f));
             UpdateCap(cutOn, cam);
             UpdateDesaturation(e);
 
@@ -221,7 +229,7 @@ namespace Wort.Rendering
             HoleRadiusNow = dt > 0f ? Mathf.SmoothDamp(HoleRadiusNow, targetR, ref holeVel, holeTime * 0.5f, Mathf.Infinity, dt) : targetR;
             Vector3 c = player != null ? player.position + Vector3.up * (bodyHeight * 0.5f) : Vector3.zero;
             Shader.SetGlobalVector(IdHoleCenter, new Vector4(c.x, c.y, c.z, HoleRadiusNow > 0.02f ? HoleRadiusNow : 0f));
-            Shader.SetGlobalVector(IdHoleParams, new Vector4(time, holeWave, holeFade, frontMargin));
+            Shader.SetGlobalVector(IdHoleParams, new Vector4(time, holeWave, holeFade, holeCutAbove - bodyHeight * 0.5f));
             Shader.SetGlobalVector(IdHoleEdge, new Vector4(holeEdgeBite, holeEdgeBite > 0f ? 1 : 0, 0, 0));
 
             // —— 最低一层压暗 ——
@@ -286,10 +294,10 @@ namespace Wort.Rendering
                 if (capShader == null) capShader = Shader.Find("Wort/CutCap");
                 if (capShader == null) return;
                 capMesh = new Mesh { name = "Wort Cut Cap", hideFlags = HideFlags.HideAndDontSave };
-                const float S = 60f;
-                capMesh.vertices = new[] { new Vector3(-S, 0, -S), new Vector3(-S, 0, S), new Vector3(S, 0, S), new Vector3(S, 0, -S) };
+                // 单位正方形（±1），按裁切圆的大小缩放
+                capMesh.vertices = new[] { new Vector3(-1, 0, -1), new Vector3(-1, 0, 1), new Vector3(1, 0, 1), new Vector3(1, 0, -1) };
                 capMesh.triangles = new[] { 0, 1, 2, 0, 2, 3 };
-                capMesh.bounds = new Bounds(Vector3.zero, new Vector3(2 * S, 2000f, 2 * S));   // 顶点着色器把高度改到裁切面，包围盒放大避免被剔除
+                capMesh.bounds = new Bounds(Vector3.zero, new Vector3(2f, 4000f, 2f));   // 顶点着色器把高度改到裁切面，包围盒竖向放大避免被剔除
                 capMat = new Material(capShader) { name = "Wort Cut Cap", hideFlags = HideFlags.HideAndDontSave };
                 capGo = new GameObject("Wort Cut Cap") { hideFlags = HideFlags.HideAndDontSave };
                 capGo.AddComponent<MeshFilter>().sharedMesh = capMesh;
@@ -299,8 +307,11 @@ namespace Wort.Rendering
                 mr.receiveShadows = false;
             }
             if (!capGo.activeSelf) capGo.SetActive(true);
-            Vector3 f = cam != null ? cam.transform.position : (player != null ? player.position : Vector3.zero);
-            capGo.transform.position = new Vector3(Mathf.Round(f.x), 0f, Mathf.Round(f.z));
+            // 平面只铺到裁切圆（+ 波浪和外扩的余量），不铺满屏幕：横切面着色器每像素要查 9 格高度场，铺满屏幕很贵
+            Vector3 f = player != null ? player.position : (cam != null ? cam.transform.position : Vector3.zero);
+            float half = eagleRadius > 0f ? eagleRadius * (1f + eagleWave) + eagleDissolve + capDilate + 0.5f : 60f;
+            capGo.transform.position = new Vector3(f.x, 0f, f.z);
+            capGo.transform.localScale = new Vector3(half, 1f, half);
         }
 
         private void UpdateDesaturation(float w)

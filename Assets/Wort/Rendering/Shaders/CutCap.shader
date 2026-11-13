@@ -24,9 +24,17 @@ Shader "Wort/CutCap"
         void CapClip(float3 P)
         {
             if (_WortCutOn < 0.5 || _WortHeightRect.z < 1) { clip(-1); return; }
+            // 先判断圆形范围（便宜），圆外直接丢掉，不做后面的高度场查询
+            if (_WortCutCircle.z > 0)
+            {
+                float2 dc = P.xz - _WortCutCircle.xy;
+                float r = _WortCutCircle.z * WortWave(atan2(dc.y, dc.x), _WortCutParams.z, _WortCutCircle.w);
+                clip(r - length(dc) - max(_WortCutStyle.x, 1e-3) * WortDissolveNoise(P.xz, _WortCutParams.z) * 0.5);
+            }
             float2 org = _WortHeightRect.xy;
             int2 c0 = (int2)floor(P.xz - org);
             float dil = max(_WortCutParams.w, 0.02);
+            float cutH = WortCutHeight(P.xz);   // 一个像素只算一次（起伏很缓，邻格用同一个值）
             float s = 0;
             [unroll] for (int dz = -1; dz <= 1; dz++)
             [unroll] for (int dx = -1; dx <= 1; dx++)
@@ -34,19 +42,11 @@ Shader "Wort/CutCap"
                 int2 c = c0 + int2(dx, dz);
                 float2 bmin = org + float2(c);
                 float2 q = clamp(P.xz, bmin, bmin + 1);
-                float d = length(q - P.xz);
-                if (WortCellHeight(c, q) > WortCutHeight(q))
-                    s = max(s, 1 - smoothstep(dil * 0.4, dil, d));
+                if (WortCellHeight(c, q) > cutH)
+                    s = max(s, 1 - smoothstep(dil * 0.4, dil, length(q - P.xz)));
             }
             float n = WortNoise2(P.xz * 6 + _WortCutParams.z * 0.4) * 0.7 + WortNoise2(P.xz * 17) * 0.3;
             clip(s - n * 0.9 - 0.05);
-            // 鹰眼视觉的圆形范围：和地形裁切同一个圆（波浪边 + 溶解），圆外不画截面
-            if (_WortCutCircle.z > 0)
-            {
-                float2 d = P.xz - _WortCutCircle.xy;
-                float r = _WortCutCircle.z * WortWave(atan2(d.y, d.x), _WortCutParams.z, _WortCutCircle.w);
-                clip(r - length(d) - max(_WortCutStyle.x, 1e-3) * WortDissolveNoise(P.xz, _WortCutParams.z) * 0.5);
-            }
         }
         ENDHLSL
         Pass
