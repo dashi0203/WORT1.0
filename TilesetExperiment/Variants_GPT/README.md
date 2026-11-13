@@ -1,13 +1,7 @@
-# 崖壁变体（给 GPT 补图）
+# 崖壁变体（GPT 补图原图）
 
-三套崖壁（沼泽 `Swamp_OliveStrata`、森林 `Forest_RustCrag`、人类区 `Human_Limestone`），每套三种尺寸（宽×高，格；1 格 = 1m = 512px）。
-模板四周各留半格原图作参考，中间品红（255, 0, 255）是要补的区域，尺寸正好对应 GPT 的出图比例：
+三套崖壁（沼泽 `Swamp_OliveStrata`、森林 `Forest_RustCrag`、人类区 `Human_Limestone`），每套 `2x1` / `1x2` / `2x2` 各两张（`_v1`、`_v2`），
+四周半格是原图参考、中间是补画的部分。
 
-| 尺寸 | 模板 | GPT 出图 |
-| --- | --- | --- |
-| 2x1 | 1536×1024（3:2） | 1536×1024 横 |
-| 1x2 | 1024×1536（2:3） | 1024×1536 竖 |
-| 2x2 | 1536×1536（1:1） | 1024×1024 方（云端放大回 1536） |
-
-交付：`<尺寸>_v<序号>.png` 放回同一目录。云端只取中间区域，边缘一圈换回基础块并渐变、生成无缝法线、按格切开。
-旧的 `TilesetExperiment/Variants/`（4×3 模板、dot 画的 18 张）和 `TilesetExperiment/TopRock/`（顶岩竖条模板）已删除，需要时从 git 历史找回。
+`python Tools/TilesetBake/variants.py` 处理后写到各套的 `processed/`（不进仓库），正式用的颜色 / 法线在 `Assets/Wort/Art/ProcCliff/Variants/`。
+模板（`_template.png`、`_mask.png`）已删除，需要重新补图时从 git 历史找回。

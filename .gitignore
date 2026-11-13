@@ -51,3 +51,5 @@ crashlytics-buildid.txt
 # OS
 .DS_Store
 Thumbs.db
+
+TilesetExperiment/Variants_GPT/*/processed/
