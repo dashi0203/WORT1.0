@@ -222,7 +222,10 @@ Shader "Wort/ProcCliff"
                     half3 ew = SAMPLE_TEXTURE2D(_EarthMap, sampler_EarthMap, float2(cu, P.y) / _EarthPeriod).rgb;
                     float lc = lum(tc);
                     float qf = smooth01((_FootBlend - (P.y - yb)) / _FootBlend + (lum(ew) - lc) * 1.2);
-                    albedo = lerp(tc, ew, qf);
+                    // 崖壁提亮 / 加饱和只作用在崖壁本身（融合之前），崖脚泥土、墙顶顶岩保持和地面 / 顶面同色
+                    float lt0 = lum(tc);
+                    half3 tcw = saturate((lt0 + (tc - lt0) * _WallSat) * _WallGain);
+                    albedo = lerp(tcw, ew, qf);
                     float along = side ? P.z : P.x, seed = side ? (sgn > 0 ? 3 : 4) : 1;
                     float3 k = normalize(cross(up, outd));
                     if (_WallTopFx > 0.5 && yt - P.y < _TopBlend + 0.1)
@@ -239,6 +242,12 @@ Shader "Wort/ProcCliff"
                         float3 rockW = rotateAxis(topFrame(trn), k, radians(90));      // 顶面坐标 → 墙面
                         Wv = normalize(lerp(Wv, rockW, qt));
                     }
+                    // 崖脚：法线跟着融合比例转向朝上并叠泥土细节，到最底下和地面受光一致（颜色才接得上）
+                    if (qf > 0)
+                    {
+                        float3 en = topFrame(UnpackNormal(SAMPLE_TEXTURE2D(_EarthNormal, sampler_EarthNormal, float2(cu, P.y) / _EarthPeriod)));
+                        Wv = normalize(lerp(Wv, en, qf));
+                    }
                     N = Wv;
                     if (_EdgeFx > 0.5)
                     {
@@ -246,9 +255,6 @@ Shader "Wort/ProcCliff"
                         float sw = saturate(1 - (yt - P.y) / bevelR(along, seed));
                         if (sw > 0) N = normalize(rotateAxis(Wv, k, -radians(45) * sw));
                     }
-                    // 崖壁提亮 / 加饱和（材质参数）
-                    float l = lum(albedo);
-                    albedo = saturate((l + (albedo - l) * _WallSat) * _WallGain);
                 }
 
                 // 暗部提亮（sRGB 里把曲线最低点往上拉）
