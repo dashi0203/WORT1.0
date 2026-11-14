@@ -25,7 +25,7 @@ Shader "Wort/CutCap"
         {
             if (_WortCutOn < 0.5 || _WortHeightRect.z < 1) { clip(-1); return; }
             // 先判断圆形范围（便宜），圆外直接丢掉，不做后面的高度场查询
-            if (_WortCutCircle.z > 0) clip(1 - WortCutCircleX(P.xz));   // 和地形裁切同一个圆（波浪边）；圆边渐变由地形那边的抖动透出来
+            if (_WortCutCircle.z > 0) clip(1 - WortCutCircleX(WortToFeetPlane(P)));   // 和地形裁切同一个圆（波浪边）；圆边渐变由地形那边的抖动透出来
             float2 org = _WortHeightRect.xy;
             int2 c0 = (int2)floor(P.xz - org);
             // 外扩 = 盖接缝的一点点 + 参差扰动（和遮挡虚化洞里黑边往地面啃的那一圈同一个样子）

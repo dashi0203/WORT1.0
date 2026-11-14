@@ -205,7 +205,7 @@ namespace Wort.Rendering
             Shader.SetGlobalVector(IdCutCircle, new Vector4(fp.x, fp.z, eagleRadius > 0f ? Mathf.Max(0.05f, eagleRadius * e) : 0f, eagleWaveAmp));
             Shader.SetGlobalVector(IdCutStyle, new Vector4(eagleFade, capRagged, 0, 0));
             Shader.SetGlobalVector(IdEagleDim, new Vector4(eagleDimExtra, eagleDim, eagleDimFade, cutOn ? e : 0f));
-            UpdateCap(cutOn, cam);
+            UpdateCap(cutOn, cam, cutY);
             UpdateDesaturation(e);
 
             // —— 遮挡虚化（鹰眼视觉开着时不需要） ——
@@ -284,7 +284,7 @@ namespace Wort.Rendering
             return total > 0 ? (float)blocked / total : 0f;
         }
 
-        private void UpdateCap(bool on, Camera cam)
+        private void UpdateCap(bool on, Camera cam, float cutY)
         {
             if (!on)
             {
@@ -312,6 +312,13 @@ namespace Wort.Rendering
             // 平面只铺到裁切圆（+ 波浪和外扩的余量），不铺满屏幕：横切面着色器每像素要查 9 格高度场，铺满屏幕很贵
             Vector3 f = player != null ? player.position : (cam != null ? cam.transform.position : Vector3.zero);
             float half = eagleRadius > 0f ? eagleRadius * (1f + eagleWaveAmp) + 0.5f : 60f;
+            // 圆按“投到主角脚下高度”判断，横截面在裁切高度上，所以世界里要顺着视线往相机那边挪（错切下是往南挪 cutY − 脚下）
+            if (cam != null && player != null)
+            {
+                Matrix4x4 inv = (cam.projectionMatrix * cam.worldToCameraMatrix).inverse;
+                Vector3 v = (inv.MultiplyPoint(new Vector3(0, 0, -1)) - inv.MultiplyPoint(new Vector3(0, 0, 1))).normalized;
+                if (v.y > 0.05f) f += new Vector3(v.x, 0f, v.z) * ((cutY - f.y) / v.y);
+            }
             capGo.transform.position = new Vector3(f.x, 0f, f.z);
             capGo.transform.localScale = new Vector3(half, 1f, half);
         }

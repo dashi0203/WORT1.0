@@ -54,6 +54,15 @@ float WortCutHeight(float2 xz)
     return _WortCutParams.x + _WortCutParams.y * (n * 2 - 1);
 }
 
+// 把点沿错切视线投到主角脚下的高度（返回 xz）。错切画面里高出 h 米的东西在屏幕上上移 h，
+// 圆形范围按投影后的位置判断，圆在屏幕上才始终以主角为中心（否则地形越高，遮罩看起来越往上偏）。
+float2 WortToFeetPlane(float3 P)
+{
+    float3 v = _WortViewDir.xyz;
+    if (v.y < 0.05) return P.xz;
+    return P.xz - v.xz * ((P.y - _WortHoleEdge.z) / v.y);
+}
+
 // 鹰眼视觉的圆形范围：返回 x = 离圆心距离 / 波浪半径（< 1 在圈内）。离得远时不算角度和波浪（画面上大部分像素走这里，结果仍连续）
 float WortCutCircleX(float2 xz)
 {
@@ -126,7 +135,7 @@ void WortHeightClip(float3 P, float4 pc)
     float x = 0;
     if (_WortCutCircle.z > 0)
     {
-        x = WortCutCircleX(P.xz);
+        x = WortCutCircleX(WortToFeetPlane(P));
         if (x >= 1) return;                       // 圈外：不裁（先判断，省掉裁切高度的噪声）
     }
     if (P.y <= WortCutHeight(P.xz)) return;       // 裁切面以下：不裁
@@ -156,7 +165,7 @@ half3 WortSpaceShade(half3 color, float3 P)
     if (_WortEagleDim.w > 1e-3 && _WortCutCircle.z > 0)
     {
         // 鹰眼视觉：裁切圆 + _WortEagleDim.x 米以外整片压暗；圆边往里渐变 _WortEagleDim.z 米，只带一点点扰动
-        float dist = length(P.xz - _WortCutCircle.xy);
+        float dist = length(WortToFeetPlane(P) - _WortCutCircle.xy);
         float r = _WortCutCircle.z + _WortEagleDim.x + (WortNoise2(P.xz * 0.9 + _WortCutParams.z * 0.2) - 0.5) * 0.25;
         float k = smoothstep(r - max(_WortEagleDim.z, 1e-3), r, dist);
         color *= 1 - _WortEagleDim.y * _WortEagleDim.w * k;
