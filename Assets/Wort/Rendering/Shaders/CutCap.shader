@@ -1,5 +1,5 @@
 // 高度裁切的横切面（鹰眼视觉 / 以后的室内地下裁切；鹰眼视觉时只在圆形范围内）：裁切高度处一块水平面，按地形高度场判断“这里是不是实心的”，
-// 实心处画黑色，其余丢掉。圆边和地形裁切用同一个函数（WortCutCircleSigned），格线处只外扩一点点盖接缝，截面和断口、蓝边对齐。
+// 实心处画黑色，其余丢掉。圆和地形裁切用同一个函数（WortCutCircleX）；格线处外扩一点并按噪声参差（和遮挡虚化的黑边同款）。
 // 地形网格是空心的（背面 / 北面不全），不能用“画背面”的做法，所以用高度场。由 Wort.Rendering.SpatialView 生成平面并开关。
 Shader "Wort/CutCap"
 {
@@ -25,10 +25,11 @@ Shader "Wort/CutCap"
         {
             if (_WortCutOn < 0.5 || _WortHeightRect.z < 1) { clip(-1); return; }
             // 先判断圆形范围（便宜），圆外直接丢掉，不做后面的高度场查询
-            if (_WortCutCircle.z > 0) clip(WortCutCircleSigned(P.xz));   // 和地形裁切同一条圆边
+            if (_WortCutCircle.z > 0) clip(1 - WortCutCircleX(P.xz));   // 和地形裁切同一个圆（波浪边）；圆边渐变由地形那边的抖动透出来
             float2 org = _WortHeightRect.xy;
             int2 c0 = (int2)floor(P.xz - org);
-            float dil = max(_WortCutParams.w, 0.005);
+            // 外扩 = 盖接缝的一点点 + 参差扰动（和遮挡虚化洞里黑边往地面啃的那一圈同一个样子）
+            float dil = max(_WortCutParams.w, 0.005) + _WortCutStyle.y * WortNoise2(P.xz * 2.4 + _WortCutParams.z * 0.25);
             float cutH = WortCutHeight(P.xz);   // 一个像素只算一次（起伏很缓，邻格用同一个值）
             float s = 0;
             [unroll] for (int dz = -1; dz <= 1; dz++)

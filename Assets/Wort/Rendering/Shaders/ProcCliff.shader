@@ -371,7 +371,7 @@ Shader "Wort/ProcCliff"
             half4 frag(Varyings i) : SV_Target
             {
                 float3 P = i.positionWS;
-                float cutS = WortSpaceClip(P);   // 遮挡虚化 / 高度裁切（投影 pass 不裁，照常投影）
+                WortSpaceClip(P);   // 遮挡虚化 / 高度裁切（投影 pass 不裁，照常投影）
                 float3 ng = normalize(i.normalWS);
                 _FW = max(length(ddx(P)), length(ddy(P)));   // 一个像素在世界里多大：所有贴图的 mip 都按它算（分支 / 循环里不用硬件求导）
                 // Biome 融合（负责人 2026-11-13，斑块式过渡；预览 proc_cliff.py BIOME=1）：
@@ -409,7 +409,6 @@ Shader "Wort/ProcCliff"
                 half3 diffuse = light.color * ndl * light.shadowAttenuation * WortAODirect(wao);
                 half3 color = albedo * (diffuse + SampleSH(N) * wao);
                 color = WortSpaceShade(color, P);   // 最低层压暗 + 主角脚下薄雾
-                color = WortCutRim(color, cutS, P);   // 鹰眼视觉裁切边界外侧的蓝色外扩边
                 color = MixFog(color, i.fog);
                 return half4(color, 1);
             }

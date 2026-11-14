@@ -11,10 +11,9 @@ float4 _WortHoleParams;   // x = 时间，y = 波浪幅度（比例），z = 边
 float4 _WortHoleEdge;     // x = 洞里黑色区域边缘往地面啃进去多少（米，和鹰眼视觉同款扰动），y = 开关
 float4 _WortCutParams;    // x = 裁切高度，y = 裁切高度的起伏幅度（米），z = 时间，w = 截面外扩（米，盖住侧墙鼓包）
 float _WortCutOn;         // 1 = 裁切开（默认 0：场景里没有 SpatialView 时什么都不裁）
-float4 _WortCutCircle;    // 裁切范围（世界水平圆，和遮挡虚化同一套波浪 + 溶解）：xy = 圆心 xz，z = 半径（≤ 0 = 不限范围），w = 波浪幅度（比例）
-float4 _WortCutStyle;     // x = 圆边参差的深度（米：边界往里不规则地缩进多少），y / z = 蓝色外扩边最细 / 最粗（像素），w = 外扩边开关
-float4 _WortCutRimColor;  // rgb = 外扩边颜色（线性，可以大于 1）
-float4 _WortEagleDim;     // 鹰眼视觉的反选区压暗：x = 比裁切圆再大多少（米），y = 压暗程度，z = 边缘软化宽度（米），w = 过渡（0–1）
+float4 _WortCutCircle;    // 裁切范围（世界水平圆，和遮挡虚化同一套：波浪边 + 不透明度渐变）：xy = 圆心 xz，z = 半径（≤ 0 = 不限范围），w = 波浪幅度（比例）
+float4 _WortCutStyle;     // x = 圆边不透明度渐变带宽（半径的比例），y = 黑色横截面边缘扰动（米，往外参差地扩多少）
+float4 _WortEagleDim;     // 鹰眼视觉的反选区压暗：x = 比裁切圆再大多少（米），y = 压暗程度，z = 往里渐变的宽度（米），w = 过渡（0–1）
 float4 _WortBottomParams; // x = 最低一层的高度，y = 渐变高度（米），z = 最多暗多少，w = 开关
 float4 _WortFogParams;    // x = 雾的起点高度（主角脚下 − 2.5），y = 渐变厚度，z = 最大浓度，w = 开关
 float4 _WortFogColor;     // rgb = 已经乘上当前光照的雾色，a = 时间
@@ -54,28 +53,14 @@ float WortCutHeight(float2 xz)
     return _WortCutParams.x + _WortCutParams.y * (n * 2 - 1);
 }
 
-// 鹰眼视觉的圆形范围（米，> 0 = 在圈内）：波浪边 + 连续的参差噪声（往里缩 0 到 _WortCutStyle.x 米）。
-// 地形裁切、黑色横截面、蓝色外扩边都用这一个函数，三者的边界完全对齐。
-float WortCutCircleSigned(float2 xz)
+// 鹰眼视觉的圆形范围：返回 x = 离圆心距离 / 波浪半径（< 1 在圈内）。离得远时不算角度和波浪（画面上大部分像素走这里，结果仍连续）
+float WortCutCircleX(float2 xz)
 {
-    float R = _WortCutCircle.z;
+    float R = max(_WortCutCircle.z, 1e-3);
     float2 d = xz - _WortCutCircle.xy;
     float dist = length(d);
-    float rMax = R * (1 + _WortCutCircle.w);
-    if (dist > rMax + 0.5) return rMax - dist;   // 离圆远：不算角度和噪声（画面上大部分像素走这里）
-    float t = _WortCutParams.z;
-    float r = R * WortWave(atan2(d.y, d.x), t, _WortCutCircle.w);
-    float rag = WortNoise2(xz * 2.2 + t * 0.25) * 0.65 + WortNoise2(xz * 6.1 - t * 0.4) * 0.35;
-    return r - _WortCutStyle.x * rag - dist;
-}
-
-// 鹰眼视觉的裁切量（米，> 0 = 该裁）：在圈内且高于裁切高度。两项取小 = 两个条件同时满足
-float WortCutSigned(float3 P)
-{
-    if (_WortCutCircle.z <= 0) return P.y - WortCutHeight(P.xz);
-    float inCircle = WortCutCircleSigned(P.xz);
-    if (inCircle < -0.3) return inCircle;    // 圈外较远：不用算裁切高度（0.3m 以内要算，否则圈外比裁切面低的地面也会描上蓝边）
-    return min(P.y - WortCutHeight(P.xz), inCircle);
+    if (dist > R * (1 + abs(_WortCutCircle.w)) + 0.01) return dist / R;   // 一定在圈外（> 1）
+    return dist / (R * WortWave(atan2(d.y, d.x), _WortCutParams.z, _WortCutCircle.w));
 }
 
 // 屏幕像素抖动阈值（0–1），用来在不透明材质上做“半透明渐变”（interleaved gradient noise）
@@ -140,33 +125,30 @@ void WortHoleClip(float3 P)
     clip(dmin - bite * WortDissolveNoise(P.xz * 0.8, t * 0.5));
 }
 
-// 鹰眼视觉 / 高度裁切：返回裁切量（没开时返回 −1e6），边缘溶解带里按噪声留一部分
-float WortHeightClip(float3 P)
+// 鹰眼视觉 / 高度裁切（和遮挡虚化同一套）：高于裁切高度、在圈内的裁掉；圈边一圈按距离从不透明渐变到透明（屏幕抖动）
+void WortHeightClip(float3 P, float4 pc)
 {
-    if (_WortCutOn < 0.5) return -1e6;
-    float s = WortCutSigned(P);
-    clip(-s);   // 边界本身已经是参差的连续曲线（不再碎点溶解），横截面和蓝边用同一条边界
-    return s;
+    if (_WortCutOn < 0.5) return;
+    float x = 0;
+    if (_WortCutCircle.z > 0)
+    {
+        x = WortCutCircleX(P.xz);
+        if (x >= 1) return;                       // 圈外：不裁（先判断，省掉裁切高度的噪声）
+    }
+    if (P.y <= WortCutHeight(P.xz)) return;       // 裁切面以下：不裁
+    if (_WortCutCircle.z <= 0) { clip(-1); return; }
+    float band = max(_WortCutStyle.x, 1e-3);
+    float alpha = saturate(smoothstep(1 - band, 1, x) + (WortDissolveNoise(P.xz, _WortCutParams.z) - 0.5) * 0.35 * band);
+    float2 pixel = (pc.xy / pc.w * 0.5 + 0.5) * _ScreenParams.xy;
+    clip(alpha - WortDither(pixel) * 0.999 - 0.0005);
 }
 
-// 裁切（ForwardLit / DepthOnly / DepthNormals 都调；ShadowCaster 不调）。返回鹰眼视觉的裁切量，给 WortCutRim 用
-float WortSpaceClip(float3 P)
+// 裁切（ForwardLit / DepthOnly / DepthNormals 都调；ShadowCaster 不调）
+void WortSpaceClip(float3 P)
 {
-    float s = WortHeightClip(P);
+    float4 pc = mul(UNITY_MATRIX_VP, float4(P, 1));
+    WortHeightClip(P, pc);
     WortHoleClip(P);
-    return s;
-}
-
-// 蓝色外扩边：裁切边界外侧留下的像素，离边界 3–5 像素以内（宽度沿边浮动）涂成边色
-half3 WortCutRim(half3 color, float s, float3 P)
-{
-    if (_WortCutOn < 0.5 || _WortCutStyle.w < 0.5 || s < -1e5) return color;
-    float px = -s / max(fwidth(s), 1e-5);   // 离裁切边界多少像素（> 0 = 外侧，留下的部分）
-    if (px > _WortCutStyle.z + 1) return color;   // 离边界远：不算噪声
-    float t = _WortCutParams.z;
-    float w = lerp(_WortCutStyle.y, _WortCutStyle.z, WortNoise2(P.xz * 1.3 + t * 0.8));
-    float k = 1 - smoothstep(w - 1, w, px);
-    return lerp(color, _WortCutRimColor.rgb, saturate(k));
 }
 
 // 最低一层压暗 + 主角脚下薄雾（光照算完以后调）
@@ -179,11 +161,10 @@ half3 WortSpaceShade(half3 color, float3 P)
     }
     if (_WortEagleDim.w > 1e-3 && _WortCutCircle.z > 0)
     {
-        // 鹰眼视觉：裁切圆再往外 _WortEagleDim.x 米以外整片压暗（圆边同一套波浪）
-        float2 d = P.xz - _WortCutCircle.xy;
-        float dist = length(d);
-        float r = (_WortCutCircle.z + _WortEagleDim.x) * WortWave(atan2(d.y, d.x), _WortCutParams.z, _WortCutCircle.w);
-        float k = smoothstep(r, r + max(_WortEagleDim.z, 1e-3), dist);
+        // 鹰眼视觉：裁切圆 + _WortEagleDim.x 米以外整片压暗；圆边往里渐变 _WortEagleDim.z 米，只带一点点扰动
+        float dist = length(P.xz - _WortCutCircle.xy);
+        float r = _WortCutCircle.z + _WortEagleDim.x + (WortNoise2(P.xz * 0.9 + _WortCutParams.z * 0.2) - 0.5) * 0.25;
+        float k = smoothstep(r - max(_WortEagleDim.z, 1e-3), r, dist);
         color *= 1 - _WortEagleDim.y * _WortEagleDim.w * k;
     }
     if (_WortFogParams.w > 0.5)

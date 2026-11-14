@@ -57,17 +57,15 @@ namespace Wort.Editor
                 P("cutAbove", "剔除脚下多高以上（格）");
                 P("eagleDimExtra", "反选区：圆外再扩（米）");
                 P("eagleDim", "反选区压暗程度");
-                P("eagleDimSoft", "反选区边缘软化（米）");
+                P("eagleDimFade", "反选区往里渐变（米）");
+                P("eagleVignette", "屏幕暗角");
                 P("desaturate", "饱和度降低");
                 P("sweepTime", "进出过渡用时（秒）");
-                P("eagleWave", "圆边波浪幅度");
-                P("eagleRagged", "圆边参差深度（米）");
+                P("eagleWaveAmp", "圆边波浪幅度");
+                P("eagleFade", "圆边渐变带宽");
                 P("eagleCutJitter", "断口高低起伏（米）");
                 P("capOutset", "黑色横截面外扩（米）");
-                P("rimEnabled", "蓝色外扩边");
-                P("rimColor", "外扩边颜色");
-                P("rimMinPixels", "外扩边最细（像素）");
-                P("rimMaxPixels", "外扩边最粗（像素）");
+                P("capRagged", "黑色横截面边缘扰动（米）");
             }
             EditorGUILayout.EndFoldoutHeaderGroup();
 

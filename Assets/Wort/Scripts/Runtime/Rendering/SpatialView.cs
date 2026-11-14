@@ -75,21 +75,18 @@ namespace Wort.Rendering
         [Range(0f, 10f)] public float eagleDimExtra = 1f;
         [Tooltip("反选区压暗程度（0 = 不压暗）")]
         [Range(0f, 1f)] public float eagleDim = 0.6f;
-        [Tooltip("反选区边缘软化宽度（米）")]
-        [Range(0.05f, 3f)] public float eagleDimSoft = 0.6f;
+        [Tooltip("反选区边缘往里渐变的宽度（米）")]
+        [Range(0.05f, 4f)] public float eagleDimFade = 1f;
+        [Tooltip("屏幕暗角强度")]
+        [Range(0f, 1f)] public float eagleVignette = 0.35f;
         [Tooltip("圆边波浪幅度（半径的比例，和遮挡虚化同一套）")]
-        [Range(0f, 0.4f)] public float eagleWave = 0.12f;
-        [Tooltip("圆边参差的深度（米）：边界往里不规则地缩进多少（地形、横截面、蓝边共用同一条边界）")]
-        [Range(0f, 1.5f)] public float eagleRagged = 0.35f;
+        [Range(0f, 0.4f)] public float eagleWaveAmp = 0.08f;
+        [Tooltip("圆边不透明度渐变带宽（半径的比例，和遮挡虚化同一套）")]
+        [Range(0.02f, 1f)] public float eagleFade = 0.45f;
+        [Tooltip("黑色横截面边缘扰动（米）：往外参差地扩多少（和遮挡虚化洞里的黑边同款）")]
+        [Range(0f, 1f)] public float capRagged = 0.3f;
         [Tooltip("裁切高度的起伏幅度（米）：墙上的断口高低起伏")]
         [Range(0f, 0.6f)] public float eagleCutJitter = 0.18f;
-        [Tooltip("蓝色外扩边")]
-        public bool rimEnabled = true;
-        [Tooltip("外扩边颜色（HDR，可以调亮发光）")]
-        [ColorUsage(false, true)] public Color rimColor = new Color(0.25f, 0.65f, 1.6f);
-        [Tooltip("外扩边宽度范围（像素），沿边随噪声在两者之间浮动")]
-        [Range(0f, 12f)] public float rimMinPixels = 3f;
-        [Range(0f, 12f)] public float rimMaxPixels = 5f;
         [Tooltip("黑色横截面比格线往外扩多少（米）：只盖住接缝，太大会在墙线外多出一条黑边")]
         [Range(0f, 0.4f)] public float capOutset = 0.06f;
 
@@ -120,7 +117,6 @@ namespace Wort.Rendering
         private static readonly int IdCutOn = Shader.PropertyToID("_WortCutOn");
         private static readonly int IdCutCircle = Shader.PropertyToID("_WortCutCircle");
         private static readonly int IdCutStyle = Shader.PropertyToID("_WortCutStyle");
-        private static readonly int IdCutRim = Shader.PropertyToID("_WortCutRimColor");
         private static readonly int IdEagleDim = Shader.PropertyToID("_WortEagleDim");
         private static readonly int IdBottom = Shader.PropertyToID("_WortBottomParams");
         private static readonly int IdFog = Shader.PropertyToID("_WortFogParams");
@@ -205,11 +201,9 @@ namespace Wort.Rendering
             Vector3 fp = player != null ? player.position : Vector3.zero;
             Shader.SetGlobalFloat(IdCutOn, cutOn ? 1f : 0f);
             Shader.SetGlobalVector(IdCutParams, new Vector4(cutY, eagleCutJitter, time, capOutset));
-            Shader.SetGlobalVector(IdCutCircle, new Vector4(fp.x, fp.z, eagleRadius > 0f ? Mathf.Max(0.05f, eagleRadius * e) : 0f, eagleWave));
-            Shader.SetGlobalVector(IdCutStyle, new Vector4(eagleRagged, rimMinPixels, Mathf.Max(rimMinPixels, rimMaxPixels), rimEnabled ? 1 : 0));
-            Color rl = rimColor.linear;
-            Shader.SetGlobalVector(IdCutRim, new Vector4(rl.r, rl.g, rl.b, 1));
-            Shader.SetGlobalVector(IdEagleDim, new Vector4(eagleDimExtra, eagleDim, eagleDimSoft, cutOn ? e : 0f));
+            Shader.SetGlobalVector(IdCutCircle, new Vector4(fp.x, fp.z, eagleRadius > 0f ? Mathf.Max(0.05f, eagleRadius * e) : 0f, eagleWaveAmp));
+            Shader.SetGlobalVector(IdCutStyle, new Vector4(eagleFade, capRagged, 0, 0));
+            Shader.SetGlobalVector(IdEagleDim, new Vector4(eagleDimExtra, eagleDim, eagleDimFade, cutOn ? e : 0f));
             UpdateCap(cutOn, cam);
             UpdateDesaturation(e);
 
@@ -309,7 +303,7 @@ namespace Wort.Rendering
             if (!capGo.activeSelf) capGo.SetActive(true);
             // 平面只铺到裁切圆（+ 波浪和外扩的余量），不铺满屏幕：横切面着色器每像素要查 9 格高度场，铺满屏幕很贵
             Vector3 f = player != null ? player.position : (cam != null ? cam.transform.position : Vector3.zero);
-            float half = eagleRadius > 0f ? eagleRadius * (1f + eagleWave) + eagleRagged + capOutset + 0.5f : 60f;
+            float half = eagleRadius > 0f ? eagleRadius * (1f + eagleWaveAmp) + 0.5f : 60f;
             capGo.transform.position = new Vector3(f.x, 0f, f.z);
             capGo.transform.localScale = new Vector3(half, 1f, half);
         }
@@ -327,9 +321,14 @@ namespace Wort.Rendering
                 profile.hideFlags = HideFlags.HideAndDontSave;
                 var ca = profile.Add<ColorAdjustments>(false);
                 ca.saturation.overrideState = true;
+                var vg = profile.Add<Vignette>(false);   // 鹰眼视觉的屏幕暗角
+                vg.intensity.overrideState = true;
+                vg.smoothness.overrideState = true;
+                vg.smoothness.value = 0.45f;
                 volume.sharedProfile = profile;
             }
             if (profile.TryGet(out ColorAdjustments adj)) adj.saturation.value = -100f * desaturate;
+            if (profile.TryGet(out Vignette vig)) vig.intensity.value = eagleVignette;
             volume.weight = w;
         }
 
