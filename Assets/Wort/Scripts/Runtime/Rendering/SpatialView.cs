@@ -81,10 +81,10 @@ namespace Wort.Rendering
         [Range(0f, 1f)] public float eagleVignette = 0.35f;
         [Tooltip("圆边波浪幅度（半径的比例，和遮挡虚化同一套）")]
         [Range(0f, 0.4f)] public float eagleWaveAmp = 0.08f;
-        [Tooltip("圆边不透明度渐变带宽（半径的比例，和遮挡虚化同一套）")]
-        [Range(0.02f, 1f)] public float eagleFade = 0.45f;
+        [Tooltip("圆边不透明度渐变带宽（半径的比例）：只在最外缘一小圈渐变，圈里剔干净")]
+        [Range(0.02f, 1f)] public float eagleEdgeFade = 0.15f;
         [Tooltip("黑色横截面边缘扰动（米）：往外参差地扩多少（和遮挡虚化洞里的黑边同款）")]
-        [Range(0f, 1f)] public float capRagged = 0.3f;
+        [Range(0f, 1f)] public float capEdgeRagged = 0.12f;
         [Tooltip("裁切高度的起伏幅度（米）：墙上的断口高低起伏")]
         [Range(0f, 0.6f)] public float eagleCutJitter = 0.18f;
         [Tooltip("黑色横截面比格线往外扩多少（米）：只盖住接缝，太大会在墙线外多出一条黑边")]
@@ -203,7 +203,7 @@ namespace Wort.Rendering
             Shader.SetGlobalFloat(IdCutOn, cutOn ? 1f : 0f);
             Shader.SetGlobalVector(IdCutParams, new Vector4(cutY, eagleCutJitter, time, capOutset));
             Shader.SetGlobalVector(IdCutCircle, new Vector4(fp.x, fp.z, eagleRadius > 0f ? Mathf.Max(0.05f, eagleRadius * e) : 0f, eagleWaveAmp));
-            Shader.SetGlobalVector(IdCutStyle, new Vector4(eagleFade, capRagged, 0, 0));
+            Shader.SetGlobalVector(IdCutStyle, new Vector4(eagleEdgeFade, capEdgeRagged, 0, 0));
             Shader.SetGlobalVector(IdEagleDim, new Vector4(eagleDimExtra, eagleDim, eagleDimFade, cutOn ? e : 0f));
             UpdateCap(cutOn, cam, cutY);
             UpdateDesaturation(e);

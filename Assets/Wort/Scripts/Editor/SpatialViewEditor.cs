@@ -62,10 +62,10 @@ namespace Wort.Editor
                 P("desaturate", "饱和度降低");
                 P("sweepTime", "进出过渡用时（秒）");
                 P("eagleWaveAmp", "圆边波浪幅度");
-                P("eagleFade", "圆边渐变带宽");
+                P("eagleEdgeFade", "圆边渐变带宽");
                 P("eagleCutJitter", "断口高低起伏（米）");
                 P("capOutset", "黑色横截面外扩（米）");
-                P("capRagged", "黑色横截面边缘扰动（米）");
+                P("capEdgeRagged", "黑色横截面边缘扰动（米）");
             }
             EditorGUILayout.EndFoldoutHeaderGroup();
 
