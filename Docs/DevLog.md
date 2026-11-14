@@ -4,6 +4,13 @@
 
 GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
 
+## 2026-11-14（续）清理冗余代码
+
+负责人：鹰眼视觉完美了，看看有没有冗余代码。检查结果：着色器函数、全局变量、组件字段都在用。清掉的：
+- `TerrainBlend` 里 URP SSAO 的接口（`_SCREEN_SPACE_OCCLUSION` 关键字和 `GetScreenSpaceAmbientOcclusion`）：SSAO 已换成世界空间 AO，少一组着色器变体。
+- `PC_Renderer` 里已关闭的 ScreenSpaceAmbientOcclusion 渲染特性（子资源、列表项和特性表里的那一段）。
+- `SpatialView` 里错切视线方向重复算了三次，改成每帧算一次共用。
+
 ## 2026-11-14（续）遮挡虚化的形状改为沿视线的截头圆锥
 
 负责人：遮挡虚化能不能是“主角方向圆面内收的圆柱，也就是剪了头的圆锥”。

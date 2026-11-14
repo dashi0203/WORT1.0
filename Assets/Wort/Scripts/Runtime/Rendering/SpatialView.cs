@@ -129,6 +129,7 @@ namespace Wort.Rendering
         private static readonly int IdFogColor = Shader.PropertyToID("_WortFogColor");
 
         private bool holeOpen;
+        private Vector3 viewDir = new Vector3(0f, 0.7071f, -0.7071f);   // 本帧的真实视线方向（朝相机）
         private SkyLighting skyRef;
         private float holeVel;
         private float feetY = float.NaN, feetVel;
@@ -180,6 +181,13 @@ namespace Wort.Rendering
                 if (p != null) player = p.transform;
             }
             Camera cam = Camera.main;
+            if (cam != null)
+            {
+                // 错切投影下的真实视线方向（朝相机）：屏幕中心在近 / 远裁剪面各反算一个世界点。每帧算一次，各处共用
+                Matrix4x4 inv = (cam.projectionMatrix * cam.worldToCameraMatrix).inverse;
+                viewDir = (inv.MultiplyPoint(new Vector3(0, 0, -1)) - inv.MultiplyPoint(new Vector3(0, 0, 1))).normalized;
+                Shader.SetGlobalVector(IdViewDir, viewDir);
+            }
             float time = Application.isPlaying ? Time.time : (float)Time.realtimeSinceStartupAsDouble;
 
             // —— 黑色空处 ——
@@ -235,13 +243,6 @@ namespace Wort.Rendering
             Shader.SetGlobalVector(IdHoleCone, new Vector4(Mathf.Min(1f, holeNearRadius / Mathf.Max(0.01f, holeRadius)), holeConeLength, 0, 0));
             Shader.SetGlobalVector(IdHoleEdge, new Vector4(holeEdgeBite, 1, player != null ? player.position.y : 0f, bodyHeight));
             UpdateHoleCap(HoleRadiusNow > 0.02f, cam);
-            if (cam != null)
-            {
-                // 错切投影下的真实视线方向（朝相机）：屏幕中心在近 / 远裁剪面各反算一个世界点
-                Matrix4x4 inv = (cam.projectionMatrix * cam.worldToCameraMatrix).inverse;
-                Vector3 vdir = (inv.MultiplyPoint(new Vector3(0, 0, -1)) - inv.MultiplyPoint(new Vector3(0, 0, 1))).normalized;
-                Shader.SetGlobalVector(IdViewDir, vdir);
-            }
 
             // —— 最低一层压暗 ——
             float bottom = overrideBottom || !WorldAOField.HasField ? bottomHeight : WorldAOField.MinHeight;
@@ -328,12 +329,7 @@ namespace Wort.Rendering
             if (holeCapGo == null && !MakeCap("Wort Occlusion Cap", 1f, out holeCapGo, out holeCapMat)) return;
             if (!holeCapGo.activeSelf) holeCapGo.SetActive(true);
             Vector3 f = player.position;
-            if (cam != null)
-            {
-                Matrix4x4 inv = (cam.projectionMatrix * cam.worldToCameraMatrix).inverse;
-                Vector3 v = (inv.MultiplyPoint(new Vector3(0, 0, -1)) - inv.MultiplyPoint(new Vector3(0, 0, 1))).normalized;
-                if (v.y > 0.05f) f += new Vector3(v.x, 0f, v.z) * ((bodyHeight * 0.5f - holeCutAbove) / v.y);   // 屏幕圆心在身体中心
-            }
+            if (viewDir.y > 0.05f) f += new Vector3(viewDir.x, 0f, viewDir.z) * ((bodyHeight * 0.5f - holeCutAbove) / viewDir.y);   // 屏幕圆心在身体中心
             float half = HoleRadiusNow * (1f + holeWave) + 1f;
             holeCapGo.transform.position = new Vector3(f.x, 0f, f.z);
             holeCapGo.transform.localScale = new Vector3(half, 1f, half);
@@ -352,12 +348,7 @@ namespace Wort.Rendering
             Vector3 f = player != null ? player.position : (cam != null ? cam.transform.position : Vector3.zero);
             float half = eagleRadius > 0f ? eagleRadius * (1f + eagleWaveAmp) + 0.5f : 60f;
             // 圆按“投到主角脚下高度”判断，横截面在裁切高度上，所以世界里要顺着视线往相机那边挪（错切下是往南挪 cutY − 脚下）
-            if (cam != null && player != null)
-            {
-                Matrix4x4 inv = (cam.projectionMatrix * cam.worldToCameraMatrix).inverse;
-                Vector3 v = (inv.MultiplyPoint(new Vector3(0, 0, -1)) - inv.MultiplyPoint(new Vector3(0, 0, 1))).normalized;
-                if (v.y > 0.05f) f += new Vector3(v.x, 0f, v.z) * ((cutY - f.y) / v.y);
-            }
+            if (player != null && viewDir.y > 0.05f) f += new Vector3(viewDir.x, 0f, viewDir.z) * ((cutY - f.y) / viewDir.y);
             capGo.transform.position = new Vector3(f.x, 0f, f.z);
             capGo.transform.localScale = new Vector3(half, 1f, half);
         }
