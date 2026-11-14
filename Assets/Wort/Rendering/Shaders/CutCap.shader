@@ -34,12 +34,11 @@ Shader "Wort/CutCap"
             {
                 // 遮挡虚化：屏幕圆内、挡住主角的柱子上（和地形裁切同一个判断、同一个边界扰动）
                 if (_WortHoleCenter.w <= 1e-3 || WortHoleScreenX(P) >= 1) { clip(-1); return; }
-                float2 jit = WortHoleJitter(P.xz);
-                bool occ = false;
+                bool occ = WortHoleOccluderAt(WortHoleAssign(P.xz));   // 和地形同一个判断（同一块台地里才按噪声挪位）
                 [unroll] for (int k = 0; k < 4; k++)   // 往外扩一点点（盖接缝）：四个方向各试一次
                 {
                     float2 o = float2(k == 0 ? 0.06 : k == 1 ? -0.06 : 0, k == 2 ? 0.06 : k == 3 ? -0.06 : 0);
-                    occ = occ || WortHoleOccluderAt(P.xz + jit + o);
+                    occ = occ || WortHoleOccluderAt(WortHoleAssign(P.xz + o));
                 }
                 clip(occ ? 1 : -1);
                 return;

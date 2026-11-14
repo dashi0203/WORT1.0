@@ -54,8 +54,8 @@ namespace Wort.Rendering
         [Range(0.05f, 1f)] public float holeTime = 0.25f;
         [Tooltip("边缘波浪幅度（半径的比例）")]
         [Range(0f, 0.3f)] public float holeWave = 0.08f;
-        [Tooltip("边缘不透明度渐变带宽（半径的比例）：圆边不透明，往里渐变到全透")]
-        [Range(0.02f, 1f)] public float holeFade = 0.45f;
+        [Tooltip("圆边不透明度渐变带宽（半径的比例）：只在最外缘一小圈渐变，圈里裁干净（和鹰眼视觉一致）")]
+        [Range(0.02f, 1f)] public float holeEdgeFade = 0.15f;
         [Tooltip("边界扰动（米）：判断“挡住主角的柱子”时位置按噪声挪多少，裁切边界和黑色横截面参差而不是直角。0 = 不扰动")]
         [Range(0f, 1f)] public float holeEdgeBite = 0.35f;
         [Tooltip("只裁高于主角脚下多少米的东西（和鹰眼视觉的“剔除脚下多高以上”同一个意思）")]
@@ -239,7 +239,7 @@ namespace Wort.Rendering
             HoleRadiusNow = dt > 0f ? Mathf.SmoothDamp(HoleRadiusNow, targetR, ref holeVel, holeTime * 0.5f, Mathf.Infinity, dt) : targetR;
             Vector3 c = player != null ? player.position + Vector3.up * (bodyHeight * 0.5f) : Vector3.zero;
             Shader.SetGlobalVector(IdHoleCenter, new Vector4(c.x, c.y, c.z, HoleRadiusNow > 0.02f ? HoleRadiusNow : 0f));
-            Shader.SetGlobalVector(IdHoleParams, new Vector4(time, holeWave, holeFade, holeCutAbove));
+            Shader.SetGlobalVector(IdHoleParams, new Vector4(time, holeWave, holeEdgeFade, holeCutAbove));
             Shader.SetGlobalVector(IdHoleCone, new Vector4(Mathf.Min(1f, holeNearRadius / Mathf.Max(0.01f, holeRadius)), holeConeLength, 0, 0));
             Shader.SetGlobalVector(IdHoleEdge, new Vector4(holeEdgeBite, 1, player != null ? player.position.y : 0f, bodyHeight));
             UpdateHoleCap(HoleRadiusNow > 0.02f, cam);

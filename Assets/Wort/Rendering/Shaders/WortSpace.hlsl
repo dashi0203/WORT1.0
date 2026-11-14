@@ -128,6 +128,17 @@ bool WortHoleOccluderAt(float2 xz)
     return h > south + 0.1;                                     // 规则 3：够高，屏幕上盖得到主角
 }
 
+// 噪声挪位只在同一块台地里生效：挪过去的那一格和自己那格一样高（差 < 0.1m）才挪，否则用自己那格。
+// （负责人 2026-11-14：随便挪会把墙面、顶沿窄条判到旁边的矮柱子上，留下残片。）
+float2 WortHoleAssign(float2 own)
+{
+    float2 j = own + WortHoleJitter(own);
+    float2 org = _WortHeightRect.xy;
+    float ho = WortCellTop((int2)floor(own - org), own);
+    float hj = WortCellTop((int2)floor(j - org), j);
+    return abs(hj - ho) < 0.1 ? j : own;
+}
+
 void WortHoleClip(float3 P)
 {
     float3 nrm = normalize(cross(ddy(P), ddx(P)));   // 屏幕导数求面法线：放在所有分支之前（导数不能在分支里算）
@@ -136,20 +147,29 @@ void WortHoleClip(float3 P)
     if (P.y < feet + _WortHoleParams.w) return;      // 规则 2
     float x = WortHoleScreenX(P);
     if (x >= 1) return;
-    // 这个像素属于哪根柱子：顶面 = 所在格（北沿往外伸的窄条也算它南边那格）；墙面 = 往墙里退 0.35m（盖过侧墙鼓包）
-    float2 jit = WortHoleJitter(P.xz);
-    bool wall = abs(nrm.y) < 0.5;
-    bool occ;
-    if (wall)
+    // 这个像素属于哪根柱子（不加噪声，先找准）：
+    // 顶面 = 柱顶和这一点一样高的那一格（自己这格，或往南 / 东 / 西 0.2m：顶沿往外伸的窄条属于里面那根柱子）；
+    // 墙面 = 墙背后那一格（屏幕导数求的法线朝向不确定：两边各退 0.35m，比这一点高的那一格）
+    float2 org = _WortHeightRect.xy;
+    float2 own;
+    if (abs(nrm.y) < 0.5)
     {
-        // 屏幕导数求的法线朝向不确定：两边各退 0.35m，比这一点高的那一格才是墙自己的柱子
         float2 na = normalize(nrm.xz + 1e-5);
         float2 a = P.xz + na * 0.35, b = P.xz - na * 0.35;
-        float2 own = WortCellHeight((int2)floor(a - _WortHeightRect.xy), a) > P.y - 0.05 ? a : b;
-        occ = WortHoleOccluderAt(own + jit);
+        own = WortCellTop((int2)floor(a - org), a) > P.y - 0.05 ? a : b;
     }
-    else occ = WortHoleOccluderAt(P.xz + jit) || WortHoleOccluderAt(P.xz + jit - float2(0, 0.2));
-    if (!occ) return;
+    else
+    {
+        own = P.xz;
+        float best = abs(WortCellTop((int2)floor(own - org), own) - P.y);
+        [unroll] for (int k = 0; k < 3; k++)
+        {
+            float2 cand = P.xz + (k == 0 ? float2(0, -0.2) : k == 1 ? float2(-0.2, 0) : float2(0.2, 0));
+            float e = abs(WortCellTop((int2)floor(cand - org), cand) - P.y);
+            if (e < best - 0.02) { best = e; own = cand; }
+        }
+    }
+    if (!WortHoleOccluderAt(WortHoleAssign(own))) return;
     float band = max(_WortHoleParams.z, 1e-3);
     float alpha = saturate(smoothstep(1 - band, 1, x) + (WortDissolveNoise(P.xz, _WortHoleParams.x) - 0.5) * 0.35 * band);
     float4 pc = mul(UNITY_MATRIX_VP, float4(P, 1));
