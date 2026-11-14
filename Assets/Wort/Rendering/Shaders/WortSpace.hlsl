@@ -8,7 +8,7 @@
 
 float4 _WortHoleCenter;   // xyz = 主角身体中心（世界），w = 圆的半径（米，屏幕平面里；0 = 关）
 float4 _WortHoleParams;   // x = 时间，y = 波浪幅度（比例），z = 边缘渐变带宽（比例），w = 只裁高于主角脚下多少米的东西
-float4 _WortHoleEdge;     // x = 裁切边界的扰动（米），y = 开关，z = 主角脚下高度（世界 y）
+float4 _WortHoleEdge;     // x = 裁切边界的扰动（米），y = 开关，z = 主角脚下高度（世界 y），w = 主角身高（米）
 float4 _WortViewDir;      // xyz = 错切投影下真实视线方向（朝相机，单位向量），SpatialView 用投影矩阵的逆算
 float4 _WortCutParams;    // x = 裁切高度，y = 裁切高度的起伏幅度（米），z = 时间，w = 截面外扩（米，盖住侧墙鼓包）
 float _WortCutOn;         // 1 = 裁切开（默认 0：场景里没有 SpatialView 时什么都不裁）
@@ -72,9 +72,10 @@ float WortDither(float2 pixel)
 
 // 遮挡虚化：主角几乎被挡住时，只裁掉真正挡在“主角（和他脚下那片地面）”与相机之间的东西。
 // - 屏幕上以主角为中心的圆（波浪边 + 边缘一圈不透明度渐变）限定范围；
-// - 圈里的像素 P：高于主角脚下 + 余量，并且沿错切视线往远离相机的方向一直延伸到主角脚下的高度，
-//   落到的那一格是“和主角同一层的空地”（不比脚下高 0.3m）——说明 P 正挡着主角这一层的地面，才裁；
-//   落进高台 / 墙体里的不裁（它挡的是别的实心地形，裁了只会露出黑色空心）。
+// - 圈里的像素 P：高于主角脚下 + 余量，并且沿错切视线往远离相机的方向延伸时，在主角身体高度范围内
+//   （脚下 +0.1 到 +身高）取 4 个高度，只要有一处落在空中（那一格地面比这个高度低）——说明 P 挡着主角那一层的空间，才裁；
+//   全落在高台 / 墙体里的不裁（它挡的是别的实心地形，裁了只会露出黑色空心）。
+//   （只看脚下一个落点不够：主角贴着北边的墙站时，挡住他上半身的悬崖，视线延伸到脚下正好落进墙里。）
 // - 查高度场时把落点按噪声挪一点，裁切边界沿地形走但不是直角（扰动）。
 void WortHoleClip(float3 P)
 {
@@ -94,14 +95,21 @@ void WortHoleClip(float3 P)
     float x = length(d) / max(rr * WortWave(atan2(d.y, d.x), t, _WortHoleParams.y), 1e-3);   // < 1 在圆内
     if (x >= 1) return;
 
-    // 沿视线往远离相机的方向延伸到脚下高度：落点是不是主角这一层的空地
+    // 沿视线往远离相机的方向延伸：在主角身体高度范围内取 4 个高度，有一处在空中就算挡着主角
     float3 v = _WortViewDir.xyz;
     if (v.y > 0.05 && _WortHeightRect.z >= 1)
     {
-        float3 Q = P - v * ((P.y - feet) / v.y);
         float2 jit = (float2(WortNoise2(P.xz * 1.9 + t * 0.2), WortNoise2(P.xz * 1.9 + 17.3 - t * 0.2)) - 0.5) * 2 * _WortHoleEdge.x;
-        int2 c = (int2)floor(Q.xz + jit - _WortHeightRect.xy);
-        if (WortCellHeight(c, Q.xz + jit) > feet + 0.3) return;   // 落进实心地形：它不挡主角，不裁
+        float body = max(_WortHoleEdge.w, 0.3);
+        bool air = false;
+        [unroll] for (int k = 0; k < 4; k++)
+        {
+            float ys = feet + 0.1 + (body - 0.1) * (k / 3.0);
+            if (ys >= P.y) continue;                                  // 只看 P 后面（比 P 低）的部分
+            float2 q = P.xz - v.xz * ((P.y - ys) / v.y) + jit;
+            if (WortCellHeight((int2)floor(q - _WortHeightRect.xy), q) < ys) air = true;
+        }
+        if (!air) return;   // 全落进实心地形：它不挡主角，不裁
     }
 
     float band = max(_WortHoleParams.z, 1e-3);

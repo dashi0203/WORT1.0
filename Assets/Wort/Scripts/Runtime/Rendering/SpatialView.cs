@@ -225,7 +225,7 @@ namespace Wort.Rendering
             Vector3 c = player != null ? player.position + Vector3.up * (bodyHeight * 0.5f) : Vector3.zero;
             Shader.SetGlobalVector(IdHoleCenter, new Vector4(c.x, c.y, c.z, HoleRadiusNow > 0.02f ? HoleRadiusNow : 0f));
             Shader.SetGlobalVector(IdHoleParams, new Vector4(time, holeWave, holeFade, holeCutAbove));
-            Shader.SetGlobalVector(IdHoleEdge, new Vector4(holeEdgeBite, 1, player != null ? player.position.y : 0f, 0));
+            Shader.SetGlobalVector(IdHoleEdge, new Vector4(holeEdgeBite, 1, player != null ? player.position.y : 0f, bodyHeight));
             if (cam != null)
             {
                 // 错切投影下的真实视线方向（朝相机）：屏幕中心在近 / 远裁剪面各反算一个世界点
