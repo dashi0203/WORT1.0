@@ -32,22 +32,29 @@ Shader "Wort/CutCap"
         {
             if (_CapMode > 0.5)
             {
-                // 遮挡虚化：圆锥里、主角前面、被裁开的实心格上（实心 = 柱顶高于横截面）；格线处外扩 = 一点点 + 噪声参差（和鹰眼视觉同款）
-                if (_WortHoleCenter.w <= 1e-3 || _WortHeightRect.z < 1 || WortHoleScreenX(P) >= 1 || !WortHoleInFront(P)) { clip(-1); return; }
+                // 遮挡虚化：柱顶高于横截面的实心格（格线外扩 = 一点点 + 噪声参差，和鹰眼视觉同款），并且“它上面的柱顶被裁掉了”。
+                // 判断用同一个屏幕像素上方的柱顶那一点 T（沿视线往相机方向走到柱顶高度），和地形裁切的判断点一致：
+                // 原来用横截面自己那一点（低得多），主角北侧 / 旁边的柱子柱顶被裁了，横截面却判成“在主角后面”没画（负责人 2026-11-14）。
+                if (_WortHoleCenter.w <= 1e-3 || _WortHeightRect.z < 1) { clip(-1); return; }
                 float2 orgH = _WortHeightRect.xy;
                 int2 ch = (int2)floor(P.xz - orgH);
                 float capY = _WortHoleEdge.z + _WortHoleParams.w;
                 float dilH = max(_WortCutParams.w, 0.005) + _WortCutStyle.y * WortNoise2(P.xz * 2.4 + _WortHoleParams.x * 0.25);
-                float sh = 0;
+                float3 v = _WortViewDir.xyz;
+                bool shown = false;
                 [unroll] for (int hz = -1; hz <= 1; hz++)
                 [unroll] for (int hx = -1; hx <= 1; hx++)
                 {
                     int2 c = ch + int2(hx, hz);
                     float2 bmin = orgH + float2(c);
                     float2 q = clamp(P.xz, bmin, bmin + 1);
-                    if (length(q - P.xz) <= dilH && WortCellHeight(c, q) > capY) sh = 1;
+                    if (length(q - P.xz) > dilH) continue;
+                    float H = WortCellHeight(c, q);
+                    if (H <= capY) continue;
+                    float3 T = v.y > 0.05 ? P + v * ((H - capY) / v.y) : float3(P.x, H, P.z);
+                    if (WortHoleScreenX(T) < 1 && WortHoleInFront(T)) shown = true;
                 }
-                clip(sh - 0.5);
+                clip(shown ? 1 : -1);
                 return;
             }
             if (_WortCutOn < 0.5 || _WortHeightRect.z < 1) { clip(-1); return; }
