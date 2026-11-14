@@ -84,7 +84,7 @@ float WortDither(float2 pixel)
 // —— 遮挡虚化（负责人 2026-11-14 第 N 轮：全部改成连续的几何判断，主角怎么走都平滑，没有按格子的直线 / 跳变）——
 // 裁掉同时满足下面三条的东西：
 // 1. 在沿视线的截头圆锥里（屏幕上以主角为中心的圆，主角那头小、往相机方向变大；波浪边 + 边缘一圈渐变）；
-// 2. 在主角前面：沿错切视线（_WortViewDir）比主角身体中心更靠近相机，超过一点余量（余量按噪声起伏，边界参差）——
+// 2. 在主角前面：沿错切视线（_WortViewDir）比“主角位置、裁切高度那一点”更靠近相机，超过一点余量（余量按噪声起伏，边界参差）——
 //    身后的不裁，身旁同一深度的基本不裁；
 // 3. 高于“主角脚下 + 裁切高度”（和鹰眼视觉同一个参数），断口只往下起伏（不会比横截面高）。
 // 被裁开的实心格由 CutCap（遮挡虚化模式）在“脚下 + 裁切高度”处补黑色横截面，边缘按噪声往外参差（和鹰眼视觉同款）。
@@ -106,11 +106,14 @@ float WortHoleScreenX(float3 P)
     return length(d) / max(rr * WortWave(atan2(d.y, d.x), _WortHoleParams.x, _WortHoleParams.y), 1e-3);
 }
 
-// 是否在主角前面（规则 2）：沿视线离主角身体中心的距离 > 余量（余量按噪声在 0.15 到 0.15 + 边界扰动 之间起伏）
+// 是否在主角前面（规则 2）：参照点是主角所在位置、裁切高度那一点（脚下 + 裁切高度），沿视线比它更靠近相机就算。
+// （原来用身体中心作参照、余量 0.15–0.5m：紧贴主角南边的悬崖在脚下 0.5–1m 那段“不够靠前”被留下，断口实际落在主角身高附近。负责人 2026-11-14）
+// 余量按噪声在 0.02 到 0.02 + 边界扰动 之间起伏，边界参差。
 bool WortHoleInFront(float3 P)
 {
-    float along = dot(P - _WortHoleCenter.xyz, _WortViewDir.xyz);
-    float margin = 0.15 + _WortHoleEdge.x * WortNoise2(P.xz * 1.7 + _WortHoleParams.x * 0.2);
+    float3 ref = float3(_WortHoleCenter.x, _WortHoleEdge.z + _WortHoleParams.w, _WortHoleCenter.z);
+    float along = dot(P - ref, _WortViewDir.xyz);
+    float margin = 0.02 + _WortHoleEdge.x * WortNoise2(P.xz * 1.7 + _WortHoleParams.x * 0.2);
     return along > margin;
 }
 
