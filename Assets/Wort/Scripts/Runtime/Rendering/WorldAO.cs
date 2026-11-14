@@ -104,7 +104,7 @@ namespace Wort.Rendering
         }
     }
 
-    /// <summary>地形高度场贴图（1 格 1 像素，R = 高度，G = 坡向 + 1，B = 水面高度），TerrainLab 生成 / 改地形后上传，WortAO.hlsl 读。</summary>
+    /// <summary>地形高度场贴图（1 格 1 像素，R = 高度，G = 坡向 + 1），TerrainLab 生成 / 改地形后上传，WortAO.hlsl 读。</summary>
     public static class WorldAOField
     {
         private static Texture2D tex;
@@ -137,8 +137,7 @@ namespace Wort.Rendering
             int min = int.MaxValue;
             for (int i = 0; i < px.Length; i++)
             {
-                // B = 水面高度（没有水 = −10000）：遮挡虚化判断“挡住主角的柱子”时柱顶取地面和水面较高者
-                px[i] = new Color(map.Height[i], map.Slope != null ? map.Slope[i] + 1 : 0, map.HasWater(i) ? map.Water[i] : -10000f, 0);
+                px[i] = new Color(map.Height[i], map.Slope != null ? map.Slope[i] + 1 : 0, 0, 0);
                 if (map.Height[i] < min) min = map.Height[i];
             }
             MinHeight = min;

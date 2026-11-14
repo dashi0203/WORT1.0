@@ -1,6 +1,5 @@
 // 水面（TerrainLab 的水面子网格；原来是 URP Lit 纯色）。外观照旧：纯色 + 一点高光；接入和地形同一套空间呈现：
-// 遮挡虚化 / 鹰眼视觉的裁切（WortSpace.hlsl，脚下 + 余量以下不裁）、云影（主光源 cookie）、世界空间 AO、最低层压暗、脚下薄雾。
-// 负责人 2026-11-14：水面是 URP Lit，不会被裁，裁掉河岸后水面还挡着主角。
+// 鹰眼视觉的裁切（WortSpace.hlsl；遮挡虚化不影响水面，负责人 2026-11-14）、云影（主光源 cookie）、世界空间 AO、最低层压暗、脚下薄雾。
 Shader "Wort/Water"
 {
     Properties
@@ -48,7 +47,7 @@ Shader "Wort/Water"
             half4 frag(V i) : SV_Target
             {
                 float3 P = i.positionWS;
-                WortSpaceClip(P);
+                WortHeightClip(P, mul(UNITY_MATRIX_VP, float4(P, 1)));   // 只做鹰眼视觉的裁切；遮挡虚化不影响水面（负责人 2026-11-14）
                 float3 n = normalize(i.normalWS);
                 float aoDbg; float wao = WortAO(P, n, aoDbg);
                 if (aoDbg >= 0) return half4(aoDbg.xxx, 1);
@@ -76,7 +75,7 @@ Shader "Wort/Water"
             struct DA { float4 positionOS : POSITION; };
             struct DV { float4 positionCS : SV_POSITION; float3 positionWS : TEXCOORD0; };
             DV dvert(DA v) { DV o; float3 w = TransformObjectToWorld(v.positionOS.xyz); o.positionWS = w; o.positionCS = TransformWorldToHClip(w); return o; }
-            half dfrag(DV i) : SV_Target { WortSpaceClip(i.positionWS); return i.positionCS.z; }
+            half dfrag(DV i) : SV_Target { WortHeightClip(i.positionWS, mul(UNITY_MATRIX_VP, float4(i.positionWS, 1))); return i.positionCS.z; }
             ENDHLSL
         }
     }
