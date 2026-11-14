@@ -79,20 +79,38 @@ float WortDither(float2 pixel)
     return frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
 }
 
-// 遮挡虚化：主角几乎被挡住时，只裁掉真正挡在“主角（和他脚下那片地面）”与相机之间的东西。
+// 遮挡虚化：沿错切视线往远离相机的方向延伸，在主角身体高度范围内（脚下 +0.1 到 +身高）取 4 个高度，
+// 有一处落在空中（那一格地面比该高度低）= 这一点挡着主角那一层的空间。落点按噪声挪一点（边界参差）。
+bool WortHoleAir(float3 P, float feet, float t)
+{
+    float3 v = _WortViewDir.xyz;
+    if (v.y <= 0.05 || _WortHeightRect.z < 1) return true;
+    float2 jit = (float2(WortNoise2(P.xz * 1.9 + t * 0.2), WortNoise2(P.xz * 1.9 + 17.3 - t * 0.2)) - 0.5) * 2 * _WortHoleEdge.x;
+    float body = max(_WortHoleEdge.w, 0.3);
+    bool air = false;
+    [unroll] for (int k = 0; k < 4; k++)
+    {
+        float ys = feet + 0.1 + (body - 0.1) * (k / 3.0);
+        if (ys >= P.y) continue;                                  // 只看 P 后面（比 P 低）的部分
+        float2 q = P.xz - v.xz * ((P.y - ys) / v.y) + jit;
+        if (WortCellHeight((int2)floor(q - _WortHeightRect.xy), q) < ys) air = true;
+    }
+    return air;
+}
+
+// 遮挡虚化：主角几乎被挡住时，只裁掉真正挡在“主角那一层”与相机之间的东西。
 // - 屏幕上以主角为中心的圆（波浪边 + 边缘一圈不透明度渐变）限定范围；
-// - 圈里的像素 P：高于主角脚下 + 余量，并且沿错切视线往远离相机的方向延伸时，在主角身体高度范围内
-//   （脚下 +0.1 到 +身高）取 4 个高度，只要有一处落在空中（那一格地面比这个高度低）——说明 P 挡着主角那一层的空间，才裁；
-//   全落在高台 / 墙体里的不裁（它挡的是别的实心地形，裁了只会露出黑色空心）。
+// - 圈里的像素 P：高于主角脚下 + 余量，并且 WortHoleAir（挡着主角那一层的空间）才裁；挡着别的实心地形的不裁。
 //   （只看脚下一个落点不够：主角贴着北边的墙站时，挡住他上半身的悬崖，视线延伸到脚下正好落进墙里。）
-// - 查高度场时把落点按噪声挪一点，裁切边界沿地形走但不是直角（扰动）。
+// - 被裁掉的高柱子是空心的，和主角这一层地面交界的格线处会露出一条直直的黑缝：
+//   主角这一层的地面顶面，离“确实被裁掉的”高柱子 _WortHoleEdge.x 米以内按噪声啃掉一圈，格线变参差（没被裁的墙脚不动）。
 void WortHoleClip(float3 P)
 {
+    float3 nrm = normalize(cross(ddy(P), ddx(P)));   // 屏幕导数求面法线：放在所有分支之前（导数不能在分支里算）
     float R = _WortHoleCenter.w;
     if (R <= 1e-3) return;
     float3 C = _WortHoleCenter.xyz;
     float feet = _WortHoleEdge.z;
-    if (P.y < feet + _WortHoleParams.w) return;   // 只裁高于主角脚下 + 余量的东西
     float4 pc = mul(UNITY_MATRIX_VP, float4(P, 1));
     float4 cc = mul(UNITY_MATRIX_VP, float4(C, 1));
     float4 rc = mul(UNITY_MATRIX_VP, float4(C + UNITY_MATRIX_V[0].xyz * R, 1));   // 相机右方 R 米处 → 屏幕上的半径
@@ -103,29 +121,40 @@ void WortHoleClip(float3 P)
     float t = _WortHoleParams.x;
     float x = length(d) / max(rr * WortWave(atan2(d.y, d.x), t, _WortHoleParams.y), 1e-3);   // < 1 在圆内
     if (x >= 1) return;
-
-    // 沿视线往远离相机的方向延伸：在主角身体高度范围内取 4 个高度，有一处在空中就算挡着主角
-    float3 v = _WortViewDir.xyz;
-    if (v.y > 0.05 && _WortHeightRect.z >= 1)
-    {
-        float2 jit = (float2(WortNoise2(P.xz * 1.9 + t * 0.2), WortNoise2(P.xz * 1.9 + 17.3 - t * 0.2)) - 0.5) * 2 * _WortHoleEdge.x;
-        float body = max(_WortHoleEdge.w, 0.3);
-        bool air = false;
-        [unroll] for (int k = 0; k < 4; k++)
-        {
-            float ys = feet + 0.1 + (body - 0.1) * (k / 3.0);
-            if (ys >= P.y) continue;                                  // 只看 P 后面（比 P 低）的部分
-            float2 q = P.xz - v.xz * ((P.y - ys) / v.y) + jit;
-            if (WortCellHeight((int2)floor(q - _WortHeightRect.xy), q) < ys) air = true;
-        }
-        if (!air) return;   // 全落进实心地形：它不挡主角，不裁
-    }
-
     float band = max(_WortHoleParams.z, 1e-3);
     float fade = smoothstep(1 - band, 1, x);   // 0 = 圆心（全透），1 = 圆边（不透明）
-    float alpha = saturate(fade + (WortDissolveNoise(P.xz, t) - 0.5) * 0.35 * band);
-    float2 pixel = (pn * 0.5 + 0.5) * _ScreenParams.xy;
-    clip(alpha - WortDither(pixel) * 0.999 - 0.0005);
+    float cutAbove = feet + _WortHoleParams.w;
+
+    if (P.y >= cutAbove)
+    {
+        if (!WortHoleAir(P, feet, t)) return;   // 挡着别的实心地形：不裁
+        float alpha = saturate(fade + (WortDissolveNoise(P.xz, t) - 0.5) * 0.35 * band);
+        float2 pixel = (pn * 0.5 + 0.5) * _ScreenParams.xy;
+        clip(alpha - WortDither(pixel) * 0.999 - 0.0005);
+        return;
+    }
+
+    // 主角这一层的地面：贴着“确实被裁掉的”高柱子按噪声啃一圈，黑缝的格线变参差
+    float bite = _WortHoleEdge.x * (1 - fade);
+    if (bite <= 1e-3 || abs(nrm.y) < 0.7 || _WortHeightRect.z < 1) return;
+    float2 org = _WortHeightRect.xy;
+    int2 c0 = (int2)floor(P.xz - org);
+    float dmin = 1e3;
+    [unroll] for (int dz = -1; dz <= 1; dz++)
+    [unroll] for (int dx = -1; dx <= 1; dx++)
+    {
+        if (dx == 0 && dz == 0) continue;
+        int2 c = c0 + int2(dx, dz);
+        float2 bmin = org + float2(c);
+        float2 q = clamp(P.xz, bmin, bmin + 1);
+        float dq = length(q - P.xz);
+        if (dq >= bite || dq >= dmin) continue;
+        float hc = WortCellHeight(c, q);
+        if (hc < cutAbove || hc < P.y + 0.6) continue;               // 不是高柱子
+        if (WortHoleAir(float3(q.x, hc, q.y), feet, t)) dmin = dq;   // 这根柱子在这里确实被裁掉了
+    }
+    if (dmin >= bite) return;
+    clip(dmin - bite * WortDissolveNoise(P.xz * 0.8, t * 0.5));
 }
 
 // 鹰眼视觉 / 高度裁切（和遮挡虚化同一套）：高于裁切高度、在圈内的裁掉；圈边一圈按距离从不透明渐变到透明（屏幕抖动）

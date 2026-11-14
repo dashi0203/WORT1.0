@@ -52,7 +52,7 @@ namespace Wort.Rendering
         [Range(0f, 0.3f)] public float holeWave = 0.08f;
         [Tooltip("边缘不透明度渐变带宽（半径的比例）：圆边不透明，往里渐变到全透")]
         [Range(0.02f, 1f)] public float holeFade = 0.45f;
-        [Tooltip("裁切边界的扰动（米）：只裁真正挡住主角的部分，边界沿地形走，这个值让它参差而不是直角。0 = 不扰动")]
+        [Tooltip("边界扰动（米）：裁切边界的参差程度；被裁掉的高柱子和主角这一层地面交界的格线，也按这个距离往地面啃出参差。0 = 不扰动")]
         [Range(0f, 1f)] public float holeEdgeBite = 0.35f;
         [Tooltip("只裁高于主角脚下多少米的东西（和鹰眼视觉的“剔除脚下多高以上”同一个意思）")]
         [Range(0f, 3f)] public float holeCutAbove = 0.5f;
