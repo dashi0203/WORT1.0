@@ -123,7 +123,7 @@ bool WortHoleOccluderAt(float2 xz)
     float zNorth = _WortHeightRect.y + c.y + 1;                 // 这根柱子北沿的世界 z
     float south = _WortHoleCenter.z - zNorth;                   // 北沿在主角南边多远（< 0 = 不在南边）
     if (south < -0.15) return false;                            // 规则 1：北边 / 同一排靠北的不算
-    float h = WortCellHeight(c, float2(xz.x, zNorth)) - feet;   // 柱顶高出脚下多少（坡道取北沿处）
+    float h = WortCellTop(c, float2(xz.x, zNorth)) - feet;      // 柱顶（地面和水面较高者）高出脚下多少（坡道取北沿处）
     if (h < _WortHoleParams.w) return false;                    // 规则 2：不比裁切高度高的柱子没什么可裁
     return h > south + 0.1;                                     // 规则 3：够高，屏幕上盖得到主角
 }

@@ -1012,13 +1012,16 @@ namespace Wort.Terrain
             var shader = Shader.Find("Universal Render Pipeline/Lit");
             if (shader == null)
                 shader = Shader.Find("Universal Render Pipeline/Simple Lit");
+            // 水面用 Wort/Water：和地形同一套裁切（遮挡虚化 / 鹰眼视觉）、云影、薄雾；找不到时退回 URP Lit
+            var waterShader = Shader.Find("Wort/Water");
             materials = new Material[count];
             for (int m = 1; m < count; m++)
             {
                 var vm = (VoxelMaterial)m;
                 uint c = VoxelPalette.Color(vm);
                 var color = (Color)new Color32((byte)(c >> 16), (byte)(c >> 8), (byte)c, 255);
-                var mat = new Material(shader) { name = "Voxel " + vm, hideFlags = HideFlags.DontSave };
+                var sh = vm == VoxelMaterial.Water && waterShader != null ? waterShader : shader;
+                var mat = new Material(sh) { name = "Voxel " + vm, hideFlags = HideFlags.DontSave };
                 mat.SetColor("_BaseColor", color);
                 mat.SetFloat("_Smoothness", vm == VoxelMaterial.Water ? 0.6f : 0f);
                 materials[m] = mat;

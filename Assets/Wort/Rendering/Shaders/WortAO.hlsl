@@ -6,7 +6,7 @@
 #ifndef WORT_AO_INCLUDED
 #define WORT_AO_INCLUDED
 
-TEXTURE2D(_WortHeightTex);
+TEXTURE2D(_WortHeightTex);   // 1 格 1 像素：R = 地面高度，G = 坡向 + 1，B = 水面高度（没有水 = −10000）
 float4 _WortHeightRect;   // x0, z0（世界），宽、深（格）
 float4 _WortAOParams;     // x = 开关，y = 地形强度，z = 地形半径（m），w = 物体强度
 float4 _WortAOParams2;    // x = 调试显示（0 关，1 合成，2 只看地形，3 只看物体），y = 直射光也乘 AO 的比例
@@ -28,6 +28,14 @@ float WortCellHeight(int2 c, float2 q)
         h += s == 0 ? l.y : s == 1 ? l.x : s == 2 ? 1 - l.y : 1 - l.x;
     }
     return h;
+}
+
+// 格 c 的柱顶：地面和水面取较高者（高度场 B 通道 = 水面高度，没有水时是 −10000）
+float WortCellTop(int2 c, float2 q)
+{
+    int2 size = int2(_WortHeightRect.zw);
+    float water = LOAD_TEXTURE2D(_WortHeightTex, uint2(clamp(c, int2(0, 0), size - 1))).b;
+    return max(WortCellHeight(c, q), water);
 }
 
 // 地形 AO：1 = 不遮，越小越暗（已按强度换算）
