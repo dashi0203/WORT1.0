@@ -3,6 +3,10 @@
 // 地形网格是空心的（背面 / 北面不全），不能用“画背面”的做法，所以用高度场。由 Wort.Rendering.SpatialView 生成平面并开关。
 Shader "Wort/CutCap"
 {
+    Properties
+    {
+        [Enum(EagleVision, 0, Occlusion, 1)] _CapMode ("Mode", Float) = 0
+    }
     SubShader
     {
         Tags { "RenderType" = "Opaque" "RenderPipeline" = "UniversalPipeline" "Queue" = "Geometry+10" }
@@ -10,19 +14,36 @@ Shader "Wort/CutCap"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
         #include "WortAO.hlsl"
         #include "WortSpace.hlsl"
+        CBUFFER_START(UnityPerMaterial)
+            float _CapMode;   // 0 = 鹰眼视觉（裁切高度、圈内所有实心格）；1 = 遮挡虚化（脚下 + 余量、只在挡住主角的柱子上）
+        CBUFFER_END
         struct CA { float4 positionOS : POSITION; };
         struct CV { float4 positionCS : SV_POSITION; float3 positionWS : TEXCOORD0; };
         CV cvert(CA v)
         {
             CV o;
             float3 w = TransformObjectToWorld(v.positionOS.xyz);
-            w.y = _WortCutParams.x;
+            w.y = _CapMode > 0.5 ? _WortHoleEdge.z + _WortHoleParams.w : _WortCutParams.x;
             o.positionWS = w;
             o.positionCS = TransformWorldToHClip(w);
             return o;
         }
         void CapClip(float3 P)
         {
+            if (_CapMode > 0.5)
+            {
+                // 遮挡虚化：屏幕圆内、挡住主角的柱子上（和地形裁切同一个判断、同一个边界扰动）
+                if (_WortHoleCenter.w <= 1e-3 || WortHoleScreenX(P) >= 1) { clip(-1); return; }
+                float2 jit = WortHoleJitter(P.xz);
+                bool occ = false;
+                [unroll] for (int k = 0; k < 4; k++)   // 往外扩一点点（盖接缝）：四个方向各试一次
+                {
+                    float2 o = float2(k == 0 ? 0.06 : k == 1 ? -0.06 : 0, k == 2 ? 0.06 : k == 3 ? -0.06 : 0);
+                    occ = occ || WortHoleOccluderAt(P.xz + jit + o);
+                }
+                clip(occ ? 1 : -1);
+                return;
+            }
             if (_WortCutOn < 0.5 || _WortHeightRect.z < 1) { clip(-1); return; }
             // 先判断圆形范围（便宜），圆外直接丢掉，不做后面的高度场查询
             if (_WortCutCircle.z > 0) clip(1 - WortCutCircleX(WortToFeetPlane(P)));   // 和地形裁切同一个圆（波浪边）；圆边渐变由地形那边的抖动透出来

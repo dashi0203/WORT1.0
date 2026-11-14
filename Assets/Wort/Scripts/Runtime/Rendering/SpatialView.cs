@@ -52,7 +52,7 @@ namespace Wort.Rendering
         [Range(0f, 0.3f)] public float holeWave = 0.08f;
         [Tooltip("边缘不透明度渐变带宽（半径的比例）：圆边不透明，往里渐变到全透")]
         [Range(0.02f, 1f)] public float holeFade = 0.45f;
-        [Tooltip("边界扰动（米）：裁切边界的参差程度；被裁掉的高柱子和主角这一层地面交界的格线，也按这个距离往地面啃出参差。0 = 不扰动")]
+        [Tooltip("边界扰动（米）：判断“挡住主角的柱子”时位置按噪声挪多少，裁切边界和黑色横截面参差而不是直角。0 = 不扰动")]
         [Range(0f, 1f)] public float holeEdgeBite = 0.35f;
         [Tooltip("只裁高于主角脚下多少米的东西（和鹰眼视觉的“剔除脚下多高以上”同一个意思）")]
         [Range(0f, 3f)] public float holeCutAbove = 0.5f;
@@ -85,7 +85,7 @@ namespace Wort.Rendering
         [Range(0.02f, 1f)] public float eagleEdgeFade = 0.15f;
         [Tooltip("黑色横截面边缘扰动（米）：往外参差地扩多少（和遮挡虚化洞里的黑边同款）")]
         [Range(0f, 1f)] public float capEdgeRagged = 0.12f;
-        [Tooltip("裁切高度的起伏幅度（米）：墙上的断口高低起伏")]
+        [Tooltip("断口往下起伏的幅度（米）：墙的断口只会比黑色横截面低（不会冒出残边），参差在横截面下面")]
         [Range(0f, 0.6f)] public float eagleCutJitter = 0.18f;
         [Tooltip("黑色横截面比格线往外扩多少（米）：只盖住接缝，太大会在墙线外多出一条黑边")]
         [Range(0f, 0.4f)] public float capOutset = 0.06f;
@@ -131,8 +131,8 @@ namespace Wort.Rendering
         private Camera savedCam;
         private Color savedBg;
         private CameraClearFlags savedFlags;
-        private GameObject capGo, volumeGo;
-        private Material capMat;
+        private GameObject capGo, volumeGo, holeCapGo;
+        private Material capMat, holeCapMat;
         private Mesh capMesh;
         private VolumeProfile profile;
         private Volume volume;
@@ -153,6 +153,8 @@ namespace Wort.Rendering
             Shader.SetGlobalVector(IdBottom, Vector4.zero);
             Shader.SetGlobalVector(IdFog, Vector4.zero);
             DestroySafe(capGo); DestroySafe(capMat); DestroySafe(capMesh);
+            DestroySafe(holeCapGo); DestroySafe(holeCapMat);
+            holeCapGo = null; holeCapMat = null;
             DestroySafe(volumeGo); DestroySafe(profile);
             capGo = volumeGo = null; capMat = null; capMesh = null; profile = null; volume = null;
         }
@@ -226,6 +228,7 @@ namespace Wort.Rendering
             Shader.SetGlobalVector(IdHoleCenter, new Vector4(c.x, c.y, c.z, HoleRadiusNow > 0.02f ? HoleRadiusNow : 0f));
             Shader.SetGlobalVector(IdHoleParams, new Vector4(time, holeWave, holeFade, holeCutAbove));
             Shader.SetGlobalVector(IdHoleEdge, new Vector4(holeEdgeBite, 1, player != null ? player.position.y : 0f, bodyHeight));
+            UpdateHoleCap(HoleRadiusNow > 0.02f, cam);
             if (cam != null)
             {
                 // 错切投影下的真实视线方向（朝相机）：屏幕中心在近 / 远裁剪面各反算一个世界点
@@ -284,6 +287,52 @@ namespace Wort.Rendering
             return total > 0 ? (float)blocked / total : 0f;
         }
 
+        /// <summary>建一块横截面平面（单位正方形 ±1，按范围缩放；顶点着色器把高度改到裁切面）。mode：0 = 鹰眼视觉，1 = 遮挡虚化。</summary>
+        private bool MakeCap(string goName, float mode, out GameObject go, out Material mat)
+        {
+            go = null; mat = null;
+            if (capShader == null) capShader = Shader.Find("Wort/CutCap");
+            if (capShader == null) return false;
+            if (capMesh == null)
+            {
+                capMesh = new Mesh { name = "Wort Cut Cap", hideFlags = HideFlags.HideAndDontSave };
+                capMesh.vertices = new[] { new Vector3(-1, 0, -1), new Vector3(-1, 0, 1), new Vector3(1, 0, 1), new Vector3(1, 0, -1) };
+                capMesh.triangles = new[] { 0, 1, 2, 0, 2, 3 };
+                capMesh.bounds = new Bounds(Vector3.zero, new Vector3(2f, 4000f, 2f));   // 包围盒竖向放大避免被剔除
+            }
+            mat = new Material(capShader) { name = goName, hideFlags = HideFlags.HideAndDontSave };
+            mat.SetFloat("_CapMode", mode);
+            go = new GameObject(goName) { hideFlags = HideFlags.HideAndDontSave };
+            go.AddComponent<MeshFilter>().sharedMesh = capMesh;
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = mat;
+            mr.shadowCastingMode = ShadowCastingMode.Off;
+            mr.receiveShadows = false;
+            return true;
+        }
+
+        /// <summary>遮挡虚化的横截面：被裁掉的柱子在“脚下 + 余量”处补黑。只铺到屏幕圆对应的范围，顺着视线往相机那边挪。</summary>
+        private void UpdateHoleCap(bool on, Camera cam)
+        {
+            if (!on || player == null)
+            {
+                if (holeCapGo != null && holeCapGo.activeSelf) holeCapGo.SetActive(false);
+                return;
+            }
+            if (holeCapGo == null && !MakeCap("Wort Occlusion Cap", 1f, out holeCapGo, out holeCapMat)) return;
+            if (!holeCapGo.activeSelf) holeCapGo.SetActive(true);
+            Vector3 f = player.position;
+            if (cam != null)
+            {
+                Matrix4x4 inv = (cam.projectionMatrix * cam.worldToCameraMatrix).inverse;
+                Vector3 v = (inv.MultiplyPoint(new Vector3(0, 0, -1)) - inv.MultiplyPoint(new Vector3(0, 0, 1))).normalized;
+                if (v.y > 0.05f) f += new Vector3(v.x, 0f, v.z) * ((bodyHeight * 0.5f - holeCutAbove) / v.y);   // 屏幕圆心在身体中心
+            }
+            float half = HoleRadiusNow * (1f + holeWave) + 1f;
+            holeCapGo.transform.position = new Vector3(f.x, 0f, f.z);
+            holeCapGo.transform.localScale = new Vector3(half, 1f, half);
+        }
+
         private void UpdateCap(bool on, Camera cam, float cutY)
         {
             if (!on)
@@ -291,23 +340,7 @@ namespace Wort.Rendering
                 if (capGo != null && capGo.activeSelf) capGo.SetActive(false);
                 return;
             }
-            if (capGo == null)
-            {
-                if (capShader == null) capShader = Shader.Find("Wort/CutCap");
-                if (capShader == null) return;
-                capMesh = new Mesh { name = "Wort Cut Cap", hideFlags = HideFlags.HideAndDontSave };
-                // 单位正方形（±1），按裁切圆的大小缩放
-                capMesh.vertices = new[] { new Vector3(-1, 0, -1), new Vector3(-1, 0, 1), new Vector3(1, 0, 1), new Vector3(1, 0, -1) };
-                capMesh.triangles = new[] { 0, 1, 2, 0, 2, 3 };
-                capMesh.bounds = new Bounds(Vector3.zero, new Vector3(2f, 4000f, 2f));   // 顶点着色器把高度改到裁切面，包围盒竖向放大避免被剔除
-                capMat = new Material(capShader) { name = "Wort Cut Cap", hideFlags = HideFlags.HideAndDontSave };
-                capGo = new GameObject("Wort Cut Cap") { hideFlags = HideFlags.HideAndDontSave };
-                capGo.AddComponent<MeshFilter>().sharedMesh = capMesh;
-                var mr = capGo.AddComponent<MeshRenderer>();
-                mr.sharedMaterial = capMat;
-                mr.shadowCastingMode = ShadowCastingMode.Off;
-                mr.receiveShadows = false;
-            }
+            if (capGo == null && !MakeCap("Wort Cut Cap", 0f, out capGo, out capMat)) return;
             if (!capGo.activeSelf) capGo.SetActive(true);
             // 平面只铺到裁切圆（+ 波浪和外扩的余量），不铺满屏幕：横切面着色器每像素要查 9 格高度场，铺满屏幕很贵
             Vector3 f = player != null ? player.position : (cam != null ? cam.transform.position : Vector3.zero);
