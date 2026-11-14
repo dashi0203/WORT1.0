@@ -6,13 +6,13 @@ using UnityEngine.Rendering.Universal;
 namespace Wort.Rendering
 {
     /// <summary>
-    /// 空间呈现（GDD 第 7 节；负责人 2026-11-13）。计算在着色器 WortSpace.hlsl / CutCap.shader 里，这里只算参数、设全局变量：
-    /// - 黑色空处：相机背景改纯黑（透过虚化 / 裁切看到的空处是黑的）；地形最低一层压暗。
-    /// - 遮挡虚化：每帧从主角身上取 9 个点往相机方向打射线，被挡住的比例 ≥ 开启阈值时，挡在前面的东西挖一个圆（波浪边缘、溶解），
-    ///   降到关闭阈值以下再收回。攀爬物（URP Lit）不参与。
-    /// - 鹰眼视觉（GDD【暂定】）：画面大幅降饱和；剔除主角脚下 + 1.5 格以上的所有地形，横切面补黑（高度场判断实心），边缘微微起伏、溶解。
-    ///   和以后的室内 / 地下高度裁切共用同一套裁切。开启时遮挡虚化自动关闭。
-    /// - 主角脚下薄雾：比主角脚下低 2.5 格开始、往下 2–4 格渐浓，颜色跟着当前天光 / 太阳。
+    /// 空间呈现（GDD 第 7 节）。计算在着色器 WortSpace.hlsl / CutCap.shader 里，这里只算参数、设全局变量：
+    /// - 黑色空处：相机背景改纯黑；地形最低一层压暗。
+    /// - 遮挡虚化：每帧沿错切视线从主角身上 9 个点往相机打射线，被挡比例 ≥ 开启阈值时打开、≤ 关闭阈值时收回。
+    ///   裁掉沿视线截头圆锥里、在主角前面、高于“脚下 + 裁切高度”的东西，被裁开的实心处补黑色横截面。攀爬物（URP Lit）和水面不参与。
+    /// - 鹰眼视觉（GDD【暂定】）：降饱和、屏幕暗角、圆外 + 1m 以外压暗；裁掉主角周围圆里高于“脚下 + 裁切高度”的东西，横截面补黑。
+    ///   裁切高度和遮挡虚化共用；开启时遮挡虚化自动关闭。
+    /// - 主角脚下薄雾：比脚下低 2.5m 开始、往下渐浓，颜色跟着当前天光 / 太阳。
     /// 被裁掉的东西照常投影（投影 pass 不裁）。
     /// </summary>
     [ExecuteAlways]
@@ -154,6 +154,7 @@ namespace Wort.Rendering
             RestoreCamera();
             Shader.SetGlobalVector(IdHoleCenter, Vector4.zero);
             Shader.SetGlobalFloat(IdCutOn, 0);
+            Shader.SetGlobalVector(IdEagleDim, Vector4.zero);
             Shader.SetGlobalVector(IdBottom, Vector4.zero);
             Shader.SetGlobalVector(IdFog, Vector4.zero);
             DestroySafe(capGo); DestroySafe(capMat); DestroySafe(capMesh);
@@ -239,8 +240,8 @@ namespace Wort.Rendering
             Shader.SetGlobalVector(IdHoleCenter, new Vector4(c.x, c.y, c.z, HoleRadiusNow > 0.02f ? HoleRadiusNow : 0f));
             Shader.SetGlobalVector(IdHoleParams, new Vector4(time, holeWave, holeEdgeFade, cutAboveFeet));
             Shader.SetGlobalVector(IdHoleCone, new Vector4(Mathf.Min(1f, holeNearRadius / Mathf.Max(0.01f, holeRadius)), holeConeLength, 0, 0));
-            Shader.SetGlobalVector(IdHoleEdge, new Vector4(holeEdgeBite, 1, player != null ? player.position.y : 0f, bodyHeight));
-            UpdateHoleCap(HoleRadiusNow > 0.02f, cam);
+            Shader.SetGlobalVector(IdHoleEdge, new Vector4(holeEdgeBite, 0, player != null ? player.position.y : 0f, 0));
+            UpdateHoleCap(HoleRadiusNow > 0.02f);
 
             // —— 最低一层压暗 ——
             float bottom = overrideBottom || !WorldAOField.HasField ? bottomHeight : WorldAOField.MinHeight;
@@ -263,25 +264,19 @@ namespace Wort.Rendering
 
         /// <summary>
         /// 主角身上 9 个点（3 个高度 × 相机左右 3 个位置）沿视线往相机方向打射线，被挡住的比例。
-        /// 错切相机（WortShearCamera）的视线不是相机的朝向（竖直向下），而是“往上、往南”斜着的：
-        /// 投影矩阵里 y 加了 shear × 深度，屏幕上同一个点对应的是一条斜线。这里直接用 投影 × 视图 矩阵的逆，
-        /// 把这个点所在的屏幕位置在近、远裁剪面上各反算一个世界点，两点连线就是真实视线，不依赖 shear 的具体写法。
+        /// 错切相机的视线不是相机朝向（竖直向下），而是“往上、往南”斜着的；正交相机下各点视线平行，
+        /// 直接用本帧由投影矩阵反算的视线方向 viewDir，射线长到相机所在高度为止。
         /// </summary>
         private float MeasureOcclusion(Camera cam)
         {
-            Matrix4x4 vp = cam.projectionMatrix * cam.worldToCameraMatrix;
-            Matrix4x4 inv = vp.inverse;
             Vector3 right = cam.transform.right;
+            Vector3 dir = viewDir;   // 朝相机
             int blocked = 0, total = 0;
             for (int iy = 0; iy < 3; iy++)
             for (int ix = -1; ix <= 1; ix++)
             {
                 Vector3 p = player.position + Vector3.up * (bodyHeight * (0.15f + 0.35f * iy)) + right * (0.22f * ix);
-                Vector3 ndc = vp.MultiplyPoint(p);
-                Vector3 near = inv.MultiplyPoint(new Vector3(ndc.x, ndc.y, -1f));
-                Vector3 far = inv.MultiplyPoint(new Vector3(ndc.x, ndc.y, 1f));
-                Vector3 dir = (near - far).normalized;   // 朝相机
-                float maxDist = Vector3.Distance(p, near);
+                float maxDist = dir.y > 0.05f ? Mathf.Max(0f, cam.transform.position.y - p.y) / dir.y : 200f;
                 int n = Physics.RaycastNonAlloc(p + dir * 0.05f, dir, hits, maxDist, ~0, QueryTriggerInteraction.Ignore);
                 bool hit = false;
                 for (int k = 0; k < n && !hit; k++)
@@ -316,8 +311,8 @@ namespace Wort.Rendering
             return true;
         }
 
-        /// <summary>遮挡虚化的横截面：被裁掉的柱子在“脚下 + 余量”处补黑。只铺到屏幕圆对应的范围，顺着视线往相机那边挪。</summary>
-        private void UpdateHoleCap(bool on, Camera cam)
+        /// <summary>遮挡虚化的横截面：被裁开的实心处在“脚下 + 裁切高度”补黑。只铺到屏幕圆对应的范围。</summary>
+        private void UpdateHoleCap(bool on)
         {
             if (!on || player == null)
             {

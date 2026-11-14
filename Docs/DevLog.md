@@ -4,6 +4,15 @@
 
 GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
 
+## 2026-11-14（续）SpatialView 清理
+
+负责人：SpatialView 还有冗余吗。
+- 类说明过时（还写着 1.5 格、溶解、旧规则）→ 按现行做法重写。
+- `_WortHoleEdge` 的 y（开关）、w（身高）着色器早已不读（逐像素沿视线采样那一版的残留）→ 传 0，注释标“不用”。
+- 遮挡检测每帧又算一遍投影 × 视图矩阵和逆、逐点反算视线：正交相机下 9 条视线平行 → 直接用本帧的 `viewDir`，射线长到相机高度。
+- `UpdateHoleCap` 的 `cam` 参数没用 → 删掉。
+- 小 bug：关掉组件时没复位鹰眼视觉的反选区压暗（`_WortEagleDim`），关的时候鹰眼开着，画面会一直压暗 → `OnDisable` 里复位。
+
 ## 2026-11-14（续）遮挡虚化不影响水面
 
 负责人：遮挡虚化只有水面不受影响。`Wort/Water` 只调 `WortHeightClip`（鹰眼视觉的裁切），不调遮挡虚化。
