@@ -10,6 +10,7 @@ float4 _WortHoleCenter;   // xyz = 主角身体中心（世界），w = 圆的�
 float4 _WortHoleParams;   // x = 时间，y = 波浪幅度（比例），z = 边缘渐变带宽（比例），w = 只裁高于主角脚下多少米的东西
 float4 _WortHoleEdge;     // x = 边界扰动（米），y = 开关，z = 主角脚下高度（世界 y），w = 主角身高（米）
 float4 _WortViewDir;      // xyz = 错切投影下真实视线方向（朝相机，单位向量），SpatialView 用投影矩阵的逆算
+float4 _WortHoleCone;     // 截头圆锥：x = 主角处（小头）半径 / 大半径，y = 沿视线多远长到大半径（米）
 float4 _WortCutParams;    // x = 裁切高度，y = 裁切高度的起伏幅度（米），z = 时间，w = 截面外扩（米，盖住侧墙鼓包）
 float _WortCutOn;         // 1 = 裁切开（默认 0：场景里没有 SpatialView 时什么都不裁）
 float4 _WortCutCircle;    // 裁切范围（世界水平圆，和遮挡虚化同一套：波浪边 + 不透明度渐变）：xy = 圆心 xz，z = 半径（≤ 0 = 不限范围），w = 波浪幅度（比例）
@@ -87,7 +88,9 @@ float WortDither(float2 pixel)
 // 被裁的柱子在“脚下 + 余量”处由 CutCap（遮挡虚化模式）补黑色横截面，不露空心。屏幕圆（波浪 + 渐变）限定范围。
 // 判断柱子时把位置按噪声挪一点（_WortHoleEdge.x 米），横截面用同一个噪声，边界参差且两者对齐。
 
-// 屏幕上以主角为中心的圆：返回 x = 到圆心的距离 / 波浪半径（< 1 在圈内）
+// 屏幕上以主角为中心的圆：返回 x = 到圆心的距离 / 波浪半径（< 1 在圈内）。
+// 形状是沿视线的截头圆锥（负责人 2026-11-14）：主角那头小（_WortHoleCone.x × 大半径），沿视线往相机方向
+// 走 _WortHoleCone.y 米长到大半径。和主角同一深度的东西（身旁的高台）只裁和主角重叠的一小圈，越靠近相机的高处裁得越宽。
 float WortHoleScreenX(float3 P)
 {
     float R = _WortHoleCenter.w;
@@ -99,6 +102,8 @@ float WortHoleScreenX(float3 P)
     float2 cn = cc.xy / cc.w;
     float2 d = (pc.xy / pc.w - cn) * hs;
     float rr = length((rc.xy / rc.w - cn) * hs);
+    float along = dot(P - C, _WortViewDir.xyz);                                  // 沿视线离主角多远（朝相机为正）
+    rr *= lerp(saturate(_WortHoleCone.x), 1, saturate(along / max(_WortHoleCone.y, 1e-3)));
     return length(d) / max(rr * WortWave(atan2(d.y, d.x), _WortHoleParams.x, _WortHoleParams.y), 1e-3);
 }
 

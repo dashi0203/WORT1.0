@@ -42,6 +42,10 @@ namespace Wort.Rendering
         public bool occlusionCutout = true;
         [Tooltip("圆的半径（米，屏幕平面里）")]
         [Range(0.5f, 6f)] public float holeRadius = 2.2f;
+        [Tooltip("截头圆锥：主角那头（小头）的半径（米）。和上面的半径一样 = 圆柱")]
+        [Range(0.1f, 6f)] public float holeNearRadius = 1f;
+        [Tooltip("截头圆锥：沿视线往相机方向多远（米）长到上面的半径")]
+        [Range(0.1f, 8f)] public float holeConeLength = 2.5f;
         [Tooltip("被挡住的比例达到这个值时开启")]
         [Range(0f, 1f)] public float openThreshold = 0.8f;
         [Tooltip("降到这个值以下时收回")]
@@ -112,6 +116,7 @@ namespace Wort.Rendering
 
         private static readonly int IdHoleCenter = Shader.PropertyToID("_WortHoleCenter");
         private static readonly int IdHoleParams = Shader.PropertyToID("_WortHoleParams");
+        private static readonly int IdHoleCone = Shader.PropertyToID("_WortHoleCone");
         private static readonly int IdHoleEdge = Shader.PropertyToID("_WortHoleEdge");
         private static readonly int IdViewDir = Shader.PropertyToID("_WortViewDir");
         private static readonly int IdCutParams = Shader.PropertyToID("_WortCutParams");
@@ -227,6 +232,7 @@ namespace Wort.Rendering
             Vector3 c = player != null ? player.position + Vector3.up * (bodyHeight * 0.5f) : Vector3.zero;
             Shader.SetGlobalVector(IdHoleCenter, new Vector4(c.x, c.y, c.z, HoleRadiusNow > 0.02f ? HoleRadiusNow : 0f));
             Shader.SetGlobalVector(IdHoleParams, new Vector4(time, holeWave, holeFade, holeCutAbove));
+            Shader.SetGlobalVector(IdHoleCone, new Vector4(Mathf.Min(1f, holeNearRadius / Mathf.Max(0.01f, holeRadius)), holeConeLength, 0, 0));
             Shader.SetGlobalVector(IdHoleEdge, new Vector4(holeEdgeBite, 1, player != null ? player.position.y : 0f, bodyHeight));
             UpdateHoleCap(HoleRadiusNow > 0.02f, cam);
             if (cam != null)

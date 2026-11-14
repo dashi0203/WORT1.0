@@ -37,6 +37,8 @@ namespace Wort.Editor
             {
                 P("occlusionCutout", "开启");
                 P("holeRadius", "范围：圆的半径（米）");
+                P("holeNearRadius", "截头圆锥：主角处半径（米）");
+                P("holeConeLength", "截头圆锥：长到最大半径的距离（米）");
                 P("openThreshold", "被挡多少时开启");
                 P("closeThreshold", "降到多少时收回");
                 P("holeTime", "展开 / 收回用时（秒）");
