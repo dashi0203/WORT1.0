@@ -56,10 +56,8 @@ namespace Wort.Rendering
         [Range(0f, 0.3f)] public float holeWave = 0.08f;
         [Tooltip("圆边不透明度渐变带宽（半径的比例）：只在最外缘一小圈渐变，圈里裁干净（和鹰眼视觉一致）")]
         [Range(0.02f, 1f)] public float holeEdgeFade = 0.15f;
-        [Tooltip("边界扰动（米）：判断“挡住主角的柱子”时位置按噪声挪多少，裁切边界和黑色横截面参差而不是直角。0 = 不扰动")]
+        [Tooltip("边界扰动（米）：“在主角前面”的判断余量按噪声起伏多少，裁切边界参差而不是直线。0 = 不扰动")]
         [Range(0f, 1f)] public float holeEdgeBite = 0.35f;
-        [Tooltip("只裁高于主角脚下多少米的东西（和鹰眼视觉的“剔除脚下多高以上”同一个意思）")]
-        [Range(0f, 3f)] public float holeCutAbove = 0.5f;
         [Tooltip("调试：不管有没有被挡住，一直显示虚化圆")]
         public bool debugForceHole;
 
@@ -67,8 +65,8 @@ namespace Wort.Rendering
         public bool eagleVision;
         [Tooltip("切换键（默认 T）")]
         public Key eagleKey = Key.T;
-        [Tooltip("剔除主角脚下多高以上的东西（格）")]
-        [Range(0f, 4f)] public float cutAbove = 0.5f;
+        [Tooltip("裁切高度：只裁高于主角脚下多少米的东西。鹰眼视觉和遮挡虚化共用")]
+        [Range(0f, 4f)] public float cutAboveFeet = 0.5f;
         [Tooltip("进出过渡用时（秒）：裁切面从上往下扫")]
         [Range(0.05f, 1.5f)] public float sweepTime = 0.35f;
         [Tooltip("饱和度降多少")]
@@ -213,7 +211,7 @@ namespace Wort.Rendering
             EagleBlend = dt > 0f ? Mathf.MoveTowards(EagleBlend, target, dt / Mathf.Max(0.01f, sweepTime)) : target;
             float e = EagleBlend * EagleBlend * (3f - 2f * EagleBlend);
             bool cutOn = EagleBlend > 1e-3f && WorldAOField.HasField;
-            float cutY = feetY + cutAbove + (1f - e) * 6f;   // 裁切面从上往下落，同时圆从脚下展开
+            float cutY = feetY + cutAboveFeet + (1f - e) * 6f;   // 裁切面从上往下落，同时圆从脚下展开
             Vector3 fp = player != null ? player.position : Vector3.zero;
             Shader.SetGlobalFloat(IdCutOn, cutOn ? 1f : 0f);
             Shader.SetGlobalVector(IdCutParams, new Vector4(cutY, eagleCutJitter, time, capOutset));
@@ -239,7 +237,7 @@ namespace Wort.Rendering
             HoleRadiusNow = dt > 0f ? Mathf.SmoothDamp(HoleRadiusNow, targetR, ref holeVel, holeTime * 0.5f, Mathf.Infinity, dt) : targetR;
             Vector3 c = player != null ? player.position + Vector3.up * (bodyHeight * 0.5f) : Vector3.zero;
             Shader.SetGlobalVector(IdHoleCenter, new Vector4(c.x, c.y, c.z, HoleRadiusNow > 0.02f ? HoleRadiusNow : 0f));
-            Shader.SetGlobalVector(IdHoleParams, new Vector4(time, holeWave, holeEdgeFade, holeCutAbove));
+            Shader.SetGlobalVector(IdHoleParams, new Vector4(time, holeWave, holeEdgeFade, cutAboveFeet));
             Shader.SetGlobalVector(IdHoleCone, new Vector4(Mathf.Min(1f, holeNearRadius / Mathf.Max(0.01f, holeRadius)), holeConeLength, 0, 0));
             Shader.SetGlobalVector(IdHoleEdge, new Vector4(holeEdgeBite, 1, player != null ? player.position.y : 0f, bodyHeight));
             UpdateHoleCap(HoleRadiusNow > 0.02f, cam);
@@ -329,8 +327,9 @@ namespace Wort.Rendering
             if (holeCapGo == null && !MakeCap("Wort Occlusion Cap", 1f, out holeCapGo, out holeCapMat)) return;
             if (!holeCapGo.activeSelf) holeCapGo.SetActive(true);
             Vector3 f = player.position;
-            if (viewDir.y > 0.05f) f += new Vector3(viewDir.x, 0f, viewDir.z) * ((bodyHeight * 0.5f - holeCutAbove) / viewDir.y);   // 屏幕圆心在身体中心
-            float half = HoleRadiusNow * (1f + holeWave) + 1f;
+            // 横截面在“脚下 + 裁切高度”，屏幕圆心在身体中心：圆心沿视线往远离相机的方向落到横截面高度，世界里往北挪（身体中心 − 横截面高度）
+            if (viewDir.y > 0.05f) f -= new Vector3(viewDir.x, 0f, viewDir.z) * ((bodyHeight * 0.5f - cutAboveFeet) / viewDir.y);
+            float half = HoleRadiusNow * (1f + holeWave) + capEdgeRagged + 2f;
             holeCapGo.transform.position = new Vector3(f.x, 0f, f.z);
             holeCapGo.transform.localScale = new Vector3(half, 1f, half);
         }

@@ -45,7 +45,6 @@ namespace Wort.Editor
                 P("holeWave", "圆边波浪幅度");
                 P("holeEdgeFade", "边缘渐变带宽");
                 P("holeEdgeBite", "边界扰动（米）");
-                P("holeCutAbove", "只裁脚下多高以上（米）");
                 P("debugForceHole", "调试：一直显示虚化圆");
             }
             EditorGUILayout.EndFoldoutHeaderGroup();
@@ -56,7 +55,7 @@ namespace Wort.Editor
                 P("eagleVision", "开启（运行时按快捷键）");
                 P("eagleKey", "快捷键");
                 P("eagleRadius", "范围：圆的半径（米）");
-                P("cutAbove", "剔除脚下多高以上（格）");
+                P("cutAboveFeet", "裁切高度：脚下多高以上（米，和遮挡虚化共用）");
                 P("eagleDimExtra", "反选区：圆外再扩（米）");
                 P("eagleDim", "反选区压暗程度");
                 P("eagleDimFade", "反选区往里渐变（米）");

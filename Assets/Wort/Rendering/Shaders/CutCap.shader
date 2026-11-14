@@ -23,7 +23,7 @@ Shader "Wort/CutCap"
         {
             CV o;
             float3 w = TransformObjectToWorld(v.positionOS.xyz);
-            w.y = _CapMode > 0.5 ? _WortHoleEdge.z + _WortHoleParams.w : _WortCutParams.x;
+            w.y = _CapMode > 0.5 ? _WortHoleEdge.z + _WortHoleParams.w : _WortCutParams.x;   // 遮挡虚化：脚下 + 裁切高度（断口只往下起伏，不会高过它）
             o.positionWS = w;
             o.positionCS = TransformWorldToHClip(w);
             return o;
@@ -32,15 +32,22 @@ Shader "Wort/CutCap"
         {
             if (_CapMode > 0.5)
             {
-                // 遮挡虚化：屏幕圆内、挡住主角的柱子上（和地形裁切同一个判断、同一个边界扰动）
-                if (_WortHoleCenter.w <= 1e-3 || WortHoleScreenX(P) >= 1) { clip(-1); return; }
-                bool occ = WortHoleOccluderAt(WortHoleAssign(P.xz));   // 和地形同一个判断（同一块台地里才按噪声挪位）
-                [unroll] for (int k = 0; k < 4; k++)   // 往外扩一点点（盖接缝）：四个方向各试一次
+                // 遮挡虚化：圆锥里、主角前面、被裁开的实心格上（实心 = 柱顶高于横截面）；格线处外扩 = 一点点 + 噪声参差（和鹰眼视觉同款）
+                if (_WortHoleCenter.w <= 1e-3 || _WortHeightRect.z < 1 || WortHoleScreenX(P) >= 1 || !WortHoleInFront(P)) { clip(-1); return; }
+                float2 orgH = _WortHeightRect.xy;
+                int2 ch = (int2)floor(P.xz - orgH);
+                float capY = _WortHoleEdge.z + _WortHoleParams.w;
+                float dilH = max(_WortCutParams.w, 0.005) + _WortCutStyle.y * WortNoise2(P.xz * 2.4 + _WortHoleParams.x * 0.25);
+                float sh = 0;
+                [unroll] for (int hz = -1; hz <= 1; hz++)
+                [unroll] for (int hx = -1; hx <= 1; hx++)
                 {
-                    float2 o = float2(k == 0 ? 0.06 : k == 1 ? -0.06 : 0, k == 2 ? 0.06 : k == 3 ? -0.06 : 0);
-                    occ = occ || WortHoleOccluderAt(WortHoleAssign(P.xz + o));
+                    int2 c = ch + int2(hx, hz);
+                    float2 bmin = orgH + float2(c);
+                    float2 q = clamp(P.xz, bmin, bmin + 1);
+                    if (length(q - P.xz) <= dilH && WortCellHeight(c, q) > capY) sh = 1;
                 }
-                clip(occ ? 1 : -1);
+                clip(sh - 0.5);
                 return;
             }
             if (_WortCutOn < 0.5 || _WortHeightRect.z < 1) { clip(-1); return; }
