@@ -1,8 +1,32 @@
 # Wort 开发记录
 
-最后更新：2026-11-13 · 分支 `claude/elegant-wright-xknxr5`（已合并 `claude/dreamy-lovelace-jb85wx` 的全部提交；负责人本地之前在用的就是那条） · 最新提交见 `git log`
+最后更新：2026-11-14 · 分支 `claude/elegant-wright-xknxr5`（含 `claude/dreamy-lovelace-jb85wx` 全部提交；默认分支 `claude/focused-galileo-rr85m8` 落后，新会话不要从默认分支开） · 最新提交见 `git log`
 
 GDD：https://claude.ai/artifact/S6CtD759fRjLrJdhjF5inT（版本 1.0.01）
+
+## 2026-11-14 收工：下次从这里开始
+
+**分支**：本会话分支 `claude/elegant-wright-xknxr5` 是最新的（含 dreamy-lovelace 的程序化崖壁 / Biome）。默认分支 `claude/focused-galileo-rr85m8` 落后很多，
+新会话从默认分支开会“丢掉” Biome（11-13 出过一次）。开工前先确认负责人本地在哪条分支，或者让负责人同意把默认分支快进到本分支。
+
+这两天做完的（细节见下面各节）：
+- 云影 + 天气光照 `SkyLighting`（cookie 只削直射光，overcast / 时段 / 随机起伏，阴天天光补亮、降饱和）。
+- 世界空间 AO `WorldAO` / `AOOccluder`（替代 URP SSAO：地形高度场 + 物体胶囊，只压环境光）。
+- 空间呈现 `SpatialView`：黑色空处、最低层压暗、脚下薄雾、鹰眼视觉（负责人：完美）、遮挡虚化（连续判断：截头圆锥 + 主角前面 + 高于脚下 0.5m，补黑色横截面）。
+- 水面改用 `Wort/Water`（只做鹰眼裁切，遮挡虚化不影响水面）。
+- 坡道接 1 格体素的侧墙竖缝修好；GDD 同步到 rev 81。
+
+**等负责人本地确认**（云端没有 Unity，以下都只做过语法检查）：
+1. 拉到最新后编译是否通过；遮挡虚化最新几版（横截面按柱顶点判断、水面不受影响）的效果。
+2. 遮挡虚化北侧东西两边若还有直边：可能是程序化崖壁后排柱子的东西侧墙只生成最上面 1m，裁到 0.5m 后那段矮墙不存在 → 要在 `ProcCliffMesher` 补（等截图）。
+3. 云影：相机移动时云影是否固定在地面上（cookie 映射是按 URP 源码记忆写的）；`SkyLighting` 参数的默认值要不要改。
+4. `PC_RPAsset` 性能项（负责人本地有改动，云端没动）：Opaque Texture、Depth Texture 可关；主光阴影 4096 → 2048、阴影距离 50 → 约 30。
+
+**下次候选**：
+- 遮挡虚化收尾（按负责人截图）；需要的话加“基准线往北挪”的参数。
+- 移轴模糊（VerticalTiltShift，GDD【待讨论】，renderer 里现在是关的；做的话深度纹理要开）。
+- 调色（LUT）、植物风摆、环境粒子（第一轮画面讨论里提过）。
+- 静态物体（树、石头）登记 AO 遮蔽体，等植被系统接入。
 
 ## 2026-11-14（续）SpatialView 清理
 
