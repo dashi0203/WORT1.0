@@ -52,7 +52,7 @@ namespace Wort.Rendering
         [Range(0f, 0.3f)] public float holeWave = 0.08f;
         [Tooltip("边缘不透明度渐变带宽（半径的比例）：圆边不透明，往里渐变到全透")]
         [Range(0.02f, 1f)] public float holeFade = 0.45f;
-        [Tooltip("洞里黑色区域（被挖开的崖体内部）的边缘往地面啃进去多少（米），把体素直角边打碎，和鹰眼视觉同款扰动。0 = 关")]
+        [Tooltip("裁切边界的扰动（米）：只裁真正挡住主角的部分，边界沿地形走，这个值让它参差而不是直角。0 = 不扰动")]
         [Range(0f, 1f)] public float holeEdgeBite = 0.35f;
         [Tooltip("只裁高于主角脚下多少米的东西（和鹰眼视觉的“剔除脚下多高以上”同一个意思）")]
         [Range(0f, 3f)] public float holeCutAbove = 0.5f;
@@ -113,6 +113,7 @@ namespace Wort.Rendering
         private static readonly int IdHoleCenter = Shader.PropertyToID("_WortHoleCenter");
         private static readonly int IdHoleParams = Shader.PropertyToID("_WortHoleParams");
         private static readonly int IdHoleEdge = Shader.PropertyToID("_WortHoleEdge");
+        private static readonly int IdViewDir = Shader.PropertyToID("_WortViewDir");
         private static readonly int IdCutParams = Shader.PropertyToID("_WortCutParams");
         private static readonly int IdCutOn = Shader.PropertyToID("_WortCutOn");
         private static readonly int IdCutCircle = Shader.PropertyToID("_WortCutCircle");
@@ -223,8 +224,15 @@ namespace Wort.Rendering
             HoleRadiusNow = dt > 0f ? Mathf.SmoothDamp(HoleRadiusNow, targetR, ref holeVel, holeTime * 0.5f, Mathf.Infinity, dt) : targetR;
             Vector3 c = player != null ? player.position + Vector3.up * (bodyHeight * 0.5f) : Vector3.zero;
             Shader.SetGlobalVector(IdHoleCenter, new Vector4(c.x, c.y, c.z, HoleRadiusNow > 0.02f ? HoleRadiusNow : 0f));
-            Shader.SetGlobalVector(IdHoleParams, new Vector4(time, holeWave, holeFade, holeCutAbove - bodyHeight * 0.5f));
-            Shader.SetGlobalVector(IdHoleEdge, new Vector4(holeEdgeBite, holeEdgeBite > 0f ? 1 : 0, 0, 0));
+            Shader.SetGlobalVector(IdHoleParams, new Vector4(time, holeWave, holeFade, holeCutAbove));
+            Shader.SetGlobalVector(IdHoleEdge, new Vector4(holeEdgeBite, 1, player != null ? player.position.y : 0f, 0));
+            if (cam != null)
+            {
+                // 错切投影下的真实视线方向（朝相机）：屏幕中心在近 / 远裁剪面各反算一个世界点
+                Matrix4x4 inv = (cam.projectionMatrix * cam.worldToCameraMatrix).inverse;
+                Vector3 vdir = (inv.MultiplyPoint(new Vector3(0, 0, -1)) - inv.MultiplyPoint(new Vector3(0, 0, 1))).normalized;
+                Shader.SetGlobalVector(IdViewDir, vdir);
+            }
 
             // —— 最低一层压暗 ——
             float bottom = overrideBottom || !WorldAOField.HasField ? bottomHeight : WorldAOField.MinHeight;

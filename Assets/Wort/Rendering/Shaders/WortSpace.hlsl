@@ -7,8 +7,9 @@
 #include "WortAO.hlsl"   // 高度场（WortCellHeight），遮挡虚化的黑边扰动要用
 
 float4 _WortHoleCenter;   // xyz = 主角身体中心（世界），w = 圆的半径（米，屏幕平面里；0 = 关）
-float4 _WortHoleParams;   // x = 时间，y = 波浪幅度（比例），z = 边缘渐变带宽（比例），w = 高出主角身体中心多少才裁（米；SpatialView 按“高于脚下 0.5m”换算，可以是负数）
-float4 _WortHoleEdge;     // x = 洞里黑色区域边缘往地面啃进去多少（米，和鹰眼视觉同款扰动），y = 开关
+float4 _WortHoleParams;   // x = 时间，y = 波浪幅度（比例），z = 边缘渐变带宽（比例），w = 只裁高于主角脚下多少米的东西
+float4 _WortHoleEdge;     // x = 裁切边界的扰动（米），y = 开关，z = 主角脚下高度（世界 y）
+float4 _WortViewDir;      // xyz = 错切投影下真实视线方向（朝相机，单位向量），SpatialView 用投影矩阵的逆算
 float4 _WortCutParams;    // x = 裁切高度，y = 裁切高度的起伏幅度（米），z = 时间，w = 截面外扩（米，盖住侧墙鼓包）
 float _WortCutOn;         // 1 = 裁切开（默认 0：场景里没有 SpatialView 时什么都不裁）
 float4 _WortCutCircle;    // 裁切范围（世界水平圆，和遮挡虚化同一套：波浪边 + 不透明度渐变）：xy = 圆心 xz，z = 半径（≤ 0 = 不限范围），w = 波浪幅度（比例）
@@ -69,16 +70,19 @@ float WortDither(float2 pixel)
     return frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
 }
 
-// 遮挡虚化：主角几乎被挡住时，挡在前面的东西在屏幕上挖一个圆。
-// - 圆边：波浪线（随时间流动）；边缘一圈按距离从不透明渐变到透明（抖动），再叠一点世界坐标噪声，边不规整。
-// - 洞里能看到被挖开的崖体内部（黑色空处），它和地面的分界是体素格线（直角）：洞里贴着“被挖的高柱子”的地面，
-//   按噪声往里啃掉一圈（和鹰眼视觉同款扰动），直角边变成参差的边。
+// 遮挡虚化：主角几乎被挡住时，只裁掉真正挡在“主角（和他脚下那片地面）”与相机之间的东西。
+// - 屏幕上以主角为中心的圆（波浪边 + 边缘一圈不透明度渐变）限定范围；
+// - 圈里的像素 P：高于主角脚下 + 余量，并且沿错切视线往远离相机的方向一直延伸到主角脚下的高度，
+//   落到的那一格是“和主角同一层的空地”（不比脚下高 0.3m）——说明 P 正挡着主角这一层的地面，才裁；
+//   落进高台 / 墙体里的不裁（它挡的是别的实心地形，裁了只会露出黑色空心）。
+// - 查高度场时把落点按噪声挪一点，裁切边界沿地形走但不是直角（扰动）。
 void WortHoleClip(float3 P)
 {
-    float3 nrm = normalize(cross(ddy(P), ddx(P)));   // 屏幕导数求面法线：放在所有分支之前（导数不能在分支里算）
     float R = _WortHoleCenter.w;
     if (R <= 1e-3) return;
     float3 C = _WortHoleCenter.xyz;
+    float feet = _WortHoleEdge.z;
+    if (P.y < feet + _WortHoleParams.w) return;   // 只裁高于主角脚下 + 余量的东西
     float4 pc = mul(UNITY_MATRIX_VP, float4(P, 1));
     float4 cc = mul(UNITY_MATRIX_VP, float4(C, 1));
     float4 rc = mul(UNITY_MATRIX_VP, float4(C + UNITY_MATRIX_V[0].xyz * R, 1));   // 相机右方 R 米处 → 屏幕上的半径
@@ -89,40 +93,22 @@ void WortHoleClip(float3 P)
     float t = _WortHoleParams.x;
     float x = length(d) / max(rr * WortWave(atan2(d.y, d.x), t, _WortHoleParams.y), 1e-3);   // < 1 在圆内
     if (x >= 1) return;
+
+    // 沿视线往远离相机的方向延伸到脚下高度：落点是不是主角这一层的空地
+    float3 v = _WortViewDir.xyz;
+    if (v.y > 0.05 && _WortHeightRect.z >= 1)
+    {
+        float3 Q = P - v * ((P.y - feet) / v.y);
+        float2 jit = (float2(WortNoise2(P.xz * 1.9 + t * 0.2), WortNoise2(P.xz * 1.9 + 17.3 - t * 0.2)) - 0.5) * 2 * _WortHoleEdge.x;
+        int2 c = (int2)floor(Q.xz + jit - _WortHeightRect.xy);
+        if (WortCellHeight(c, Q.xz + jit) > feet + 0.3) return;   // 落进实心地形：它不挡主角，不裁
+    }
+
     float band = max(_WortHoleParams.z, 1e-3);
     float fade = smoothstep(1 - band, 1, x);   // 0 = 圆心（全透），1 = 圆边（不透明）
-
-    // 挡在前面 = 视空间里比主角中心更靠近相机（错切俯视下等价于：屏幕同一处、比主角高 → 在主角南侧、主角和相机之间）
-    float dp = -mul(UNITY_MATRIX_V, float4(P, 1)).z;
-    float dc = -mul(UNITY_MATRIX_V, float4(C, 1)).z;
-    if (dp < dc - _WortHoleParams.w)
-    {
-        float n = WortDissolveNoise(P.xz, t);
-        float alpha = saturate(fade + (n - 0.5) * 0.35 * band);   // 渐变 + 一点噪声
-        float2 pixel = (pn * 0.5 + 0.5) * _ScreenParams.xy;
-        clip(alpha - WortDither(pixel) * 0.999 - 0.0005);
-        return;
-    }
-
-    // 洞里、主角这一侧的地面：贴着被挖开的高柱子（高过主角中心 + 余量，即被挖掉的那些）按噪声啃掉一圈
-    float bite = _WortHoleEdge.x * (1 - fade);
-    if (_WortHoleEdge.y < 0.5 || bite <= 1e-3 || _WortHeightRect.z < 1) return;
-    if (abs(nrm.y) < 0.7) return;   // 只啃顶面（地面），墙不动
-    float cutTop = C.y + _WortHoleParams.w;
-    float2 org = _WortHeightRect.xy;
-    int2 c0 = (int2)floor(P.xz - org);
-    float dmin = 1e3;
-    [unroll] for (int dz = -1; dz <= 1; dz++)
-    [unroll] for (int dx = -1; dx <= 1; dx++)
-    {
-        if (dx == 0 && dz == 0) continue;
-        int2 c = c0 + int2(dx, dz);
-        float2 bmin = org + float2(c);
-        float2 q = clamp(P.xz, bmin, bmin + 1);
-        if (WortCellHeight(c, q) > max(cutTop, P.y + 0.6)) dmin = min(dmin, length(q - P.xz));
-    }
-    if (dmin > bite) return;
-    clip(dmin - bite * WortDissolveNoise(P.xz * 0.8, t * 0.5));
+    float alpha = saturate(fade + (WortDissolveNoise(P.xz, t) - 0.5) * 0.35 * band);
+    float2 pixel = (pn * 0.5 + 0.5) * _ScreenParams.xy;
+    clip(alpha - WortDither(pixel) * 0.999 - 0.0005);
 }
 
 // 鹰眼视觉 / 高度裁切（和遮挡虚化同一套）：高于裁切高度、在圈内的裁掉；圈边一圈按距离从不透明渐变到透明（屏幕抖动）
